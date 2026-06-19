@@ -50,6 +50,7 @@ const COLORS = {
 const layout = createLayout();
 const state = {
   cash: 100,
+  cafeLevel: 1,
   served: 0,
   lost: 0,
   time: 0,
@@ -61,6 +62,8 @@ const state = {
     timer: 0,
     duration: 1.15
   },
+  procurementOpen: false,
+  inventory: {},
   message: "客人进门、前台开机、上机读条、下机离场。",
   messageTimer: 5
 };
@@ -71,6 +74,24 @@ const guestPalettes = [
   { shirt: "#5ec27f", hair: "#3d2b22" },
   { shirt: "#ffd166", hair: "#2d1e1a" }
 ];
+
+const products = [
+  { id: "noodle", name: "\u6ce1\u9762", unlockLevel: 1, cost: 20, quantity: 10, sellPrice: 6 },
+  { id: "water", name: "\u77ff\u6cc9\u6c34", unlockLevel: 1, cost: 12, quantity: 12, sellPrice: 3 },
+  { id: "sausage", name: "\u70e4\u80a0", unlockLevel: 1, cost: 18, quantity: 10, sellPrice: 5 },
+  { id: "betel", name: "\u69df\u6994", unlockLevel: 1, cost: 30, quantity: 10, sellPrice: 7 },
+  { id: "cigarette", name: "\u9999\u70df", unlockLevel: 1, cost: 45, quantity: 5, sellPrice: 18 },
+  { id: "snack", name: "\u96f6\u98df\u5c0f\u5403", unlockLevel: 2, cost: 35, quantity: 10, sellPrice: 8 },
+  { id: "drink", name: "\u591a\u54c1\u79cd\u996e\u6599", unlockLevel: 2, cost: 42, quantity: 12, sellPrice: 7 },
+  { id: "meal", name: "\u9884\u5236\u5feb\u9910", unlockLevel: 3, cost: 80, quantity: 8, sellPrice: 18 },
+  { id: "milkTea", name: "\u5976\u8336", unlockLevel: 4, cost: 120, quantity: 10, sellPrice: 22 }
+];
+
+const ui = {
+  procurementButton: null,
+  closeProcurementButton: null,
+  buyButtons: []
+};
 
 let lastFrameAt = Date.now();
 
@@ -133,6 +154,53 @@ function createPc(id, x, y) {
 function say(text) {
   state.message = text;
   state.messageTimer = 4;
+}
+
+function canBuyProduct(product) {
+  return state.cafeLevel >= product.unlockLevel && state.cash >= product.cost;
+}
+
+function buyProduct(product) {
+  if (state.cafeLevel < product.unlockLevel) {
+    say(`\u7f51\u5427\u7b49\u7ea7\u4e0d\u8db3\uff0c${product.name}\u9700\u8981 ${product.unlockLevel} \u7ea7\u89e3\u9501\u3002`);
+    return;
+  }
+
+  if (state.cash < product.cost) {
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u65e0\u6cd5\u91c7\u8d2d ${product.name}\u3002`);
+    return;
+  }
+
+  state.cash -= product.cost;
+  state.inventory[product.id] = (state.inventory[product.id] || 0) + product.quantity;
+  say(`\u91c7\u8d2d ${product.name} x${product.quantity}\uff0c\u5e93\u5b58\u5df2\u5165\u8d26\u3002`);
+}
+
+function isPointInRect(x, y, button) {
+  return button &&
+    x >= button.x &&
+    x <= button.x + button.w &&
+    y >= button.y &&
+    y <= button.y + button.h;
+}
+
+function handleTouch(x, y) {
+  if (state.procurementOpen) {
+    if (isPointInRect(x, y, ui.closeProcurementButton)) {
+      state.procurementOpen = false;
+      return;
+    }
+
+    const buyButton = ui.buyButtons.find((button) => isPointInRect(x, y, button));
+    if (buyButton) {
+      buyProduct(buyButton.product);
+    }
+    return;
+  }
+
+  if (isPointInRect(x, y, ui.procurementButton)) {
+    state.procurementOpen = true;
+  }
 }
 
 function random(min, max) {
@@ -458,11 +526,91 @@ function drawHud() {
   text(`现金 ${state.cash}`, 16, 42, 13, COLORS.green, "bold");
   text(`接待 ${state.served}`, 112, 42, 13, COLORS.blue, "bold");
   text(`流失 ${state.lost}`, 220, 42, 13, COLORS.red, "bold");
+  text(`Lv.${state.cafeLevel}`, view.width - 106, 14, 13, COLORS.yellow, "bold");
+
+  ui.procurementButton = { x: view.width - 68, y: 10, w: 54, h: 28 };
+  rect(ui.procurementButton.x, ui.procurementButton.y, ui.procurementButton.w, ui.procurementButton.h, "#7f5635");
+  strokeRect(ui.procurementButton.x, ui.procurementButton.y, ui.procurementButton.w, ui.procurementButton.h, COLORS.counterEdge, 2);
+  text("\u91c7\u8d2d", ui.procurementButton.x + ui.procurementButton.w / 2, ui.procurementButton.y + 5, 14, COLORS.text, "bold", "center");
 
   if (state.messageTimer > 0) {
     rect(12, view.height - 38, view.width - 24, 26, "#4b3027");
     text(state.message, view.width / 2, view.height - 31, 11, COLORS.text, "normal", "center");
   }
+}
+
+function drawStockShelf() {
+  const c = layout.counter;
+  const x = c.x + c.w + 14;
+  const y = c.y + 4;
+  const shelfW = 46;
+  const shelfH = 34;
+
+  if (x + shelfW > layout.room.x + layout.room.w - 10) return;
+
+  rect(x, y, shelfW, shelfH, "#6b3d29");
+  strokeRect(x, y, shelfW, shelfH, COLORS.line, 2);
+  rect(x + 5, y + 10, shelfW - 10, 3, COLORS.counterEdge);
+  rect(x + 7, y + 5, 6, 7, COLORS.red);
+  rect(x + 18, y + 5, 6, 7, COLORS.yellow);
+  rect(x + 29, y + 5, 6, 7, COLORS.blue);
+  rect(x + 10, y + 18, 7, 8, COLORS.green);
+  rect(x + 23, y + 18, 7, 8, COLORS.red);
+}
+
+function drawProcurementPanel() {
+  if (!state.procurementOpen) return;
+
+  ui.buyButtons.length = 0;
+
+  rect(0, 0, view.width, view.height, "rgba(20, 18, 16, 0.72)");
+
+  const panel = {
+    x: 18,
+    y: 92,
+    w: view.width - 36,
+    h: view.height - 136
+  };
+
+  rect(panel.x, panel.y, panel.w, panel.h, "#f0c98a");
+  strokeRect(panel.x, panel.y, panel.w, panel.h, COLORS.wallDark, 4);
+  rect(panel.x, panel.y, panel.w, 42, "#8c4f35");
+  text("\u524d\u53f0\u91c7\u8d2d", panel.x + 16, panel.y + 11, 18, COLORS.text, "bold");
+  text(`\u7f51\u5427\u7b49\u7ea7 Lv.${state.cafeLevel}`, panel.x + panel.w - 112, panel.y + 14, 12, COLORS.text, "bold");
+
+  ui.closeProcurementButton = { x: panel.x + panel.w - 50, y: panel.y + panel.h - 34, w: 38, h: 24 };
+
+  const startY = panel.y + 54;
+  const rowH = 39;
+  products.forEach((product, index) => {
+    const y = startY + index * rowH;
+    if (y > panel.y + panel.h - 46) return;
+
+    const unlocked = state.cafeLevel >= product.unlockLevel;
+    const stock = state.inventory[product.id] || 0;
+    const rowColor = unlocked ? "#f7dba5" : "#c9a878";
+    rect(panel.x + 10, y, panel.w - 20, rowH - 6, rowColor);
+    strokeRect(panel.x + 10, y, panel.w - 20, rowH - 6, "#9a7043", 1);
+
+    text(product.name, panel.x + 18, y + 6, 14, unlocked ? COLORS.line : "#745a46", "bold");
+    text(`\u5e93\u5b58 ${stock}`, panel.x + 88, y + 7, 11, "#5d4532", "bold");
+    text(`\u8fdb\u4ef7 ${product.cost} / x${product.quantity}`, panel.x + 146, y + 7, 11, "#5d4532");
+
+    const button = { x: panel.x + panel.w - 58, y: y + 5, w: 42, h: 23, product };
+    ui.buyButtons.push(button);
+
+    if (!unlocked) {
+      rect(button.x, button.y, button.w, button.h, "#8d7b66");
+      text(`Lv.${product.unlockLevel}`, button.x + button.w / 2, button.y + 5, 11, "#f8e0b0", "bold", "center");
+    } else {
+      rect(button.x, button.y, button.w, button.h, canBuyProduct(product) ? "#4e8f4f" : "#9a6b55");
+      text("\u4e70", button.x + button.w / 2, button.y + 3, 14, COLORS.text, "bold", "center");
+    }
+  });
+
+  rect(ui.closeProcurementButton.x, ui.closeProcurementButton.y, ui.closeProcurementButton.w, ui.closeProcurementButton.h, "#7f5635");
+  strokeRect(ui.closeProcurementButton.x, ui.closeProcurementButton.y, ui.closeProcurementButton.w, ui.closeProcurementButton.h, COLORS.line, 2);
+  text("\u5173\u95ed", ui.closeProcurementButton.x + ui.closeProcurementButton.w / 2, ui.closeProcurementButton.y + 4, 12, COLORS.text, "bold", "center");
 }
 
 function drawLegend() {
@@ -474,10 +622,12 @@ function render() {
   ctx.clearRect(0, 0, view.width, view.height);
   drawPixelFloor();
   drawCounter();
+  drawStockShelf();
   layout.pcs.forEach(drawPc);
   drawLegend();
   state.guests.forEach(drawGuest);
   drawHud();
+  drawProcurementPanel();
 }
 
 function loop() {
@@ -497,6 +647,12 @@ function drawFatalError(error) {
 }
 
 try {
+  wx.onTouchStart((event) => {
+    const touch = event.touches && event.touches[0];
+    if (!touch) return;
+    handleTouch(touch.clientX, touch.clientY);
+  });
+
   loop();
 } catch (error) {
   drawFatalError(error);
