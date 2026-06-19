@@ -54,6 +54,7 @@ const layout = createLayout();
 const state = {
   cash: 100,
   cafeLevel: 1,
+  equipmentLevel: 1,
   cleanliness: 100,
   served: 0,
   lost: 0,
@@ -72,6 +73,13 @@ const state = {
   },
   procurementOpen: false,
   warehouseOpen: false,
+  hiringOpen: false,
+  employees: {
+    cashier: 0,
+    floor: 0,
+    manager: 0,
+    companion: 0
+  },
   inventory: {},
   message: "客人进门、前台开机、上机读条、下机离场。",
   messageTimer: 5
@@ -96,6 +104,37 @@ const products = [
   { id: "milkTea", name: "\u5976\u8336", unlockLevel: 4, cost: 120, quantity: 10, sellPrice: 22 }
 ];
 
+const staffTypes = [
+  {
+    id: "cashier",
+    name: "\u6536\u94f6\u5458",
+    hireCost: 120,
+    salary: 80,
+    desc: "\u524d\u53f0\u5f00\u673a\u3001\u6536\u94f6\uff0c\u540e\u7eed\u63a5\u5165\u8f6e\u73ed\u3002"
+  },
+  {
+    id: "floor",
+    name: "\u5916\u573a",
+    hireCost: 100,
+    salary: 70,
+    desc: "\u9001\u8d27\u3001\u6536\u62fe\u4e0b\u673a\u673a\u4f4d\u3002"
+  },
+  {
+    id: "manager",
+    name: "\u5e97\u957f",
+    hireCost: 380,
+    salary: 220,
+    desc: "\u7ba1\u7406\u5458\u5de5\uff0c\u9700\u6536\u94f6+\u5916\u573a\u81f3\u5c11 3 \u4eba\u3002"
+  },
+  {
+    id: "companion",
+    name: "\u966a\u73a9",
+    hireCost: 260,
+    salary: 160,
+    desc: "\u9ad8\u7aef\u7f51\u5496\u670d\u52a1\uff0c\u9700\u5e97\u957f + Lv.3\u3002"
+  }
+];
+
 const demandProductIds = [
   "noodle",
   "water",
@@ -114,6 +153,9 @@ const ui = {
   warehouseButton: null,
   closeWarehouseButton: null,
   warehouseProcurementButton: null,
+  hiringButton: null,
+  closeHiringButton: null,
+  hireButtons: [],
   buyButtons: []
 };
 
@@ -160,12 +202,12 @@ function createLayout() {
   ];
 
   const toilet = {
-    x: room.x + room.w * 0.58,
-    y: room.y + room.h - 62,
-    w: 84,
-    h: 44,
-    standX: room.x + room.w * 0.58 + 42,
-    standY: room.y + room.h - 72
+    x: room.x + room.w - 98,
+    y: room.y + room.h - 10,
+    w: 72,
+    h: 24,
+    standX: room.x + room.w - 62,
+    standY: room.y + room.h - 42
   };
 
   return { room, counter, entrance, queue, pcs, toilet };
@@ -334,6 +376,68 @@ function cleanToilet() {
   return true;
 }
 
+function getCoreStaffCount() {
+  return state.employees.cashier + state.employees.floor;
+}
+
+function getEmployeeTotal() {
+  return Object.keys(state.employees).reduce((total, key) => total + state.employees[key], 0);
+}
+
+function calculateCafeLevel() {
+  const employeeTotal = getEmployeeTotal();
+  const machineCount = layout.pcs.length;
+  const equipmentLevel = state.equipmentLevel;
+
+  if (employeeTotal >= 6 && machineCount >= 4 && equipmentLevel >= 1) return 4;
+  if (employeeTotal >= 4 && machineCount >= 4 && equipmentLevel >= 1) return 3;
+  if (employeeTotal >= 2 && machineCount >= 4 && equipmentLevel >= 1) return 2;
+  return 1;
+}
+
+function updateCafeLevel() {
+  const nextLevel = calculateCafeLevel();
+  if (nextLevel > state.cafeLevel) {
+    say(`\u7f51\u5427\u5347\u5230 Lv.${nextLevel}\uff0c\u65b0\u529f\u80fd\u5c06\u9010\u6b65\u89e3\u9501\u3002`);
+  }
+  state.cafeLevel = nextLevel;
+}
+
+function getStaffRequirement(staff) {
+  if (staff.id === "manager") {
+    return getCoreStaffCount() >= 3 ? "" : "\u9700\u6536\u94f6+\u5916\u573a\u81f3\u5c11 3 \u4eba";
+  }
+
+  if (staff.id === "companion") {
+    if (state.employees.manager < 1) return "\u9700\u5148\u62db\u8058\u5e97\u957f";
+    if (state.cafeLevel < 3) return "\u9700\u7f51\u5427 Lv.3";
+  }
+
+  return "";
+}
+
+function canHireStaff(staff) {
+  return !getStaffRequirement(staff) && state.cash >= staff.hireCost;
+}
+
+function hireStaff(staff) {
+  const requirement = getStaffRequirement(staff);
+  if (requirement) {
+    say(`${staff.name}\u62db\u8058\u5931\u8d25\uff1a${requirement}\u3002`);
+    return;
+  }
+
+  if (state.cash < staff.hireCost) {
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u62db\u8058 ${staff.name} \u9700\u8981 ${staff.hireCost} \u5143\u3002`);
+    return;
+  }
+
+  state.cash -= staff.hireCost;
+  state.employees[staff.id] += 1;
+  updateCafeLevel();
+  say(`\u5df2\u62db\u8058 ${staff.name}\uff0c\u5f53\u524d\u5458\u5de5 ${getEmployeeTotal()} \u4eba\u3002`);
+}
+
 function isPointInRect(x, y, button) {
   return button &&
     x >= button.x &&
@@ -369,8 +473,26 @@ function handleTouch(x, y) {
     return;
   }
 
+  if (state.hiringOpen) {
+    if (isPointInRect(x, y, ui.closeHiringButton)) {
+      state.hiringOpen = false;
+      return;
+    }
+
+    const hireButton = ui.hireButtons.find((button) => isPointInRect(x, y, button));
+    if (hireButton) {
+      hireStaff(hireButton.staff);
+    }
+    return;
+  }
+
   if (isPointInRect(x, y, ui.warehouseButton)) {
     state.warehouseOpen = true;
+    return;
+  }
+
+  if (isPointInRect(x, y, ui.hiringButton)) {
+    state.hiringOpen = true;
     return;
   }
 
@@ -531,8 +653,8 @@ function updateCleanliness(dt) {
     guest.state === "usingToilet" ||
     guest.state === "backToPc"
   )).length;
-  const toiletPenalty = state.toilet.dirty ? 0.028 : 0;
-  const decay = (0.003 * activeGuests + 0.018 * dirtyPcCount + toiletPenalty) * dt;
+  const toiletPenalty = state.toilet.dirty ? 0.01 : 0;
+  const decay = (0.0012 * activeGuests + 0.006 * dirtyPcCount + toiletPenalty) * dt;
 
   state.cleanliness = Math.max(0, state.cleanliness - decay);
 }
@@ -623,6 +745,7 @@ function updateGuests(dt) {
 function update(dt) {
   state.time += dt;
   state.messageTimer = Math.max(0, state.messageTimer - dt);
+  updateCafeLevel();
   updateSpawn();
   updateFrontDesk(dt);
   updateGuests(dt);
@@ -808,12 +931,14 @@ function drawActionBar() {
 
   text(`\u7f51\u5427 Lv.${state.cafeLevel}`, 16, y + 11, 13, COLORS.yellow, "bold");
 
-  const buttonW = 72;
+  const buttonW = 58;
   const buttonH = 34;
-  ui.warehouseButton = { x: view.width - buttonW * 2 - 24, y: y + 12, w: buttonW, h: buttonH };
+  ui.warehouseButton = { x: view.width - buttonW * 3 - 30, y: y + 12, w: buttonW, h: buttonH };
+  ui.hiringButton = { x: view.width - buttonW * 2 - 22, y: y + 12, w: buttonW, h: buttonH };
   ui.procurementButton = { x: view.width - buttonW - 14, y: y + 12, w: buttonW, h: buttonH };
 
   drawActionButton(ui.warehouseButton, "\u4ed3\u5e93");
+  drawActionButton(ui.hiringButton, "\u62db\u8058");
   drawActionButton(ui.procurementButton, "\u91c7\u8d2d");
 }
 
@@ -844,35 +969,34 @@ function drawStockShelf() {
 
 function drawToilet() {
   const toilet = layout.toilet;
-  rect(toilet.x, toilet.y, toilet.w, toilet.h, state.toilet.dirty ? "#b58b68" : "#d7d0bf");
-  strokeRect(toilet.x, toilet.y, toilet.w, toilet.h, COLORS.line, 3);
-  text("\u5395\u6240", toilet.x + toilet.w / 2, toilet.y + 6, 13, COLORS.line, "bold", "center");
-  rect(toilet.x + 12, toilet.y + 24, 22, 12, "#eef3e6");
-  rect(toilet.x + 52, toilet.y + 22, 18, 16, "#88a8b8");
-  rect(toilet.x + 56, toilet.y + 12, 10, 10, "#88a8b8");
+  rect(toilet.x, toilet.y, toilet.w, 10, state.toilet.dirty ? "#8f5f45" : "#5d382b");
+  rect(toilet.x + 8, toilet.y - 22, toilet.w - 16, 24, state.toilet.dirty ? "#b58b68" : "#8c6041");
+  strokeRect(toilet.x + 8, toilet.y - 22, toilet.w - 16, 24, COLORS.line, 2);
+  rect(toilet.x + toilet.w - 20, toilet.y - 10, 4, 4, COLORS.yellow);
+  text("\u5395\u6240", toilet.x + toilet.w / 2, toilet.y - 18, 13, COLORS.text, "bold", "center");
 
   if (state.toilet.dirty) {
-    rect(toilet.x + toilet.w - 14, toilet.y + 8, 8, 8, COLORS.red);
-    drawCleanBubble(toilet.x + toilet.w / 2, toilet.y - 30, "\u6e05\u5395\u6240");
+    rect(toilet.x + toilet.w - 17, toilet.y - 19, 8, 8, COLORS.red);
+    drawCleanBubble(toilet.x + toilet.w / 2, toilet.y - 54, "\u6e05\u5395\u6240");
   }
 }
 
 function drawCleanlinessThermometer() {
-  const x = view.width - 48;
-  const y = SAFE_TOP + 8;
-  const h = 48;
+  const x = 112;
+  const y = SAFE_TOP + 10;
+  const h = 32;
   const ratio = Math.max(0, Math.min(1, state.cleanliness / 100));
-  const fillH = Math.floor((h - 10) * ratio);
+  const fillH = Math.floor((h - 8) * ratio);
   const fillColor = ratio > 0.55 ? COLORS.green : ratio > 0.3 ? COLORS.yellow : COLORS.red;
 
-  rect(x, y, 14, h, "#e8d2a2");
-  strokeRect(x, y, 14, h, COLORS.line, 2);
-  rect(x + 3, y + h - 5 - fillH, 8, fillH, fillColor);
-  rect(x - 4, y + h - 2, 22, 12, "#e8d2a2");
-  strokeRect(x - 4, y + h - 2, 22, 12, COLORS.line, 2);
-  rect(x + 1, y + h + 1, 12, 6, fillColor);
-  text("\u6e05\u6d01", x - 34, y + 2, 11, COLORS.text, "bold");
-  text(`${Math.floor(state.cleanliness)}`, x - 30, y + 20, 12, COLORS.text, "bold");
+  text("\u6e05\u6d01", x, y - 2, 10, COLORS.text, "bold");
+  rect(x + 34, y + 1, 9, h, "#e8d2a2");
+  strokeRect(x + 34, y + 1, 9, h, COLORS.line, 2);
+  rect(x + 37, y + h - 3 - fillH, 3, fillH, fillColor);
+  rect(x + 31, y + h + 1, 15, 8, "#e8d2a2");
+  strokeRect(x + 31, y + h + 1, 15, 8, COLORS.line, 2);
+  rect(x + 35, y + h + 3, 7, 4, fillColor);
+  text(`${Math.floor(state.cleanliness)}`, x, y + 16, 11, COLORS.text, "bold");
 }
 
 function getInventoryTotal() {
@@ -1079,6 +1203,74 @@ function drawWarehousePanel() {
   text("\u5173", ui.closeWarehouseButton.x + ui.closeWarehouseButton.w / 2, ui.closeWarehouseButton.y + 4, 12, COLORS.text, "bold", "center");
 }
 
+function drawHiringPanel() {
+  if (!state.hiringOpen) return;
+
+  ui.hireButtons.length = 0;
+  rect(0, 0, view.width, view.height, "rgba(20, 18, 16, 0.72)");
+
+  const panel = {
+    x: 18,
+    y: HUD_HEIGHT + 8,
+    w: view.width - 36,
+    h: view.height - HUD_HEIGHT - 18
+  };
+
+  rect(panel.x, panel.y, panel.w, panel.h, "#f0c98a");
+  strokeRect(panel.x, panel.y, panel.w, panel.h, COLORS.wallDark, 4);
+  rect(panel.x, panel.y, panel.w, 42, "#8c4f35");
+  text("\u5458\u5de5\u62db\u8058", panel.x + 16, panel.y + 11, 18, COLORS.text, "bold");
+  text(`\u5458\u5de5 ${getEmployeeTotal()}  \u7f51\u5427 Lv.${state.cafeLevel}/4`, panel.x + panel.w - 132, panel.y + 14, 12, COLORS.text, "bold");
+
+  rect(panel.x + 10, panel.y + 48, panel.w - 20, 34, "#e3b86f");
+  text(`\u5347\u7ea7\u6761\u4ef6\uff1a\u5458\u5de5 ${getEmployeeTotal()} / \u8bbe\u5907 ${state.equipmentLevel} / \u673a\u5668 ${layout.pcs.length}`, panel.x + 18, panel.y + 56, 12, "#5d4532", "bold");
+
+  const startY = panel.y + 94;
+  const cardH = 78;
+  staffTypes.forEach((staff, index) => {
+    const y = startY + index * (cardH + 8);
+    if (y + cardH > panel.y + panel.h - 42) return;
+
+    const count = state.employees[staff.id];
+    const requirement = getStaffRequirement(staff);
+    const canHire = canHireStaff(staff);
+    rect(panel.x + 10, y, panel.w - 20, cardH, requirement ? "#c5a575" : "#f7dba5");
+    strokeRect(panel.x + 10, y, panel.w - 20, cardH, "#9a7043", 2);
+    drawStaffIcon(staff, panel.x + 22, y + 18, Boolean(requirement));
+    text(`${staff.name} x${count}`, panel.x + 66, y + 8, 15, COLORS.line, "bold");
+    text(`\u62db\u8058 ${staff.hireCost}  \u6708\u85aa ${staff.salary}`, panel.x + 66, y + 29, 11, "#5d4532", "bold");
+    text(requirement || staff.desc, panel.x + 66, y + 47, 10, requirement ? COLORS.red : "#5d4532");
+
+    const button = { x: panel.x + panel.w - 58, y: y + 12, w: 42, h: 26, staff };
+    ui.hireButtons.push(button);
+    rect(button.x, button.y, button.w, button.h, canHire ? "#4e8f4f" : "#9a6b55");
+    strokeRect(button.x, button.y, button.w, button.h, COLORS.line, 2);
+    text("\u62db", button.x + button.w / 2, button.y + 5, 14, COLORS.text, "bold", "center");
+  });
+
+  ui.closeHiringButton = { x: panel.x + panel.w - 50, y: panel.y + panel.h - 34, w: 38, h: 24 };
+  rect(ui.closeHiringButton.x, ui.closeHiringButton.y, ui.closeHiringButton.w, ui.closeHiringButton.h, "#7f5635");
+  strokeRect(ui.closeHiringButton.x, ui.closeHiringButton.y, ui.closeHiringButton.w, ui.closeHiringButton.h, COLORS.line, 2);
+  text("\u5173\u95ed", ui.closeHiringButton.x + ui.closeHiringButton.w / 2, ui.closeHiringButton.y + 4, 12, COLORS.text, "bold", "center");
+}
+
+function drawStaffIcon(staff, x, y, locked) {
+  const shirt = locked ? "#8c755f" : {
+    cashier: COLORS.blue,
+    floor: COLORS.green,
+    manager: COLORS.yellow,
+    companion: COLORS.red
+  }[staff.id];
+
+  rect(x - 10, y - 18, 20, 32, "#7b563b");
+  strokeRect(x - 10, y - 18, 20, 32, COLORS.line, 2);
+  rect(x - 5, y - 12, 10, 8, "#f3c596");
+  rect(x - 6, y - 15, 12, 4, "#2d1e1a");
+  rect(x - 7, y - 4, 14, 13, shirt);
+  rect(x - 7, y + 8, 5, 6, "#273444");
+  rect(x + 2, y + 8, 5, 6, "#273444");
+}
+
 function drawLegend() {
   text("入口", layout.room.x + 8, layout.entrance.y - 46, 11, COLORS.red, "bold");
   text("开局大厅 4 台机", layout.room.x + layout.room.w / 2, layout.pcs[2].y + 70, 11, COLORS.dimText, "bold", "center");
@@ -1097,6 +1289,7 @@ function render() {
   drawActionBar();
   drawProcurementPanel();
   drawWarehousePanel();
+  drawHiringPanel();
 }
 
 function loop() {
