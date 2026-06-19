@@ -13,6 +13,8 @@ const view = {
   width: systemInfo.windowWidth || 375,
   height: systemInfo.windowHeight || 667
 };
+const SAFE_TOP = Math.max(systemInfo.statusBarHeight || 0, 34);
+const HUD_HEIGHT = SAFE_TOP + 62;
 
 screenCanvas.width = view.width * dpr;
 screenCanvas.height = view.height * dpr;
@@ -108,13 +110,14 @@ const ui = {
 let lastFrameAt = Date.now();
 
 function createLayout() {
+  const roomY = HUD_HEIGHT + 18;
   const room = {
     x: 18,
-    y: 86,
+    y: roomY,
     w: view.width - 36,
-    h: Math.min(view.height - 132, view.width * 1.28)
+    h: Math.min(view.height - roomY - 48, view.width * 1.28)
   };
-  room.y = Math.max(76, (view.height - room.h) / 2 + 14);
+  room.y = Math.max(roomY, room.y);
 
   const counter = {
     x: room.x + room.w * 0.32,
@@ -640,15 +643,15 @@ function drawDemandBubble(guest) {
 }
 
 function drawHud() {
-  rect(0, 0, view.width, 72, "#273b35");
-  rect(0, 70, view.width, 3, COLORS.counterTop);
-  text("小黑网吧", 16, 12, 20, COLORS.text, "bold");
-  text(`现金 ${state.cash}`, 16, 42, 13, COLORS.green, "bold");
-  text(`接待 ${state.served}`, 112, 42, 13, COLORS.blue, "bold");
-  text(`流失 ${state.lost}`, 220, 42, 13, COLORS.red, "bold");
-  text(`Lv.${state.cafeLevel}`, view.width - 106, 14, 13, COLORS.yellow, "bold");
+  rect(0, 0, view.width, HUD_HEIGHT, "#273b35");
+  rect(0, HUD_HEIGHT - 3, view.width, 3, COLORS.counterTop);
+  text("\u5c0f\u9ed1\u7f51\u5427", 16, SAFE_TOP + 6, 20, COLORS.text, "bold");
+  text(`\u73b0\u91d1 ${state.cash}`, 16, SAFE_TOP + 38, 13, COLORS.green, "bold");
+  text(`\u63a5\u5f85 ${state.served}`, 112, SAFE_TOP + 38, 13, COLORS.blue, "bold");
+  text(`\u6d41\u5931 ${state.lost}`, 220, SAFE_TOP + 38, 13, COLORS.red, "bold");
+  text(`Lv.${state.cafeLevel}`, view.width - 106, SAFE_TOP + 8, 13, COLORS.yellow, "bold");
 
-  ui.procurementButton = { x: view.width - 68, y: 10, w: 54, h: 28 };
+  ui.procurementButton = { x: view.width - 68, y: SAFE_TOP + 4, w: 54, h: 28 };
   rect(ui.procurementButton.x, ui.procurementButton.y, ui.procurementButton.w, ui.procurementButton.h, "#7f5635");
   strokeRect(ui.procurementButton.x, ui.procurementButton.y, ui.procurementButton.w, ui.procurementButton.h, COLORS.counterEdge, 2);
   text("\u91c7\u8d2d", ui.procurementButton.x + ui.procurementButton.w / 2, ui.procurementButton.y + 5, 14, COLORS.text, "bold", "center");
@@ -687,9 +690,9 @@ function drawProcurementPanel() {
 
   const panel = {
     x: 18,
-    y: 92,
+    y: HUD_HEIGHT + 8,
     w: view.width - 36,
-    h: view.height - 136
+    h: view.height - HUD_HEIGHT - 18
   };
 
   rect(panel.x, panel.y, panel.w, panel.h, "#f0c98a");
@@ -700,28 +703,39 @@ function drawProcurementPanel() {
 
   ui.closeProcurementButton = { x: panel.x + panel.w - 50, y: panel.y + panel.h - 34, w: 38, h: 24 };
 
-  const startY = panel.y + 54;
-  const rowH = 39;
+  const startY = panel.y + 52;
+  const gap = 5;
+  const cols = 2;
+  const cardW = (panel.w - 26 - gap) / cols;
+  const cardH = 72;
   products.forEach((product, index) => {
-    const y = startY + index * rowH;
-    if (y > panel.y + panel.h - 46) return;
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    const x = panel.x + 10 + col * (cardW + gap);
+    const y = startY + row * (cardH + gap);
+    if (y + cardH > panel.y + panel.h - 36) return;
 
     const unlocked = state.cafeLevel >= product.unlockLevel;
     const stock = state.inventory[product.id] || 0;
-    const rowColor = unlocked ? "#f7dba5" : "#c9a878";
-    rect(panel.x + 10, y, panel.w - 20, rowH - 6, rowColor);
-    strokeRect(panel.x + 10, y, panel.w - 20, rowH - 6, "#9a7043", 1);
+    const unitCost = Math.ceil(product.cost / product.quantity * 10) / 10;
+    const cardColor = unlocked ? "#f7dba5" : "#c5a575";
+    rect(x, y, cardW, cardH, cardColor);
+    strokeRect(x, y, cardW, cardH, unlocked ? "#9a7043" : "#80664f", 2);
+    drawProductIcon(product, x + 10, y + 10, !unlocked);
 
-    text(product.name, panel.x + 18, y + 6, 14, unlocked ? COLORS.line : "#745a46", "bold");
-    text(`\u5e93\u5b58 ${stock}`, panel.x + 88, y + 7, 11, "#5d4532", "bold");
-    text(`\u8fdb\u4ef7 ${product.cost} / x${product.quantity}`, panel.x + 146, y + 7, 11, "#5d4532");
+    text(product.name, x + 50, y + 8, 14, unlocked ? COLORS.line : "#745a46", "bold");
+    text(`\u5e93\u5b58 ${stock}`, x + 50, y + 26, 11, "#5d4532", "bold");
+    text(`\u552e\u4ef7 ${product.sellPrice}`, x + 50, y + 42, 10, "#5d4532");
+    text(`\u6210\u672c ${unitCost}\u5143/\u4e2a`, x + 8, y + 49, 10, "#5d4532");
+    text(`\u8d77\u6279 ${product.quantity}`, x + 8, y + 61, 10, "#5d4532");
 
-    const button = { x: panel.x + panel.w - 58, y: y + 5, w: 42, h: 23, product };
+    const button = { x: x + cardW - 48, y: y + cardH - 25, w: 38, h: 20, product };
     ui.buyButtons.push(button);
 
     if (!unlocked) {
       rect(button.x, button.y, button.w, button.h, "#8d7b66");
       text(`Lv.${product.unlockLevel}`, button.x + button.w / 2, button.y + 5, 11, "#f8e0b0", "bold", "center");
+      rect(x, y, cardW, cardH, "rgba(75, 59, 45, 0.18)");
     } else {
       rect(button.x, button.y, button.w, button.h, canBuyProduct(product) ? "#4e8f4f" : "#9a6b55");
       text("\u4e70", button.x + button.w / 2, button.y + 3, 14, COLORS.text, "bold", "center");
@@ -731,6 +745,69 @@ function drawProcurementPanel() {
   rect(ui.closeProcurementButton.x, ui.closeProcurementButton.y, ui.closeProcurementButton.w, ui.closeProcurementButton.h, "#7f5635");
   strokeRect(ui.closeProcurementButton.x, ui.closeProcurementButton.y, ui.closeProcurementButton.w, ui.closeProcurementButton.h, COLORS.line, 2);
   text("\u5173\u95ed", ui.closeProcurementButton.x + ui.closeProcurementButton.w / 2, ui.closeProcurementButton.y + 4, 12, COLORS.text, "bold", "center");
+}
+
+function drawProductIcon(product, x, y, locked) {
+  const fade = locked ? "#8c755f" : null;
+  const main = fade || {
+    noodle: "#d98236",
+    water: "#58a6d6",
+    sausage: "#b84e3e",
+    betel: "#5f9f61",
+    cigarette: "#e9dfc7",
+    snack: "#e5b94d",
+    drink: "#d85c73",
+    meal: "#c7834b",
+    milkTea: "#c98a62"
+  }[product.id] || COLORS.yellow;
+
+  rect(x, y, 32, 32, "#7b563b");
+  strokeRect(x, y, 32, 32, COLORS.line, 2);
+
+  if (product.id === "noodle") {
+    rect(x + 6, y + 9, 20, 15, main);
+    rect(x + 9, y + 12, 14, 2, COLORS.yellow);
+    rect(x + 9, y + 17, 14, 2, COLORS.yellow);
+  } else if (product.id === "water") {
+    rect(x + 11, y + 5, 10, 22, main);
+    rect(x + 13, y + 8, 6, 4, "#dff7ff");
+    rect(x + 12, y + 3, 8, 3, "#dff7ff");
+  } else if (product.id === "sausage") {
+    rect(x + 8, y + 8, 16, 16, main);
+    rect(x + 6, y + 11, 4, 10, "#e9b56a");
+    rect(x + 22, y + 11, 4, 10, "#e9b56a");
+  } else if (product.id === "betel") {
+    rect(x + 8, y + 9, 16, 14, main);
+    rect(x + 12, y + 6, 8, 4, "#85c86e");
+    rect(x + 11, y + 14, 10, 3, "#dff0ba");
+  } else if (product.id === "cigarette") {
+    rect(x + 7, y + 10, 18, 12, main);
+    rect(x + 20, y + 10, 5, 12, COLORS.red);
+    rect(x + 10, y + 13, 8, 2, "#8b6b4d");
+  } else if (product.id === "snack") {
+    rect(x + 9, y + 7, 14, 18, main);
+    rect(x + 11, y + 10, 10, 3, COLORS.red);
+    rect(x + 12, y + 17, 8, 3, "#fff0c5");
+  } else if (product.id === "drink") {
+    rect(x + 10, y + 7, 12, 19, main);
+    rect(x + 12, y + 4, 8, 4, "#f3d8b7");
+    rect(x + 13, y + 13, 6, 5, "#fff0c5");
+  } else if (product.id === "meal") {
+    rect(x + 6, y + 9, 20, 14, main);
+    rect(x + 9, y + 12, 7, 5, "#fff0c5");
+    rect(x + 17, y + 12, 6, 5, COLORS.green);
+  } else if (product.id === "milkTea") {
+    rect(x + 10, y + 7, 12, 20, main);
+    rect(x + 8, y + 6, 16, 4, "#f3d8b7");
+    rect(x + 13, y + 12, 6, 3, "#fff0c5");
+    rect(x + 13, y + 20, 3, 3, "#5d4532");
+    rect(x + 17, y + 21, 3, 3, "#5d4532");
+  }
+
+  if (locked) {
+    rect(x + 21, y + 20, 8, 8, "#5a4638");
+    rect(x + 23, y + 16, 4, 7, "#5a4638");
+  }
 }
 
 function drawLegend() {
