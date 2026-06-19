@@ -87,6 +87,18 @@ const products = [
   { id: "milkTea", name: "\u5976\u8336", unlockLevel: 4, cost: 120, quantity: 10, sellPrice: 22 }
 ];
 
+const demandProductIds = [
+  "noodle",
+  "water",
+  "sausage",
+  "betel",
+  "cigarette",
+  "snack",
+  "drink",
+  "meal",
+  "milkTea"
+];
+
 const ui = {
   procurementButton: null,
   closeProcurementButton: null,
@@ -176,6 +188,82 @@ function buyProduct(product) {
   say(`\u91c7\u8d2d ${product.name} x${product.quantity}\uff0c\u5e93\u5b58\u5df2\u5165\u8d26\u3002`);
 }
 
+function getProductById(id) {
+  return products.find((product) => product.id === id);
+}
+
+function createDemand() {
+  const id = demandProductIds[Math.floor(Math.random() * demandProductIds.length)];
+  const product = getProductById(id);
+
+  return {
+    productId: id,
+    productName: product.name,
+    timer: 16,
+    patience: 16,
+    handled: false
+  };
+}
+
+function tryCreateDemand(guest, dt) {
+  if (guest.demand || guest.demandDone || guest.playTimer > guest.playDuration * 0.72) return;
+
+  guest.demandRollTimer -= dt;
+  if (guest.demandRollTimer > 0) return;
+
+  guest.demandRollTimer = random(4, 7);
+  if (Math.random() < 0.45) {
+    guest.demand = createDemand();
+    guest.demandDone = true;
+    say(`\u987e\u5ba2 ${guest.id} \u60f3\u8981 ${guest.demand.productName}\uff0c\u70b9\u4ed6\u624b\u52a8\u9001\u8d27\u3002`);
+  }
+}
+
+function updateDemand(guest, dt) {
+  if (!guest.demand) return;
+
+  guest.demand.timer -= dt;
+  if (guest.demand.timer > 0) return;
+
+  say(`\u987e\u5ba2 ${guest.id} \u7b49\u4e0d\u5230 ${guest.demand.productName}\uff0c\u8fd9\u5355\u6ca1\u8d5a\u5230\u3002`);
+  guest.demand = null;
+}
+
+function serveGuestDemand(guest) {
+  if (!guest || !guest.demand) return false;
+
+  const product = getProductById(guest.demand.productId);
+  if (!product) return false;
+
+  if (state.cafeLevel < product.unlockLevel) {
+    say(`${product.name} \u9700\u8981\u7f51\u5427 Lv.${product.unlockLevel}\uff0c\u76ee\u524d\u65e0\u6cd5\u63d0\u4f9b\u3002`);
+    guest.demand = null;
+    return true;
+  }
+
+  const stock = state.inventory[product.id] || 0;
+  if (stock <= 0) {
+    say(`${product.name} \u6ca1\u5e93\u5b58\uff0c\u5148\u53bb\u91c7\u8d2d\u9875\u8fdb\u8d27\u3002`);
+    return true;
+  }
+
+  state.inventory[product.id] = stock - 1;
+  state.cash += product.sellPrice;
+  say(`\u9001\u51fa ${product.name}\uff0c\u989d\u5916\u6536\u5165 ${product.sellPrice} \u5143\u3002`);
+  guest.demand = null;
+  return true;
+}
+
+function findTappedGuest(x, y) {
+  return state.guests.find((guest) => (
+    guest.state === "playing" &&
+    x >= guest.x - 18 &&
+    x <= guest.x + 18 &&
+    y >= guest.y - 42 &&
+    y <= guest.y + 20
+  ));
+}
+
 function isPointInRect(x, y, button) {
   return button &&
     x >= button.x &&
@@ -200,6 +288,12 @@ function handleTouch(x, y) {
 
   if (isPointInRect(x, y, ui.procurementButton)) {
     state.procurementOpen = true;
+    return;
+  }
+
+  const guest = findTappedGuest(x, y);
+  if (guest && serveGuestDemand(guest)) {
+    return;
   }
 }
 
@@ -242,7 +336,10 @@ function spawnGuest() {
     queueIndex: -1,
     pcId: null,
     playTimer: 0,
-    playDuration: random(8, 13),
+    playDuration: random(28, 42),
+    demandRollTimer: random(5, 9),
+    demand: null,
+    demandDone: false,
     speed: random(44, 58),
     palette
   });
@@ -367,6 +464,8 @@ function updateGuests(dt) {
       const pc = layout.pcs[guest.pcId];
       guest.x = pc.seatX;
       guest.y = pc.seatY;
+      tryCreateDemand(guest, dt);
+      updateDemand(guest, dt);
       guest.playTimer -= dt;
       if (guest.playTimer <= 0) {
         finishPlaying(guest, pc);
@@ -517,6 +616,27 @@ function drawGuest(guest) {
   if (guest.state === "queueing") {
     text("...", x, y - 36, 11, COLORS.text, "bold", "center");
   }
+
+  if (guest.state === "playing" && guest.demand) {
+    drawDemandBubble(guest);
+  }
+}
+
+function drawDemandBubble(guest) {
+  const x = Math.round(guest.x);
+  const y = Math.round(guest.y) - 48;
+  const product = getProductById(guest.demand.productId);
+  const label = product ? product.name : guest.demand.productName;
+  const bubbleW = Math.max(48, label.length * 15 + 14);
+  const bubbleX = Math.max(12, Math.min(view.width - bubbleW - 12, x - bubbleW / 2));
+  const progress = Math.max(0, guest.demand.timer / guest.demand.patience);
+
+  rect(bubbleX, y, bubbleW, 28, "#fff1c7");
+  strokeRect(bubbleX, y, bubbleW, 28, COLORS.line, 2);
+  text(label, bubbleX + bubbleW / 2, y + 4, 13, COLORS.line, "bold", "center");
+  rect(bubbleX + 5, y + 22, bubbleW - 10, 3, "#8c6b4a");
+  rect(bubbleX + 5, y + 22, (bubbleW - 10) * progress, 3, COLORS.red);
+  rect(x - 3, y + 26, 6, 6, "#fff1c7");
 }
 
 function drawHud() {
