@@ -77,9 +77,12 @@ const state = {
   employees: {
     cashier: 0,
     floor: 0,
+    cleaner: 0,
     manager: 0,
     companion: 0
   },
+  workerId: 1,
+  workers: [],
   inventory: {},
   message: "客人进门、前台开机、上机读条、下机离场。",
   messageTimer: 5
@@ -118,6 +121,13 @@ const staffTypes = [
     hireCost: 100,
     salary: 70,
     desc: "\u9001\u8d27\u3001\u6536\u62fe\u4e0b\u673a\u673a\u4f4d\u3002"
+  },
+  {
+    id: "cleaner",
+    name: "\u4fdd\u6d01",
+    hireCost: 90,
+    salary: 65,
+    desc: "\u6e05\u7406\u673a\u4f4d\u3001\u5395\u6240\u548c\u5730\u9762\u536b\u751f\u3002"
   },
   {
     id: "manager",
@@ -210,7 +220,22 @@ function createLayout() {
     standY: room.y + room.h - 42
   };
 
-  return { room, counter, entrance, queue, pcs, toilet };
+  const staffHome = {
+    cashier: { x: counter.x + counter.w - 22, y: counter.y + counter.h + 14 },
+    floor: { x: room.x + 44, y: room.y + room.h - 70 },
+    cleaner: { x: room.x + room.w - 42, y: room.y + room.h - 70 },
+    manager: { x: counter.x + counter.w + 24, y: counter.y + counter.h + 18 },
+    companion: { x: room.x + room.w - 70, y: room.y + 90 }
+  };
+
+  const patrolPoints = [
+    { x: room.x + 42, y: room.y + 96 },
+    { x: room.x + room.w - 54, y: room.y + 98 },
+    { x: room.x + 48, y: room.y + room.h - 76 },
+    { x: room.x + room.w - 58, y: room.y + room.h - 82 }
+  ];
+
+  return { room, counter, entrance, queue, pcs, toilet, staffHome, patrolPoints };
 }
 
 function createPc(id, x, y) {
@@ -250,6 +275,17 @@ function buyProduct(product) {
   state.cash -= product.cost;
   state.inventory[product.id] = (state.inventory[product.id] || 0) + product.quantity;
   say(`\u91c7\u8d2d ${product.name} x${product.quantity}\uff0c\u5e93\u5b58\u5df2\u5165\u8d26\u3002`);
+}
+
+function restockProduct(product, silent = false) {
+  if (state.cafeLevel < product.unlockLevel || state.cash < product.cost) return false;
+
+  state.cash -= product.cost;
+  state.inventory[product.id] = (state.inventory[product.id] || 0) + product.quantity;
+  if (!silent) {
+    say(`\u5e97\u957f\u81ea\u52a8\u8865\u8d27 ${product.name} x${product.quantity}\u3002`);
+  }
+  return true;
 }
 
 function getProductById(id) {
@@ -354,6 +390,7 @@ function findTappedDirtyPc(x, y) {
 function cleanPc(pc) {
   pc.dirty = false;
   pc.cleanTimer = 0;
+  pc.cleanWorkerId = null;
   state.cleanliness = Math.min(100, state.cleanliness + 8);
   say(`\u5df2\u6e05\u6d01 ${pc.id + 1} \u53f7\u673a\uff0c\u6e05\u6d01\u503c\u56de\u5347\u3002`);
 }
@@ -371,6 +408,7 @@ function cleanToilet() {
 
   state.toilet.dirty = false;
   state.toilet.useCount = 0;
+  state.toilet.cleanWorkerId = null;
   state.cleanliness = Math.min(100, state.cleanliness + 12);
   say("\u5395\u6240\u5df2\u6e05\u6d01\uff0c\u5ba2\u4eba\u4f53\u9a8c\u597d\u4e86\u4e00\u70b9\u3002");
   return true;
@@ -382,6 +420,44 @@ function getCoreStaffCount() {
 
 function getEmployeeTotal() {
   return Object.keys(state.employees).reduce((total, key) => total + state.employees[key], 0);
+}
+
+function createWorker(type) {
+  const home = layout.staffHome[type] || layout.staffHome.floor;
+  return {
+    id: state.workerId++,
+    type,
+    x: home.x,
+    y: home.y,
+    state: type === "cashier" ? "station" : "patrol",
+    taskTimer: 0,
+    targetPcId: null,
+    targetGuestId: null,
+    targetProductId: null,
+    patrolIndex: Math.floor(Math.random() * layout.patrolPoints.length)
+  };
+}
+
+function canWorkerClean(worker) {
+  return worker.type === "floor" || worker.type === "cleaner" || worker.type === "manager";
+}
+
+function canWorkerDeliver(worker) {
+  return worker.type === "cashier" || worker.type === "floor" || worker.type === "manager";
+}
+
+function getWorkerLabel(type) {
+  return {
+    cashier: "\u6536\u94f6",
+    floor: "\u5916\u573a",
+    cleaner: "\u4fdd\u6d01",
+    manager: "\u5e97\u957f",
+    companion: "\u966a\u73a9"
+  }[type] || "\u5458\u5de5";
+}
+
+function getIdleWorkers() {
+  return state.workers.filter((worker) => worker.state === "patrol" || worker.state === "station");
 }
 
 function calculateCafeLevel() {
@@ -434,6 +510,7 @@ function hireStaff(staff) {
 
   state.cash -= staff.hireCost;
   state.employees[staff.id] += 1;
+  state.workers.push(createWorker(staff.id));
   updateCafeLevel();
   say(`\u5df2\u62db\u8058 ${staff.name}\uff0c\u5f53\u524d\u5458\u5de5 ${getEmployeeTotal()} \u4eba\u3002`);
 }
@@ -588,6 +665,8 @@ function updateSpawn() {
 }
 
 function updateFrontDesk(dt) {
+  state.frontDesk.duration = state.employees.cashier > 0 ? 0.72 : 1.15;
+
   if (state.frontDesk.busyGuestId) {
     state.frontDesk.timer -= dt;
     if (state.frontDesk.timer > 0) return;
@@ -657,6 +736,214 @@ function updateCleanliness(dt) {
   const decay = (0.0012 * activeGuests + 0.006 * dirtyPcCount + toiletPenalty) * dt;
 
   state.cleanliness = Math.max(0, state.cleanliness - decay);
+}
+
+function assignWorkerTasks() {
+  getIdleWorkers().forEach((worker) => {
+    if (canWorkerDeliver(worker) && assignDeliveryTask(worker)) return;
+    if (canWorkerClean(worker) && assignCleaningTask(worker)) return;
+
+    if (worker.state === "station") {
+      const home = layout.staffHome[worker.type] || layout.staffHome.floor;
+      moveToward(worker, home, 34, 1 / 60);
+    }
+  });
+}
+
+function assignDeliveryTask(worker) {
+  const guest = state.guests.find((item) => (
+    item.state === "playing" &&
+    item.demand &&
+    !item.demand.assignedWorkerId &&
+    canServeDemandAutomatically(item)
+  ));
+
+  if (!guest) return false;
+
+  guest.demand.assignedWorkerId = worker.id;
+  worker.state = "toDeliver";
+  worker.targetGuestId = guest.id;
+  worker.targetProductId = guest.demand.productId;
+  return true;
+}
+
+function canServeDemandAutomatically(guest) {
+  const product = getProductById(guest.demand.productId);
+  return product &&
+    state.cafeLevel >= product.unlockLevel &&
+    (state.inventory[product.id] || 0) > 0;
+}
+
+function assignCleaningTask(worker) {
+  const pc = layout.pcs.find((item) => item.dirty && !item.cleanWorkerId);
+  if (pc) {
+    pc.cleanWorkerId = worker.id;
+    worker.state = "toCleanPc";
+    worker.targetPcId = pc.id;
+    return true;
+  }
+
+  if (state.toilet.dirty && !state.toilet.cleanWorkerId) {
+    state.toilet.cleanWorkerId = worker.id;
+    worker.state = "toCleanToilet";
+    return true;
+  }
+
+  return false;
+}
+
+function updateWorkers(dt) {
+  assignWorkerTasks();
+  updateManagerRestock(dt);
+
+  state.workers.forEach((worker) => {
+    if (worker.state === "station") {
+      const home = layout.staffHome[worker.type] || layout.staffHome.floor;
+      moveToward(worker, home, 36, dt);
+      return;
+    }
+
+    if (worker.state === "patrol") {
+      updateWorkerPatrol(worker, dt);
+      return;
+    }
+
+    if (worker.state === "toCleanPc") {
+      const pc = layout.pcs[worker.targetPcId];
+      if (!pc || !pc.dirty) {
+        resetWorker(worker);
+        return;
+      }
+      if (moveToward(worker, { x: pc.seatX, y: pc.seatY }, 58, dt)) {
+        worker.state = "cleaningPc";
+        worker.taskTimer = worker.type === "cleaner" ? 1.1 : 1.6;
+      }
+      return;
+    }
+
+    if (worker.state === "cleaningPc") {
+      worker.taskTimer -= dt;
+      if (worker.taskTimer <= 0) {
+        const pc = layout.pcs[worker.targetPcId];
+        if (pc && pc.dirty) {
+          cleanPcByWorker(pc);
+        }
+        resetWorker(worker);
+      }
+      return;
+    }
+
+    if (worker.state === "toCleanToilet") {
+      if (!state.toilet.dirty) {
+        resetWorker(worker);
+        return;
+      }
+      if (moveToward(worker, { x: layout.toilet.standX, y: layout.toilet.standY }, 58, dt)) {
+        worker.state = "cleaningToilet";
+        worker.taskTimer = worker.type === "cleaner" ? 1.2 : 1.8;
+      }
+      return;
+    }
+
+    if (worker.state === "cleaningToilet") {
+      worker.taskTimer -= dt;
+      if (worker.taskTimer <= 0) {
+        cleanToiletByWorker();
+        resetWorker(worker);
+      }
+      return;
+    }
+
+    if (worker.state === "toDeliver") {
+      const guest = state.guests.find((item) => item.id === worker.targetGuestId);
+      if (!guest || !guest.demand || guest.demand.productId !== worker.targetProductId) {
+        resetWorker(worker);
+        return;
+      }
+      if (moveToward(worker, { x: guest.x, y: guest.y + 10 }, 62, dt)) {
+        worker.state = "delivering";
+        worker.taskTimer = 0.7;
+      }
+      return;
+    }
+
+    if (worker.state === "delivering") {
+      worker.taskTimer -= dt;
+      if (worker.taskTimer <= 0) {
+        const guest = state.guests.find((item) => item.id === worker.targetGuestId);
+        if (guest && guest.demand) {
+          serveGuestDemandByWorker(guest);
+        }
+        resetWorker(worker);
+      }
+    }
+  });
+}
+
+function updateWorkerPatrol(worker, dt) {
+  const target = layout.patrolPoints[worker.patrolIndex % layout.patrolPoints.length];
+  if (moveToward(worker, target, 34, dt)) {
+    worker.patrolIndex = (worker.patrolIndex + 1) % layout.patrolPoints.length;
+  }
+}
+
+function cleanPcByWorker(pc) {
+  pc.dirty = false;
+  pc.cleanWorkerId = null;
+  state.cleanliness = Math.min(100, state.cleanliness + 7);
+  say(`\u5458\u5de5\u5df2\u6e05\u7406 ${pc.id + 1} \u53f7\u673a\u3002`);
+}
+
+function cleanToiletByWorker() {
+  state.toilet.dirty = false;
+  state.toilet.useCount = 0;
+  state.toilet.cleanWorkerId = null;
+  state.cleanliness = Math.min(100, state.cleanliness + 10);
+  say("\u5458\u5de5\u5df2\u6e05\u7406\u5395\u6240\u3002");
+}
+
+function serveGuestDemandByWorker(guest) {
+  const product = getProductById(guest.demand.productId);
+  if (!product || (state.inventory[product.id] || 0) <= 0 || state.cafeLevel < product.unlockLevel) {
+    if (guest.demand) guest.demand.assignedWorkerId = null;
+    return false;
+  }
+
+  state.inventory[product.id] -= 1;
+  state.cash += product.sellPrice;
+  say(`\u5458\u5de5\u9001\u51fa ${product.name}\uff0c\u989d\u5916\u6536\u5165 ${product.sellPrice} \u5143\u3002`);
+  guest.demand = null;
+  return true;
+}
+
+function resetWorker(worker) {
+  const pc = layout.pcs[worker.targetPcId];
+  if (pc && pc.cleanWorkerId === worker.id) pc.cleanWorkerId = null;
+  if (state.toilet.cleanWorkerId === worker.id) state.toilet.cleanWorkerId = null;
+
+  worker.targetPcId = null;
+  worker.targetGuestId = null;
+  worker.targetProductId = null;
+  worker.taskTimer = 0;
+  worker.state = worker.type === "cashier" ? "station" : "patrol";
+}
+
+function updateManagerRestock(dt) {
+  if (state.employees.manager < 1) return;
+
+  state.managerRestockTimer = (state.managerRestockTimer || 0) - dt;
+  if (state.managerRestockTimer > 0) return;
+  state.managerRestockTimer = 5;
+
+  const product = products.find((item) => (
+    state.cafeLevel >= item.unlockLevel &&
+    (state.inventory[item.id] || 0) <= 1 &&
+    state.cash >= item.cost
+  ));
+
+  if (product) {
+    restockProduct(product);
+  }
 }
 
 function updateGuests(dt) {
@@ -749,6 +1036,7 @@ function update(dt) {
   updateSpawn();
   updateFrontDesk(dt);
   updateGuests(dt);
+  updateWorkers(dt);
   updateCleanliness(dt);
 }
 
@@ -1225,10 +1513,10 @@ function drawHiringPanel() {
   rect(panel.x + 10, panel.y + 48, panel.w - 20, 34, "#e3b86f");
   text(`\u5347\u7ea7\u6761\u4ef6\uff1a\u5458\u5de5 ${getEmployeeTotal()} / \u8bbe\u5907 ${state.equipmentLevel} / \u673a\u5668 ${layout.pcs.length}`, panel.x + 18, panel.y + 56, 12, "#5d4532", "bold");
 
-  const startY = panel.y + 94;
-  const cardH = 78;
+  const startY = panel.y + 88;
+  const cardH = 62;
   staffTypes.forEach((staff, index) => {
-    const y = startY + index * (cardH + 8);
+    const y = startY + index * (cardH + 6);
     if (y + cardH > panel.y + panel.h - 42) return;
 
     const count = state.employees[staff.id];
@@ -1236,12 +1524,12 @@ function drawHiringPanel() {
     const canHire = canHireStaff(staff);
     rect(panel.x + 10, y, panel.w - 20, cardH, requirement ? "#c5a575" : "#f7dba5");
     strokeRect(panel.x + 10, y, panel.w - 20, cardH, "#9a7043", 2);
-    drawStaffIcon(staff, panel.x + 22, y + 18, Boolean(requirement));
-    text(`${staff.name} x${count}`, panel.x + 66, y + 8, 15, COLORS.line, "bold");
-    text(`\u62db\u8058 ${staff.hireCost}  \u6708\u85aa ${staff.salary}`, panel.x + 66, y + 29, 11, "#5d4532", "bold");
-    text(requirement || staff.desc, panel.x + 66, y + 47, 10, requirement ? COLORS.red : "#5d4532");
+    drawStaffIcon(staff, panel.x + 22, y + 17, Boolean(requirement));
+    text(`${staff.name} x${count}`, panel.x + 62, y + 7, 14, COLORS.line, "bold");
+    text(`\u62db ${staff.hireCost}  \u6708\u85aa ${staff.salary}`, panel.x + 62, y + 26, 10, "#5d4532", "bold");
+    text(requirement || staff.desc, panel.x + 62, y + 42, 9, requirement ? COLORS.red : "#5d4532");
 
-    const button = { x: panel.x + panel.w - 58, y: y + 12, w: 42, h: 26, staff };
+    const button = { x: panel.x + panel.w - 54, y: y + 10, w: 38, h: 24, staff };
     ui.hireButtons.push(button);
     rect(button.x, button.y, button.w, button.h, canHire ? "#4e8f4f" : "#9a6b55");
     strokeRect(button.x, button.y, button.w, button.h, COLORS.line, 2);
@@ -1258,6 +1546,7 @@ function drawStaffIcon(staff, x, y, locked) {
   const shirt = locked ? "#8c755f" : {
     cashier: COLORS.blue,
     floor: COLORS.green,
+    cleaner: "#9dd3df",
     manager: COLORS.yellow,
     companion: COLORS.red
   }[staff.id];
@@ -1267,8 +1556,30 @@ function drawStaffIcon(staff, x, y, locked) {
   rect(x - 5, y - 12, 10, 8, "#f3c596");
   rect(x - 6, y - 15, 12, 4, "#2d1e1a");
   rect(x - 7, y - 4, 14, 13, shirt);
+  rect(x - 6, y - 3, 12, 11, "#1f1b18");
+  rect(x - 5, y - 1, 10, 3, COLORS.yellow);
   rect(x - 7, y + 8, 5, 6, "#273444");
   rect(x + 2, y + 8, 5, 6, "#273444");
+}
+
+function drawWorker(worker) {
+  const x = Math.round(worker.x);
+  const y = Math.round(worker.y);
+
+  rect(x - 7, y - 23, 14, 5, "#2d1e1a");
+  rect(x - 5, y - 19, 10, 8, "#f3c596");
+  rect(x - 8, y - 11, 16, 16, "#1f1b18");
+  rect(x - 7, y - 8, 14, 4, COLORS.yellow);
+  rect(x - 4, y - 11, 3, 16, COLORS.yellow);
+  rect(x + 1, y - 11, 3, 16, COLORS.yellow);
+  rect(x - 8, y + 4, 6, 10, "#273444");
+  rect(x + 2, y + 4, 6, 10, "#273444");
+
+  const label = getWorkerLabel(worker.type);
+  const bubbleW = Math.max(32, label.length * 13 + 8);
+  rect(x - bubbleW / 2, y - 42, bubbleW, 17, "#fff1c7");
+  strokeRect(x - bubbleW / 2, y - 42, bubbleW, 17, COLORS.line, 1);
+  text(label, x, y - 40, 10, COLORS.line, "bold", "center");
 }
 
 function drawLegend() {
@@ -1284,6 +1595,7 @@ function render() {
   drawToilet();
   layout.pcs.forEach(drawPc);
   drawLegend();
+  state.workers.forEach(drawWorker);
   state.guests.forEach(drawGuest);
   drawHud();
   drawActionBar();
