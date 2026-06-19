@@ -52,7 +52,7 @@ const COLORS = {
 
 const layout = createLayout();
 const state = {
-  cash: 100,
+  cash: 10000,
   cafeLevel: 1,
   equipmentLevel: 1,
   cleanliness: 100,
