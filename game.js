@@ -25,22 +25,26 @@ const raf = typeof requestAnimationFrame === "function"
 
 const TILE = 12;
 const COLORS = {
-  wall: "#2a2526",
-  wallDark: "#171516",
-  floor: "#d8b486",
-  floorAlt: "#c79c6d",
-  counter: "#8f4d2f",
-  counterTop: "#c07a42",
-  pcDesk: "#6a3f2b",
-  pcScreen: "#1b2730",
-  pcGlow: "#65e8a2",
-  line: "#241917",
-  text: "#fff4cf",
-  dimText: "#b99f7c",
-  red: "#e84855",
-  green: "#5ec27f",
-  yellow: "#ffd166",
-  blue: "#70a1ff"
+  wall: "#7b4d36",
+  wallTop: "#a76a43",
+  wallDark: "#3a2520",
+  floor: "#d9b47d",
+  floorAlt: "#cfa66e",
+  floorLine: "#b88759",
+  counter: "#8c4f35",
+  counterTop: "#c98954",
+  counterEdge: "#f0c16f",
+  pcDesk: "#6f472d",
+  pcScreen: "#17222a",
+  pcGlow: "#79e7a4",
+  line: "#2b1b18",
+  text: "#fff0c5",
+  dimText: "#7e5b42",
+  red: "#d94a45",
+  green: "#69b96d",
+  yellow: "#f4c95d",
+  blue: "#5f9ed1",
+  plant: "#4e8f4f"
 };
 
 const layout = createLayout();
@@ -57,7 +61,7 @@ const state = {
     timer: 0,
     duration: 1.15
   },
-  message: "First draft: guests enter, check in, play, leave.",
+  message: "客人进门、前台开机、上机读条、下机离场。",
   messageTimer: 5
 };
 
@@ -208,7 +212,7 @@ function updateFrontDesk(dt) {
       guest.pcId = pc.id;
       guest.state = "toPc";
       guest.queueIndex = -1;
-      say(`Guest ${guest.id} checked in at PC ${pc.id + 1}.`);
+      say(`顾客 ${guest.id} 已开机，分配到 ${pc.id + 1} 号机。`);
     } else if (guest) {
       guest.state = "queueing";
     }
@@ -249,7 +253,7 @@ function finishPlaying(guest, pc) {
   pc.occupiedBy = null;
   pc.dirty = true;
   guest.state = "leaving";
-  say(`Guest ${guest.id} paid ${income}. Seat needs cleaning.`);
+  say(`顾客 ${guest.id} 下机结账，收入 ${income} 元。机位需要清理。`);
 }
 
 function autoClean(dt) {
@@ -333,7 +337,7 @@ function strokeRect(x, y, w, h, color, lineWidth = 2) {
 
 function text(value, x, y, size, color, weight = "normal", align = "left") {
   ctx.fillStyle = color;
-  ctx.font = `${weight} ${size}px monospace`;
+  ctx.font = `${weight} ${size}px "Microsoft YaHei", "PingFang SC", sans-serif`;
   ctx.textAlign = align;
   ctx.textBaseline = "top";
   ctx.fillText(value, x, y);
@@ -341,29 +345,63 @@ function text(value, x, y, size, color, weight = "normal", align = "left") {
 
 function drawPixelFloor() {
   const room = layout.room;
-  rect(0, 0, view.width, view.height, "#101417");
-  rect(room.x - 6, room.y - 6, room.w + 12, room.h + 12, COLORS.wallDark);
+  rect(0, 0, view.width, view.height, "#1d2b2c");
+  rect(room.x - 8, room.y - 8, room.w + 16, room.h + 16, COLORS.wallDark);
   rect(room.x, room.y, room.w, room.h, COLORS.wall);
+  rect(room.x, room.y, room.w, 42, COLORS.wallTop);
+  rect(room.x + 8, room.y + 42, room.w - 16, 5, "#5d382b");
 
-  for (let y = room.y + TILE; y < room.y + room.h - TILE; y += TILE) {
+  for (let y = room.y + 48; y < room.y + room.h - TILE; y += TILE) {
     for (let x = room.x + TILE; x < room.x + room.w - TILE; x += TILE) {
       const color = ((x / TILE + y / TILE) % 2 === 0) ? COLORS.floor : COLORS.floorAlt;
       rect(x, y, TILE, TILE, color);
+      rect(x, y + TILE - 1, TILE, 1, COLORS.floorLine);
+      rect(x + TILE - 1, y, 1, TILE, COLORS.floorLine);
     }
   }
 
-  rect(room.x - 8, layout.entrance.y - 22, 14, 46, "#101417");
-  rect(room.x - 22, layout.entrance.y - 14, 22, 28, "#49342a");
-  rect(room.x - 42, layout.entrance.y - 5, 26, 10, COLORS.red);
-  rect(room.x - 20, layout.entrance.y - 13, 10, 26, COLORS.red);
+  drawWindow(room.x + room.w - 86, room.y + 10);
+  drawDoor();
+  drawIndoorDetails();
+}
+
+function drawWindow(x, y) {
+  rect(x, y, 58, 26, "#4f78a0");
+  strokeRect(x, y, 58, 26, "#f0c16f", 3);
+  rect(x + 27, y + 3, 3, 20, "#f0c16f");
+  rect(x + 4, y + 11, 50, 3, "#f0c16f");
+  rect(x + 7, y + 5, 14, 5, "#8ecae6");
+}
+
+function drawDoor() {
+  const room = layout.room;
+  rect(room.x - 10, layout.entrance.y - 28, 18, 56, "#1d2b2c");
+  rect(room.x - 30, layout.entrance.y - 20, 28, 40, "#7a4a2c");
+  rect(room.x - 26, layout.entrance.y - 16, 20, 32, "#a86a3c");
+  rect(room.x - 9, layout.entrance.y - 1, 4, 4, COLORS.yellow);
+  rect(room.x - 52, layout.entrance.y - 5, 26, 10, COLORS.red);
+  rect(room.x - 30, layout.entrance.y - 13, 10, 26, COLORS.red);
+}
+
+function drawIndoorDetails() {
+  const room = layout.room;
+  rect(room.x + 22, room.y + 14, 42, 18, "#4b3027");
+  strokeRect(room.x + 22, room.y + 14, 42, 18, "#d7a85b", 2);
+  text("黑网吧", room.x + 43, room.y + 17, 12, COLORS.text, "bold", "center");
+
+  rect(room.x + room.w - 52, room.y + room.h - 54, 22, 30, "#7b5a35");
+  rect(room.x + room.w - 48, room.y + room.h - 64, 14, 14, COLORS.plant);
+  rect(room.x + room.w - 56, room.y + room.h - 58, 14, 12, COLORS.plant);
+  rect(room.x + room.w - 38, room.y + room.h - 58, 14, 12, COLORS.plant);
 }
 
 function drawCounter() {
   const c = layout.counter;
   rect(c.x, c.y, c.w, c.h, COLORS.counter);
   rect(c.x, c.y, c.w, 10, COLORS.counterTop);
+  rect(c.x + 6, c.y + c.h - 7, c.w - 12, 4, COLORS.counterEdge);
   strokeRect(c.x, c.y, c.w, c.h, COLORS.line, 3);
-  text("BAR", c.x + c.w / 2, c.y + 12, 16, COLORS.text, "bold", "center");
+  text("前台", c.x + c.w / 2, c.y + 11, 16, COLORS.text, "bold", "center");
 
   rect(c.x + c.w - 28, c.y + 12, 18, 16, "#20262b");
   rect(c.x + c.w - 24, c.y + 16, 10, 6, COLORS.pcGlow);
@@ -376,13 +414,15 @@ function drawCounter() {
 }
 
 function drawPc(pc) {
+  rect(pc.x + 6, pc.y + pc.h - 2, pc.w - 12, 8, "#523421");
   rect(pc.x, pc.y, pc.w, pc.h, COLORS.pcDesk);
   strokeRect(pc.x, pc.y, pc.w, pc.h, COLORS.line, 3);
   rect(pc.x + 8, pc.y + 7, pc.w - 16, 22, COLORS.pcScreen);
   rect(pc.x + 12, pc.y + 11, pc.w - 24, 14, pc.dirty ? "#6a5a4a" : COLORS.pcGlow);
+  rect(pc.x + 15, pc.y + 14, 10, 3, "#dfffe7");
   rect(pc.x + 21, pc.y + 31, 10, 8, "#2d2522");
 
-  text(String(pc.id + 1).padStart(2, "0"), pc.x + pc.w / 2, pc.y - 16, 11, COLORS.dimText, "bold", "center");
+  text(`${pc.id + 1}号`, pc.x + pc.w / 2, pc.y - 17, 11, COLORS.dimText, "bold", "center");
 
   if (pc.dirty) {
     rect(pc.x + pc.w - 12, pc.y + 32, 8, 8, COLORS.red);
@@ -412,22 +452,22 @@ function drawGuest(guest) {
 }
 
 function drawHud() {
-  rect(0, 0, view.width, 72, "#15191d");
+  rect(0, 0, view.width, 72, "#273b35");
   rect(0, 70, view.width, 3, COLORS.counterTop);
-  text("BLACK NET CAFE", 16, 12, 18, COLORS.text, "bold");
-  text(`Cash ${state.cash}`, 16, 40, 13, COLORS.green, "bold");
-  text(`Served ${state.served}`, 112, 40, 13, COLORS.blue, "bold");
-  text(`Lost ${state.lost}`, 220, 40, 13, COLORS.red, "bold");
+  text("小黑网吧", 16, 12, 20, COLORS.text, "bold");
+  text(`现金 ${state.cash}`, 16, 42, 13, COLORS.green, "bold");
+  text(`接待 ${state.served}`, 112, 42, 13, COLORS.blue, "bold");
+  text(`流失 ${state.lost}`, 220, 42, 13, COLORS.red, "bold");
 
   if (state.messageTimer > 0) {
-    rect(12, view.height - 38, view.width - 24, 26, "#1d252b");
+    rect(12, view.height - 38, view.width - 24, 26, "#4b3027");
     text(state.message, view.width / 2, view.height - 31, 11, COLORS.text, "normal", "center");
   }
 }
 
 function drawLegend() {
-  text("Entrance", layout.room.x + 8, layout.entrance.y - 46, 11, COLORS.red, "bold");
-  text("4 starter PCs", layout.room.x + layout.room.w / 2, layout.pcs[2].y + 70, 11, COLORS.dimText, "bold", "center");
+  text("入口", layout.room.x + 8, layout.entrance.y - 46, 11, COLORS.red, "bold");
+  text("开局大厅 4 台机", layout.room.x + layout.room.w / 2, layout.pcs[2].y + 70, 11, COLORS.dimText, "bold", "center");
 }
 
 function render() {
@@ -452,7 +492,7 @@ function loop() {
 
 function drawFatalError(error) {
   rect(0, 0, view.width, view.height, "#1b1b1b");
-  text("Startup error", 24, 32, 22, "#ff7777", "bold");
+  text("启动错误", 24, 32, 22, "#ff7777", "bold");
   text(String(error && error.message ? error.message : error), 24, 72, 14, "#ffffff");
 }
 
@@ -462,4 +502,3 @@ try {
   drawFatalError(error);
   throw error;
 }
-
