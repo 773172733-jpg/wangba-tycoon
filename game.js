@@ -1,16 +1,26 @@
-const canvas = wx.createCanvas();
-const ctx = canvas.getContext("2d");
+let screenCanvas;
+
+try {
+  screenCanvas = canvas;
+} catch (error) {
+  screenCanvas = wx.createCanvas();
+}
+
+const ctx = screenCanvas.getContext("2d");
 const systemInfo = wx.getSystemInfoSync();
-
-const DPR = systemInfo.pixelRatio || 1;
-canvas.width = systemInfo.windowWidth * DPR;
-canvas.height = systemInfo.windowHeight * DPR;
-ctx.scale(DPR, DPR);
-
+const dpr = systemInfo.pixelRatio || 1;
 const view = {
-  width: systemInfo.windowWidth,
-  height: systemInfo.windowHeight
+  width: systemInfo.windowWidth || 375,
+  height: systemInfo.windowHeight || 667
 };
+
+screenCanvas.width = view.width * dpr;
+screenCanvas.height = view.height * dpr;
+ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+const raf = typeof requestAnimationFrame === "function"
+  ? requestAnimationFrame
+  : (callback) => setTimeout(callback, 16);
 
 const state = {
   cash: 100,
@@ -22,99 +32,93 @@ const state = {
   customers: [],
   served: 0,
   totalEarned: 0,
-  daySeconds: 0,
+  time: 0,
   lastSpawnAt: 0,
-  message: "小网吧开张了，先把座位坐满赚钱。",
-  messageTimer: 4,
-  upgrades: [
-    {
-      id: "seat",
-      label: "加座位",
-      description: "容量 +1",
-      baseCost: 80,
-      getCost: () => Math.floor(80 * Math.pow(1.38, state.seats - 4)),
-      apply: () => {
-        state.seats += 1;
-        say("多加了一台机位，晚高峰能多接一个人。");
-      }
-    },
-    {
-      id: "computer",
-      label: "升电脑",
-      description: "客单价提升",
-      baseCost: 120,
-      getCost: () => Math.floor(120 * Math.pow(1.55, state.computerLevel - 1)),
-      apply: () => {
-        state.computerLevel += 1;
-        say("显卡和显示器升级了，顾客愿意多玩一会。");
-      }
-    },
-    {
-      id: "network",
-      label: "升网速",
-      description: "翻台更快",
-      baseCost: 100,
-      getCost: () => Math.floor(100 * Math.pow(1.5, state.networkLevel - 1)),
-      apply: () => {
-        state.networkLevel += 1;
-        say("网速更稳了，抱怨少了，翻台也快。");
-      }
-    },
-    {
-      id: "snack",
-      label: "零食区",
-      description: "额外收入",
-      baseCost: 90,
-      getCost: () => Math.floor(90 * Math.pow(1.45, state.snackLevel)),
-      apply: () => {
-        state.snackLevel += 1;
-        say("泡面、可乐、烤肠安排上了。");
-      }
-    }
-  ]
+  message: "Cafe opened. Upgrade seats and PCs first.",
+  messageTimer: 4
 };
 
 const customerTypes = [
-  { name: "学生党", color: "#64b5f6", patience: 8, spend: 14 },
-  { name: "上班族", color: "#81c784", patience: 7, spend: 18 },
-  { name: "电竞玩家", color: "#ffb74d", patience: 10, spend: 24 },
-  { name: "包夜客", color: "#ba68c8", patience: 12, spend: 30 }
+  { name: "Student", color: "#64b5f6", patience: 8, spend: 14 },
+  { name: "Worker", color: "#81c784", patience: 7, spend: 18 },
+  { name: "Gamer", color: "#ffb74d", patience: 10, spend: 24 },
+  { name: "Night Owl", color: "#ba68c8", patience: 12, spend: 30 }
+];
+
+const upgrades = [
+  {
+    label: "Seat",
+    description: "Capacity +1",
+    getCost: () => Math.floor(80 * Math.pow(1.38, state.seats - 4)),
+    apply: () => {
+      state.seats += 1;
+      say("New seat installed. More guests can play.");
+    }
+  },
+  {
+    label: "PC",
+    description: "Higher spend",
+    getCost: () => Math.floor(120 * Math.pow(1.55, state.computerLevel - 1)),
+    apply: () => {
+      state.computerLevel += 1;
+      say("PCs upgraded. Guests pay more per session.");
+    }
+  },
+  {
+    label: "Net",
+    description: "Faster turnover",
+    getCost: () => Math.floor(100 * Math.pow(1.5, state.networkLevel - 1)),
+    apply: () => {
+      state.networkLevel += 1;
+      say("Network upgraded. Sessions finish faster.");
+    }
+  },
+  {
+    label: "Snack",
+    description: "Extra income",
+    getCost: () => Math.floor(90 * Math.pow(1.45, state.snackLevel)),
+    apply: () => {
+      state.snackLevel += 1;
+      say("Snack shelf added. Extra sales unlocked.");
+    }
+  }
 ];
 
 const buttons = [];
-let lastTime = Date.now();
+let lastFrameAt = Date.now();
 
 function say(text) {
   state.message = text;
   state.messageTimer = 4;
 }
 
-function rand(min, max) {
+function random(min, max) {
   return Math.random() * (max - min) + min;
 }
 
 function spawnCustomer(now) {
   if (state.customers.length >= state.seats) return;
-  const spawnDelay = Math.max(1.15, 3.2 - state.reputation / 55 - state.networkLevel * 0.08);
-  if (now - state.lastSpawnAt < spawnDelay) return;
+
+  const delay = Math.max(1.1, 3.25 - state.reputation / 55 - state.networkLevel * 0.08);
+  if (now - state.lastSpawnAt < delay) return;
 
   const type = customerTypes[Math.floor(Math.random() * customerTypes.length)];
-  const sessionTime = Math.max(3.5, type.patience - state.networkLevel * 0.45 + rand(-0.8, 1.2));
+  const sessionTime = Math.max(3.5, type.patience - state.networkLevel * 0.45 + random(-0.8, 1.2));
+
   state.customers.push({
     type,
     progress: 0,
     sessionTime,
-    wobble: rand(0, Math.PI * 2)
+    wobble: random(0, Math.PI * 2)
   });
   state.lastSpawnAt = now;
 }
 
 function finishCustomer(customer) {
-  const base = customer.type.spend;
-  const computerBonus = state.computerLevel * 7;
-  const snackBonus = state.snackLevel * Math.floor(rand(3, 8));
-  const reputationBonus = Math.floor(state.reputation / 25);
-  const earned = base + computerBonus + snackBonus + reputationBonus;
+  const earned = customer.type.spend +
+    state.computerLevel * 7 +
+    state.snackLevel * Math.floor(random(3, 8)) +
+    Math.floor(state.reputation / 25);
 
   state.cash += earned;
   state.totalEarned += earned;
@@ -122,21 +126,22 @@ function finishCustomer(customer) {
   state.reputation = Math.min(100, state.reputation + 0.35);
 
   if (state.served % 8 === 0) {
-    say(`今天已经接待 ${state.served} 位顾客，口碑慢慢起来了。`);
+    say(`Served ${state.served} guests. Reputation is rising.`);
   }
 }
 
 function update(dt) {
-  state.daySeconds += dt;
+  state.time += dt;
   state.messageTimer = Math.max(0, state.messageTimer - dt);
-  spawnCustomer(state.daySeconds);
+  spawnCustomer(state.time);
 
-  for (let i = state.customers.length - 1; i >= 0; i -= 1) {
-    const customer = state.customers[i];
+  for (let index = state.customers.length - 1; index >= 0; index -= 1) {
+    const customer = state.customers[index];
     customer.progress += dt / customer.sessionTime;
+
     if (customer.progress >= 1) {
       finishCustomer(customer);
-      state.customers.splice(i, 1);
+      state.customers.splice(index, 1);
     }
   }
 }
@@ -152,99 +157,111 @@ function roundedRect(x, y, width, height, radius) {
   ctx.closePath();
 }
 
-function fillText(text, x, y, size = 16, color = "#f7f3e8", weight = "normal", align = "left") {
+function text(value, x, y, size, color, weight = "normal", align = "left") {
   ctx.fillStyle = color;
-  ctx.font = `${weight} ${size}px sans-serif`;
+  ctx.font = `${weight} ${size}px Arial, sans-serif`;
   ctx.textAlign = align;
   ctx.textBaseline = "top";
-  ctx.fillText(text, x, y);
+  ctx.fillText(value, x, y);
 }
 
 function drawBackground() {
   const gradient = ctx.createLinearGradient(0, 0, 0, view.height);
-  gradient.addColorStop(0, "#1f2933");
-  gradient.addColorStop(0.52, "#26343a");
-  gradient.addColorStop(1, "#182027");
+  gradient.addColorStop(0, "#22313a");
+  gradient.addColorStop(0.55, "#2c3f43");
+  gradient.addColorStop(1, "#172027");
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, view.width, view.height);
 
-  ctx.fillStyle = "#2f3f44";
+  ctx.fillStyle = "#314449";
   ctx.fillRect(0, view.height * 0.58, view.width, view.height * 0.42);
 
-  ctx.fillStyle = "#ffc857";
-  ctx.fillRect(22, 64, view.width - 44, 10);
-  ctx.fillStyle = "#2d2a32";
-  roundedRect(36, 34, view.width - 72, 48, 6);
+  roundedRect(26, 28, view.width - 52, 58, 8);
+  ctx.fillStyle = "#191f27";
   ctx.fill();
-  fillText("网吧老板模拟器", view.width / 2, 46, 23, "#ffe8a3", "bold", "center");
+  ctx.strokeStyle = "#ffc857";
+  ctx.lineWidth = 3;
+  ctx.stroke();
+  text("Wangba Tycoon", view.width / 2, 45, 24, "#ffe8a3", "bold", "center");
 }
 
 function drawStats() {
-  const top = 100;
   const stats = [
-    `现金 ${state.cash}`,
-    `座位 ${state.customers.length}/${state.seats}`,
-    `电脑 Lv.${state.computerLevel}`,
-    `网速 Lv.${state.networkLevel}`,
-    `口碑 ${Math.floor(state.reputation)}`
+    `Cash $${state.cash}`,
+    `Seats ${state.customers.length}/${state.seats}`,
+    `PC Lv.${state.computerLevel}`,
+    `Net Lv.${state.networkLevel}`,
+    `Rep ${Math.floor(state.reputation)}`
   ];
 
   stats.forEach((item, index) => {
     const col = index % 2;
     const row = Math.floor(index / 2);
-    const x = 18 + col * ((view.width - 48) / 2 + 12);
-    const y = top + row * 38;
-    const w = (view.width - 48) / 2;
-    roundedRect(x, y, w, 28, 6);
-    ctx.fillStyle = "#344850";
+    const cardWidth = (view.width - 48) / 2;
+    const x = 18 + col * (cardWidth + 12);
+    const y = 104 + row * 38;
+
+    roundedRect(x, y, cardWidth, 28, 6);
+    ctx.fillStyle = "#3b5058";
     ctx.fill();
-    fillText(item, x + 10, y + 6, 14, "#fff6d6", "bold");
+    text(item, x + 10, y + 6, 14, "#fff6d6", "bold");
   });
 }
 
+function drawMessage() {
+  if (state.messageTimer <= 0) return;
+
+  roundedRect(18, 178, view.width - 36, 36, 8);
+  ctx.fillStyle = "rgba(255, 232, 163, 0.18)";
+  ctx.fill();
+  text(state.message, view.width / 2, 188, 13, "#fff0b8", "normal", "center");
+}
+
 function drawCafeFloor() {
-  const floorTop = 220;
-  const floorHeight = Math.max(220, view.height - 420);
+  const floorTop = 226;
+  const floorBottom = view.height - 184;
+  const floorHeight = Math.max(210, floorBottom - floorTop);
+
   roundedRect(18, floorTop, view.width - 36, floorHeight, 8);
-  ctx.fillStyle = "#233037";
+  ctx.fillStyle = "#263841";
   ctx.fill();
 
   const cols = 2;
-  const seatW = (view.width - 72) / cols;
-  const seatH = 74;
-  const startY = floorTop + 24;
+  const seatWidth = (view.width - 72) / cols;
+  const seatHeight = 74;
+  const startY = floorTop + 22;
 
-  for (let i = 0; i < state.seats; i += 1) {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    const x = 32 + col * (seatW + 18);
-    const y = startY + row * (seatH + 14);
-    const occupied = state.customers[i];
+  for (let index = 0; index < state.seats; index += 1) {
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    const x = 32 + col * (seatWidth + 18);
+    const y = startY + row * (seatHeight + 14);
+    const occupied = state.customers[index];
 
-    roundedRect(x, y, seatW, seatH, 8);
-    ctx.fillStyle = occupied ? "#3a5662" : "#2b3b42";
+    roundedRect(x, y, seatWidth, seatHeight, 8);
+    ctx.fillStyle = occupied ? "#3f626b" : "#30444c";
     ctx.fill();
 
+    roundedRect(x + 14, y + 12, seatWidth - 28, 28, 4);
     ctx.fillStyle = "#111827";
-    roundedRect(x + 14, y + 12, seatW - 28, 28, 4);
     ctx.fill();
-    ctx.fillStyle = occupied ? "#75e6a5" : "#4f6470";
-    ctx.fillRect(x + 19, y + 17, seatW - 38, 18);
+    ctx.fillStyle = occupied ? "#75e6a5" : "#647987";
+    ctx.fillRect(x + 19, y + 17, seatWidth - 38, 18);
 
     if (occupied) {
-      const bob = Math.sin(state.daySeconds * 4 + occupied.wobble) * 2;
+      const bob = Math.sin(state.time * 4 + occupied.wobble) * 2;
       ctx.fillStyle = occupied.type.color;
       ctx.beginPath();
-      ctx.arc(x + seatW / 2, y + 54 + bob, 12, 0, Math.PI * 2);
+      ctx.arc(x + seatWidth / 2, y + 54 + bob, 12, 0, Math.PI * 2);
       ctx.fill();
 
-      const barW = seatW - 24;
+      const barWidth = seatWidth - 24;
       ctx.fillStyle = "#172026";
-      ctx.fillRect(x + 12, y + seatH - 10, barW, 4);
+      ctx.fillRect(x + 12, y + seatHeight - 10, barWidth, 4);
       ctx.fillStyle = "#ffe082";
-      ctx.fillRect(x + 12, y + seatH - 10, barW * occupied.progress, 4);
+      ctx.fillRect(x + 12, y + seatHeight - 10, barWidth * occupied.progress, 4);
     } else {
-      fillText("空位", x + seatW / 2, y + 48, 13, "#9fb0b9", "normal", "center");
+      text("Empty", x + seatWidth / 2, y + 48, 13, "#b7c7cf", "normal", "center");
     }
   }
 }
@@ -252,42 +269,34 @@ function drawCafeFloor() {
 function drawButtons() {
   buttons.length = 0;
   const panelTop = view.height - 172;
+
   ctx.fillStyle = "#121920";
   ctx.fillRect(0, panelTop, view.width, 172);
+  text("Upgrades", 18, panelTop + 14, 18, "#f9e6a2", "bold");
 
-  fillText("升级经营", 18, panelTop + 14, 18, "#f9e6a2", "bold");
+  const buttonWidth = (view.width - 54) / 2;
+  const buttonHeight = 52;
 
-  const btnW = (view.width - 54) / 2;
-  const btnH = 52;
-  state.upgrades.forEach((upgrade, index) => {
+  upgrades.forEach((upgrade, index) => {
     const col = index % 2;
     const row = Math.floor(index / 2);
-    const x = 18 + col * (btnW + 18);
+    const x = 18 + col * (buttonWidth + 18);
     const y = panelTop + 46 + row * 60;
     const cost = upgrade.getCost();
     const canBuy = state.cash >= cost;
 
-    roundedRect(x, y, btnW, btnH, 7);
+    roundedRect(x, y, buttonWidth, buttonHeight, 7);
     ctx.fillStyle = canBuy ? "#2f7d69" : "#34414a";
     ctx.fill();
     ctx.strokeStyle = canBuy ? "#86efac" : "#55636b";
     ctx.lineWidth = 1;
     ctx.stroke();
 
-    fillText(upgrade.label, x + 10, y + 7, 15, "#ffffff", "bold");
-    fillText(`${upgrade.description}  $${cost}`, x + 10, y + 30, 12, canBuy ? "#def7ec" : "#b8c0c6");
+    text(upgrade.label, x + 10, y + 7, 15, "#ffffff", "bold");
+    text(`${upgrade.description} $${cost}`, x + 10, y + 30, 12, canBuy ? "#def7ec" : "#b8c0c6");
 
-    buttons.push({ x, y, width: btnW, height: btnH, upgrade });
+    buttons.push({ x, y, width: buttonWidth, height: buttonHeight, upgrade });
   });
-}
-
-function drawMessage() {
-  if (state.messageTimer <= 0) return;
-  const y = 176;
-  roundedRect(18, y, view.width - 36, 34, 8);
-  ctx.fillStyle = "rgba(255, 232, 163, 0.18)";
-  ctx.fill();
-  fillText(state.message, view.width / 2, y + 8, 13, "#fff0b8", "normal", "center");
 }
 
 function render() {
@@ -301,12 +310,12 @@ function render() {
 
 function loop() {
   const now = Date.now();
-  const dt = Math.min(0.05, (now - lastTime) / 1000);
-  lastTime = now;
+  const dt = Math.min(0.05, (now - lastFrameAt) / 1000);
+  lastFrameAt = now;
 
   update(dt);
   render();
-  requestAnimationFrame(loop);
+  raf(loop);
 }
 
 function handleTouch(x, y) {
@@ -321,7 +330,7 @@ function handleTouch(x, y) {
 
   const cost = button.upgrade.getCost();
   if (state.cash < cost) {
-    say("现金不够，先多接待几位顾客。");
+    say("Not enough cash. Serve more guests first.");
     return;
   }
 
@@ -329,12 +338,24 @@ function handleTouch(x, y) {
   button.upgrade.apply();
 }
 
-wx.onTouchStart((event) => {
-  const touch = event.touches[0];
-  if (!touch) return;
-  handleTouch(touch.clientX, touch.clientY);
-});
+function drawFatalError(error) {
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = "#1b1b1b";
+  ctx.fillRect(0, 0, view.width, view.height);
+  text("Startup error", 24, 32, 22, "#ff7777", "bold");
+  text(String(error && error.message ? error.message : error), 24, 72, 14, "#ffffff");
+}
 
-say("小网吧开张了，先升级座位和电脑。");
-loop();
+try {
+  wx.onTouchStart((event) => {
+    const touch = event.touches && event.touches[0];
+    if (!touch) return;
+    handleTouch(touch.clientX, touch.clientY);
+  });
+
+  loop();
+} catch (error) {
+  drawFatalError(error);
+  throw error;
+}
 
