@@ -15,6 +15,7 @@ const view = {
 };
 const SAFE_TOP = Math.max(systemInfo.statusBarHeight || 0, 34);
 const HUD_HEIGHT = SAFE_TOP + 62;
+const ACTION_BAR_HEIGHT = 58;
 
 screenCanvas.width = view.width * dpr;
 screenCanvas.height = view.height * dpr;
@@ -65,6 +66,7 @@ const state = {
     duration: 1.15
   },
   procurementOpen: false,
+  warehouseOpen: false,
   inventory: {},
   message: "客人进门、前台开机、上机读条、下机离场。",
   messageTimer: 5
@@ -104,6 +106,9 @@ const demandProductIds = [
 const ui = {
   procurementButton: null,
   closeProcurementButton: null,
+  warehouseButton: null,
+  closeWarehouseButton: null,
+  warehouseProcurementButton: null,
   buyButtons: []
 };
 
@@ -115,7 +120,7 @@ function createLayout() {
     x: 18,
     y: roomY,
     w: view.width - 36,
-    h: Math.min(view.height - roomY - 48, view.width * 1.28)
+    h: Math.min(view.height - roomY - ACTION_BAR_HEIGHT - 48, view.width * 1.28)
   };
   room.y = Math.max(roomY, room.y);
 
@@ -286,6 +291,24 @@ function handleTouch(x, y) {
     if (buyButton) {
       buyProduct(buyButton.product);
     }
+    return;
+  }
+
+  if (state.warehouseOpen) {
+    if (isPointInRect(x, y, ui.closeWarehouseButton)) {
+      state.warehouseOpen = false;
+      return;
+    }
+
+    if (isPointInRect(x, y, ui.warehouseProcurementButton)) {
+      state.warehouseOpen = false;
+      state.procurementOpen = true;
+    }
+    return;
+  }
+
+  if (isPointInRect(x, y, ui.warehouseButton)) {
+    state.warehouseOpen = true;
     return;
   }
 
@@ -649,17 +672,33 @@ function drawHud() {
   text(`\u73b0\u91d1 ${state.cash}`, 16, SAFE_TOP + 38, 13, COLORS.green, "bold");
   text(`\u63a5\u5f85 ${state.served}`, 112, SAFE_TOP + 38, 13, COLORS.blue, "bold");
   text(`\u6d41\u5931 ${state.lost}`, 220, SAFE_TOP + 38, 13, COLORS.red, "bold");
-  text(`Lv.${state.cafeLevel}`, view.width - 106, SAFE_TOP + 8, 13, COLORS.yellow, "bold");
-
-  ui.procurementButton = { x: view.width - 68, y: SAFE_TOP + 4, w: 54, h: 28 };
-  rect(ui.procurementButton.x, ui.procurementButton.y, ui.procurementButton.w, ui.procurementButton.h, "#7f5635");
-  strokeRect(ui.procurementButton.x, ui.procurementButton.y, ui.procurementButton.w, ui.procurementButton.h, COLORS.counterEdge, 2);
-  text("\u91c7\u8d2d", ui.procurementButton.x + ui.procurementButton.w / 2, ui.procurementButton.y + 5, 14, COLORS.text, "bold", "center");
 
   if (state.messageTimer > 0) {
-    rect(12, view.height - 38, view.width - 24, 26, "#4b3027");
-    text(state.message, view.width / 2, view.height - 31, 11, COLORS.text, "normal", "center");
+    rect(12, view.height - ACTION_BAR_HEIGHT - 38, view.width - 24, 26, "#4b3027");
+    text(state.message, view.width / 2, view.height - ACTION_BAR_HEIGHT - 31, 11, COLORS.text, "normal", "center");
   }
+}
+
+function drawActionBar() {
+  const y = view.height - ACTION_BAR_HEIGHT;
+  rect(0, y, view.width, ACTION_BAR_HEIGHT, "#273b35");
+  rect(0, y, view.width, 3, COLORS.counterTop);
+
+  text(`\u7f51\u5427 Lv.${state.cafeLevel}`, 16, y + 11, 13, COLORS.yellow, "bold");
+
+  const buttonW = 72;
+  const buttonH = 34;
+  ui.warehouseButton = { x: view.width - buttonW * 2 - 24, y: y + 12, w: buttonW, h: buttonH };
+  ui.procurementButton = { x: view.width - buttonW - 14, y: y + 12, w: buttonW, h: buttonH };
+
+  drawActionButton(ui.warehouseButton, "\u4ed3\u5e93");
+  drawActionButton(ui.procurementButton, "\u91c7\u8d2d");
+}
+
+function drawActionButton(button, label) {
+  rect(button.x, button.y, button.w, button.h, "#7f5635");
+  strokeRect(button.x, button.y, button.w, button.h, COLORS.counterEdge, 2);
+  text(label, button.x + button.w / 2, button.y + 8, 14, COLORS.text, "bold", "center");
 }
 
 function drawStockShelf() {
@@ -681,6 +720,24 @@ function drawStockShelf() {
   rect(x + 23, y + 18, 7, 8, COLORS.red);
 }
 
+function getInventoryTotal() {
+  return products.reduce((total, product) => total + (state.inventory[product.id] || 0), 0);
+}
+
+function getInventorySummary(limit = 4) {
+  const stocked = products
+    .map((product) => ({ product, stock: state.inventory[product.id] || 0 }))
+    .filter((item) => item.stock > 0);
+
+  if (stocked.length === 0) return "\u4ed3\u5e93\u6682\u65e0\u5e93\u5b58";
+
+  const summary = stocked
+    .slice(0, limit)
+    .map((item) => `${item.product.name}${item.stock}`)
+    .join("  ");
+  return stocked.length > limit ? `${summary} ...` : summary;
+}
+
 function drawProcurementPanel() {
   if (!state.procurementOpen) return;
 
@@ -700,10 +757,12 @@ function drawProcurementPanel() {
   rect(panel.x, panel.y, panel.w, 42, "#8c4f35");
   text("\u524d\u53f0\u91c7\u8d2d", panel.x + 16, panel.y + 11, 18, COLORS.text, "bold");
   text(`\u7f51\u5427\u7b49\u7ea7 Lv.${state.cafeLevel}`, panel.x + panel.w - 112, panel.y + 14, 12, COLORS.text, "bold");
+  rect(panel.x + 10, panel.y + 46, panel.w - 20, 26, "#e3b86f");
+  text(`\u4ed3\u5e93\uff1a${getInventorySummary(5)}  \u603b\u6570 ${getInventoryTotal()}`, panel.x + 18, panel.y + 52, 11, "#5d4532", "bold");
 
   ui.closeProcurementButton = { x: panel.x + panel.w - 50, y: panel.y + panel.h - 34, w: 38, h: 24 };
 
-  const startY = panel.y + 52;
+  const startY = panel.y + 78;
   const gap = 5;
   const cols = 2;
   const cardW = (panel.w - 26 - gap) / cols;
@@ -810,6 +869,61 @@ function drawProductIcon(product, x, y, locked) {
   }
 }
 
+function drawWarehousePanel() {
+  if (!state.warehouseOpen) return;
+
+  rect(0, 0, view.width, view.height, "rgba(20, 18, 16, 0.72)");
+
+  const panel = {
+    x: 18,
+    y: HUD_HEIGHT + 8,
+    w: view.width - 36,
+    h: view.height - HUD_HEIGHT - 18
+  };
+
+  rect(panel.x, panel.y, panel.w, panel.h, "#f0c98a");
+  strokeRect(panel.x, panel.y, panel.w, panel.h, COLORS.wallDark, 4);
+  rect(panel.x, panel.y, panel.w, 42, "#8c4f35");
+  text("\u4ed3\u5e93", panel.x + 16, panel.y + 11, 18, COLORS.text, "bold");
+  text(`\u603b\u5e93\u5b58 ${getInventoryTotal()}`, panel.x + panel.w - 100, panel.y + 14, 12, COLORS.text, "bold");
+
+  const startY = panel.y + 56;
+  const gap = 6;
+  const cols = 2;
+  const cardW = (panel.w - 26 - gap) / cols;
+  const cardH = 58;
+
+  products.forEach((product, index) => {
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    const x = panel.x + 10 + col * (cardW + gap);
+    const y = startY + row * (cardH + gap);
+    if (y + cardH > panel.y + panel.h - 44) return;
+
+    const unlocked = state.cafeLevel >= product.unlockLevel;
+    const stock = state.inventory[product.id] || 0;
+    rect(x, y, cardW, cardH, unlocked ? "#f7dba5" : "#c5a575");
+    strokeRect(x, y, cardW, cardH, "#9a7043", 2);
+    drawProductIcon(product, x + 7, y + 11, !unlocked);
+    text(product.name, x + 46, y + 8, 13, unlocked ? COLORS.line : "#745a46", "bold");
+    text(`\u5e93\u5b58 ${stock}`, x + 46, y + 28, 12, stock > 0 ? COLORS.green : "#7a5d45", "bold");
+    if (!unlocked) {
+      text(`Lv.${product.unlockLevel}\u89e3\u9501`, x + cardW - 48, y + 30, 10, COLORS.red, "bold", "center");
+    }
+  });
+
+  ui.warehouseProcurementButton = { x: panel.x + panel.w - 104, y: panel.y + panel.h - 34, w: 54, h: 24 };
+  ui.closeWarehouseButton = { x: panel.x + panel.w - 46, y: panel.y + panel.h - 34, w: 34, h: 24 };
+
+  rect(ui.warehouseProcurementButton.x, ui.warehouseProcurementButton.y, ui.warehouseProcurementButton.w, ui.warehouseProcurementButton.h, "#4e8f4f");
+  strokeRect(ui.warehouseProcurementButton.x, ui.warehouseProcurementButton.y, ui.warehouseProcurementButton.w, ui.warehouseProcurementButton.h, COLORS.line, 2);
+  text("\u53bb\u91c7\u8d2d", ui.warehouseProcurementButton.x + ui.warehouseProcurementButton.w / 2, ui.warehouseProcurementButton.y + 4, 12, COLORS.text, "bold", "center");
+
+  rect(ui.closeWarehouseButton.x, ui.closeWarehouseButton.y, ui.closeWarehouseButton.w, ui.closeWarehouseButton.h, "#7f5635");
+  strokeRect(ui.closeWarehouseButton.x, ui.closeWarehouseButton.y, ui.closeWarehouseButton.w, ui.closeWarehouseButton.h, COLORS.line, 2);
+  text("\u5173", ui.closeWarehouseButton.x + ui.closeWarehouseButton.w / 2, ui.closeWarehouseButton.y + 4, 12, COLORS.text, "bold", "center");
+}
+
 function drawLegend() {
   text("入口", layout.room.x + 8, layout.entrance.y - 46, 11, COLORS.red, "bold");
   text("开局大厅 4 台机", layout.room.x + layout.room.w / 2, layout.pcs[2].y + 70, 11, COLORS.dimText, "bold", "center");
@@ -824,7 +938,9 @@ function render() {
   drawLegend();
   state.guests.forEach(drawGuest);
   drawHud();
+  drawActionBar();
   drawProcurementPanel();
+  drawWarehousePanel();
 }
 
 function loop() {
