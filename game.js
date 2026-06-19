@@ -54,6 +54,7 @@ const layout = createLayout();
 const state = {
   cash: 100,
   cafeLevel: 1,
+  cleanliness: 100,
   served: 0,
   lost: 0,
   time: 0,
@@ -64,6 +65,10 @@ const state = {
     busyGuestId: null,
     timer: 0,
     duration: 1.15
+  },
+  toilet: {
+    dirty: false,
+    useCount: 0
   },
   procurementOpen: false,
   warehouseOpen: false,
@@ -154,7 +159,16 @@ function createLayout() {
     createPc(3, pcLeft + pcGapX, pcTop + pcGapY)
   ];
 
-  return { room, counter, entrance, queue, pcs };
+  const toilet = {
+    x: room.x + room.w * 0.58,
+    y: room.y + room.h - 62,
+    w: 84,
+    h: 44,
+    standX: room.x + room.w * 0.58 + 42,
+    standY: room.y + room.h - 72
+  };
+
+  return { room, counter, entrance, queue, pcs, toilet };
 }
 
 function createPc(id, x, y) {
@@ -237,6 +251,19 @@ function updateDemand(guest, dt) {
   guest.demand = null;
 }
 
+function tryStartToiletEvent(guest, dt) {
+  if (guest.toiletDone || guest.demand || guest.playTimer > guest.playDuration * 0.68) return;
+
+  guest.toiletRollTimer -= dt;
+  if (guest.toiletRollTimer > 0) return;
+
+  guest.toiletDone = true;
+  if (Math.random() < 0.32) {
+    guest.state = "toToilet";
+    say(`\u987e\u5ba2 ${guest.id} \u53bb\u4e0a\u5395\u6240\u4e86\u3002`);
+  }
+}
+
 function serveGuestDemand(guest) {
   if (!guest || !guest.demand) return false;
 
@@ -270,6 +297,41 @@ function findTappedGuest(x, y) {
     y >= guest.y - 42 &&
     y <= guest.y + 20
   ));
+}
+
+function findTappedDirtyPc(x, y) {
+  return layout.pcs.find((pc) => (
+    pc.dirty &&
+    x >= pc.x - 8 &&
+    x <= pc.x + pc.w + 8 &&
+    y >= pc.y - 36 &&
+    y <= pc.y + pc.h + 18
+  ));
+}
+
+function cleanPc(pc) {
+  pc.dirty = false;
+  pc.cleanTimer = 0;
+  state.cleanliness = Math.min(100, state.cleanliness + 8);
+  say(`\u5df2\u6e05\u6d01 ${pc.id + 1} \u53f7\u673a\uff0c\u6e05\u6d01\u503c\u56de\u5347\u3002`);
+}
+
+function isToiletTapped(x, y) {
+  const toilet = layout.toilet;
+  return x >= toilet.x - 8 &&
+    x <= toilet.x + toilet.w + 8 &&
+    y >= toilet.y - 28 &&
+    y <= toilet.y + toilet.h + 10;
+}
+
+function cleanToilet() {
+  if (!state.toilet.dirty) return false;
+
+  state.toilet.dirty = false;
+  state.toilet.useCount = 0;
+  state.cleanliness = Math.min(100, state.cleanliness + 12);
+  say("\u5395\u6240\u5df2\u6e05\u6d01\uff0c\u5ba2\u4eba\u4f53\u9a8c\u597d\u4e86\u4e00\u70b9\u3002");
+  return true;
 }
 
 function isPointInRect(x, y, button) {
@@ -314,6 +376,16 @@ function handleTouch(x, y) {
 
   if (isPointInRect(x, y, ui.procurementButton)) {
     state.procurementOpen = true;
+    return;
+  }
+
+  const dirtyPc = findTappedDirtyPc(x, y);
+  if (dirtyPc) {
+    cleanPc(dirtyPc);
+    return;
+  }
+
+  if (isToiletTapped(x, y) && cleanToilet()) {
     return;
   }
 
@@ -366,6 +438,9 @@ function spawnGuest() {
     demandRollTimer: random(5, 9),
     demand: null,
     demandDone: false,
+    toiletRollTimer: random(8, 15),
+    toiletTimer: 0,
+    toiletDone: false,
     speed: random(44, 58),
     palette
   });
@@ -444,19 +519,22 @@ function finishPlaying(guest, pc) {
   pc.occupiedBy = null;
   pc.dirty = true;
   guest.state = "leaving";
+  state.cleanliness = Math.max(0, state.cleanliness - 3);
   say(`顾客 ${guest.id} 下机结账，收入 ${income} 元。机位需要清理。`);
 }
 
-function autoClean(dt) {
-  layout.pcs.forEach((pc) => {
-    if (!pc.dirty) return;
+function updateCleanliness(dt) {
+  const dirtyPcCount = layout.pcs.filter((pc) => pc.dirty).length;
+  const activeGuests = state.guests.filter((guest) => (
+    guest.state === "playing" ||
+    guest.state === "toToilet" ||
+    guest.state === "usingToilet" ||
+    guest.state === "backToPc"
+  )).length;
+  const toiletPenalty = state.toilet.dirty ? 0.028 : 0;
+  const decay = (0.003 * activeGuests + 0.018 * dirtyPcCount + toiletPenalty) * dt;
 
-    pc.cleanTimer = (pc.cleanTimer || 2.2) - dt;
-    if (pc.cleanTimer <= 0) {
-      pc.dirty = false;
-      pc.cleanTimer = 0;
-    }
-  });
+  state.cleanliness = Math.max(0, state.cleanliness - decay);
 }
 
 function updateGuests(dt) {
@@ -492,9 +570,43 @@ function updateGuests(dt) {
       guest.y = pc.seatY;
       tryCreateDemand(guest, dt);
       updateDemand(guest, dt);
+      tryStartToiletEvent(guest, dt);
+      if (guest.state !== "playing") {
+        continue;
+      }
       guest.playTimer -= dt;
       if (guest.playTimer <= 0) {
         finishPlaying(guest, pc);
+      }
+      continue;
+    }
+
+    if (guest.state === "toToilet") {
+      const arrived = moveToward(guest, { x: layout.toilet.standX, y: layout.toilet.standY }, guest.speed, dt);
+      if (arrived) {
+        guest.state = "usingToilet";
+        guest.toiletTimer = random(3.2, 5.2);
+      }
+      continue;
+    }
+
+    if (guest.state === "usingToilet") {
+      guest.toiletTimer -= dt;
+      if (guest.toiletTimer <= 0) {
+        state.toilet.useCount += 1;
+        state.toilet.dirty = state.toilet.useCount >= 2 || Math.random() < 0.35;
+        state.cleanliness = Math.max(0, state.cleanliness - 4);
+        guest.state = "backToPc";
+        say("\u5395\u6240\u88ab\u4f7f\u7528\u4e86\uff0c\u6e05\u6d01\u503c\u4e0b\u964d\u3002");
+      }
+      continue;
+    }
+
+    if (guest.state === "backToPc") {
+      const pc = layout.pcs[guest.pcId];
+      const arrived = moveToward(guest, { x: pc.seatX, y: pc.seatY }, guest.speed, dt);
+      if (arrived) {
+        guest.state = "playing";
       }
       continue;
     }
@@ -514,7 +626,7 @@ function update(dt) {
   updateSpawn();
   updateFrontDesk(dt);
   updateGuests(dt);
-  autoClean(dt);
+  updateCleanliness(dt);
 }
 
 function rect(x, y, w, h, color) {
@@ -619,6 +731,7 @@ function drawPc(pc) {
 
   if (pc.dirty) {
     rect(pc.x + pc.w - 12, pc.y + 32, 8, 8, COLORS.red);
+    drawCleanBubble(pc.x + pc.w / 2, pc.y - 42, "\u6e05\u6d01");
   }
 
   const guest = state.guests.find((item) => item.id === pc.occupiedBy && item.state === "playing");
@@ -627,6 +740,14 @@ function drawPc(pc) {
     rect(pc.x, pc.y + pc.h + 15, pc.w, 5, "#3a2b26");
     rect(pc.x, pc.y + pc.h + 15, pc.w * progress, 5, COLORS.yellow);
   }
+}
+
+function drawCleanBubble(x, y, label) {
+  const bubbleW = 44;
+  rect(x - bubbleW / 2, y, bubbleW, 24, "#fff1c7");
+  strokeRect(x - bubbleW / 2, y, bubbleW, 24, COLORS.line, 2);
+  text(label, x, y + 4, 12, COLORS.red, "bold", "center");
+  rect(x - 3, y + 22, 6, 6, "#fff1c7");
 }
 
 function drawGuest(guest) {
@@ -672,6 +793,7 @@ function drawHud() {
   text(`\u73b0\u91d1 ${state.cash}`, 16, SAFE_TOP + 38, 13, COLORS.green, "bold");
   text(`\u63a5\u5f85 ${state.served}`, 112, SAFE_TOP + 38, 13, COLORS.blue, "bold");
   text(`\u6d41\u5931 ${state.lost}`, 220, SAFE_TOP + 38, 13, COLORS.red, "bold");
+  drawCleanlinessThermometer();
 
   if (state.messageTimer > 0) {
     rect(12, view.height - ACTION_BAR_HEIGHT - 38, view.width - 24, 26, "#4b3027");
@@ -718,6 +840,39 @@ function drawStockShelf() {
   rect(x + 29, y + 5, 6, 7, COLORS.blue);
   rect(x + 10, y + 18, 7, 8, COLORS.green);
   rect(x + 23, y + 18, 7, 8, COLORS.red);
+}
+
+function drawToilet() {
+  const toilet = layout.toilet;
+  rect(toilet.x, toilet.y, toilet.w, toilet.h, state.toilet.dirty ? "#b58b68" : "#d7d0bf");
+  strokeRect(toilet.x, toilet.y, toilet.w, toilet.h, COLORS.line, 3);
+  text("\u5395\u6240", toilet.x + toilet.w / 2, toilet.y + 6, 13, COLORS.line, "bold", "center");
+  rect(toilet.x + 12, toilet.y + 24, 22, 12, "#eef3e6");
+  rect(toilet.x + 52, toilet.y + 22, 18, 16, "#88a8b8");
+  rect(toilet.x + 56, toilet.y + 12, 10, 10, "#88a8b8");
+
+  if (state.toilet.dirty) {
+    rect(toilet.x + toilet.w - 14, toilet.y + 8, 8, 8, COLORS.red);
+    drawCleanBubble(toilet.x + toilet.w / 2, toilet.y - 30, "\u6e05\u5395\u6240");
+  }
+}
+
+function drawCleanlinessThermometer() {
+  const x = view.width - 48;
+  const y = SAFE_TOP + 8;
+  const h = 48;
+  const ratio = Math.max(0, Math.min(1, state.cleanliness / 100));
+  const fillH = Math.floor((h - 10) * ratio);
+  const fillColor = ratio > 0.55 ? COLORS.green : ratio > 0.3 ? COLORS.yellow : COLORS.red;
+
+  rect(x, y, 14, h, "#e8d2a2");
+  strokeRect(x, y, 14, h, COLORS.line, 2);
+  rect(x + 3, y + h - 5 - fillH, 8, fillH, fillColor);
+  rect(x - 4, y + h - 2, 22, 12, "#e8d2a2");
+  strokeRect(x - 4, y + h - 2, 22, 12, COLORS.line, 2);
+  rect(x + 1, y + h + 1, 12, 6, fillColor);
+  text("\u6e05\u6d01", x - 34, y + 2, 11, COLORS.text, "bold");
+  text(`${Math.floor(state.cleanliness)}`, x - 30, y + 20, 12, COLORS.text, "bold");
 }
 
 function getInventoryTotal() {
@@ -934,6 +1089,7 @@ function render() {
   drawPixelFloor();
   drawCounter();
   drawStockShelf();
+  drawToilet();
   layout.pcs.forEach(drawPc);
   drawLegend();
   state.guests.forEach(drawGuest);
