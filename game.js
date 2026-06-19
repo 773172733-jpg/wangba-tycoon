@@ -74,6 +74,7 @@ const state = {
   procurementOpen: false,
   warehouseOpen: false,
   hiringOpen: false,
+  equipmentOpen: false,
   employees: {
     cashier: 0,
     floor: 0,
@@ -145,6 +146,14 @@ const staffTypes = [
   }
 ];
 
+const equipmentTiers = [
+  { level: 1, name: "1080 + i3", pricePerPc: 0 },
+  { level: 2, name: "2080 + i5", pricePerPc: 3000 },
+  { level: 3, name: "3080 + i7", pricePerPc: 5000 },
+  { level: 4, name: "4080 + i9", pricePerPc: 7000 },
+  { level: 5, name: "5080 + R9", pricePerPc: 10000 }
+];
+
 const demandProductIds = [
   "noodle",
   "water",
@@ -165,6 +174,9 @@ const ui = {
   warehouseProcurementButton: null,
   hiringButton: null,
   closeHiringButton: null,
+  equipmentButton: null,
+  closeEquipmentButton: null,
+  upgradeEquipmentButtons: [],
   hireButtons: [],
   buyButtons: []
 };
@@ -415,6 +427,37 @@ function getEmployeeTotal() {
   return Object.keys(state.employees).reduce((total, key) => total + state.employees[key], 0);
 }
 
+function getCurrentEquipmentTier() {
+  return equipmentTiers.find((tier) => tier.level === state.equipmentLevel) || equipmentTiers[0];
+}
+
+function getEquipmentUpgradeCost(tier) {
+  return tier.pricePerPc * layout.pcs.length;
+}
+
+function upgradeEquipment(tier) {
+  if (tier.level <= state.equipmentLevel) {
+    say("\u8bbe\u5907\u5df2\u7ecf\u8fbe\u5230\u8be5\u6863\u4f4d\u3002");
+    return;
+  }
+
+  if (tier.level !== state.equipmentLevel + 1) {
+    say("\u8bbe\u5907\u9700\u8981\u6309\u6863\u9010\u7ea7\u5347\u7ea7\u3002");
+    return;
+  }
+
+  const cost = getEquipmentUpgradeCost(tier);
+  if (state.cash < cost) {
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u5347\u7ea7 ${tier.name} \u9700\u8981 ${cost} \u5143\u3002`);
+    return;
+  }
+
+  state.cash -= cost;
+  state.equipmentLevel = tier.level;
+  updateCafeLevel();
+  say(`\u8bbe\u5907\u5347\u7ea7\u5230 ${tier.name}\uff0c\u9ad8\u7aef\u5ba2\u4eba\u66f4\u613f\u610f\u6765\u4e86\u3002`);
+}
+
 function createWorker(type) {
   const home = layout.staffHome[type] || layout.staffHome.floor;
   return {
@@ -457,9 +500,9 @@ function calculateCafeLevel() {
   const machineCount = layout.pcs.length;
   const equipmentLevel = state.equipmentLevel;
 
-  if (employeeTotal >= 6 && machineCount >= 4 && equipmentLevel >= 1) return 4;
-  if (employeeTotal >= 4 && machineCount >= 4 && equipmentLevel >= 1) return 3;
-  if (employeeTotal >= 2 && machineCount >= 4 && equipmentLevel >= 1) return 2;
+  if (employeeTotal >= 6 && machineCount >= 4 && equipmentLevel >= 4) return 4;
+  if (employeeTotal >= 4 && machineCount >= 4 && equipmentLevel >= 3) return 3;
+  if (employeeTotal >= 2 && machineCount >= 4 && equipmentLevel >= 2) return 2;
   return 1;
 }
 
@@ -555,6 +598,19 @@ function handleTouch(x, y) {
     return;
   }
 
+  if (state.equipmentOpen) {
+    if (isPointInRect(x, y, ui.closeEquipmentButton)) {
+      state.equipmentOpen = false;
+      return;
+    }
+
+    const upgradeButton = ui.upgradeEquipmentButtons.find((button) => isPointInRect(x, y, button));
+    if (upgradeButton) {
+      upgradeEquipment(upgradeButton.tier);
+    }
+    return;
+  }
+
   if (isPointInRect(x, y, ui.warehouseButton)) {
     state.warehouseOpen = true;
     return;
@@ -562,6 +618,11 @@ function handleTouch(x, y) {
 
   if (isPointInRect(x, y, ui.hiringButton)) {
     state.hiringOpen = true;
+    return;
+  }
+
+  if (isPointInRect(x, y, ui.equipmentButton)) {
+    state.equipmentOpen = true;
     return;
   }
 
@@ -1212,14 +1273,16 @@ function drawActionBar() {
 
   text(`\u7f51\u5427 Lv.${state.cafeLevel}`, 16, y + 11, 13, COLORS.yellow, "bold");
 
-  const buttonW = 58;
+  const buttonW = 50;
   const buttonH = 34;
-  ui.warehouseButton = { x: view.width - buttonW * 3 - 30, y: y + 12, w: buttonW, h: buttonH };
-  ui.hiringButton = { x: view.width - buttonW * 2 - 22, y: y + 12, w: buttonW, h: buttonH };
+  ui.warehouseButton = { x: view.width - buttonW * 4 - 38, y: y + 12, w: buttonW, h: buttonH };
+  ui.hiringButton = { x: view.width - buttonW * 3 - 30, y: y + 12, w: buttonW, h: buttonH };
+  ui.equipmentButton = { x: view.width - buttonW * 2 - 22, y: y + 12, w: buttonW, h: buttonH };
   ui.procurementButton = { x: view.width - buttonW - 14, y: y + 12, w: buttonW, h: buttonH };
 
   drawActionButton(ui.warehouseButton, "\u4ed3\u5e93");
   drawActionButton(ui.hiringButton, "\u62db\u8058");
+  drawActionButton(ui.equipmentButton, "\u8bbe\u5907");
   drawActionButton(ui.procurementButton, "\u91c7\u8d2d");
 }
 
@@ -1535,6 +1598,70 @@ function drawHiringPanel() {
   text("\u5173\u95ed", ui.closeHiringButton.x + ui.closeHiringButton.w / 2, ui.closeHiringButton.y + 4, 12, COLORS.text, "bold", "center");
 }
 
+function drawEquipmentPanel() {
+  if (!state.equipmentOpen) return;
+
+  ui.upgradeEquipmentButtons.length = 0;
+  rect(0, 0, view.width, view.height, "rgba(20, 18, 16, 0.72)");
+
+  const panel = {
+    x: 18,
+    y: HUD_HEIGHT + 8,
+    w: view.width - 36,
+    h: view.height - HUD_HEIGHT - 18
+  };
+
+  const currentTier = getCurrentEquipmentTier();
+  rect(panel.x, panel.y, panel.w, panel.h, "#f0c98a");
+  strokeRect(panel.x, panel.y, panel.w, panel.h, COLORS.wallDark, 4);
+  rect(panel.x, panel.y, panel.w, 42, "#8c4f35");
+  text("\u8bbe\u5907\u5347\u7ea7", panel.x + 16, panel.y + 11, 18, COLORS.text, "bold");
+  text(`\u5f53\u524d ${currentTier.name}`, panel.x + panel.w - 130, panel.y + 14, 12, COLORS.text, "bold");
+
+  rect(panel.x + 10, panel.y + 50, panel.w - 20, 42, "#e3b86f");
+  text(`\u5f53\u524d\u673a\u5668 ${layout.pcs.length} \u53f0  /  \u8bbe\u5907\u6863\u4f4d ${state.equipmentLevel}`, panel.x + 18, panel.y + 58, 12, "#5d4532", "bold");
+  text("\u8d39\u7528\u6309\u6bcf\u53f0\u4ef7\u683c x \u5f53\u524d\u673a\u5668\u6570\u8ba1\u7b97", panel.x + 18, panel.y + 74, 11, "#5d4532");
+
+  const startY = panel.y + 108;
+  const cardH = 62;
+  equipmentTiers.slice(1).forEach((tier, index) => {
+    const y = startY + index * (cardH + 8);
+    if (y + cardH > panel.y + panel.h - 42) return;
+
+    const canUpgradeNext = tier.level === state.equipmentLevel + 1;
+    const upgraded = tier.level <= state.equipmentLevel;
+    const totalCost = getEquipmentUpgradeCost(tier);
+    const affordable = state.cash >= totalCost;
+
+    rect(panel.x + 10, y, panel.w - 20, cardH, canUpgradeNext ? "#f7dba5" : "#c5a575");
+    strokeRect(panel.x + 10, y, panel.w - 20, cardH, "#9a7043", 2);
+    drawEquipmentIcon(panel.x + 30, y + 17, tier.level, upgraded);
+    text(tier.name, panel.x + 68, y + 8, 15, COLORS.line, "bold");
+    text(`\u6bcf\u53f0 ${tier.pricePerPc}  \u603b\u4ef7 ${totalCost}`, panel.x + 68, y + 30, 11, "#5d4532", "bold");
+    text(canUpgradeNext ? "\u53ef\u5347\u7ea7" : upgraded ? "\u5df2\u8fbe\u6210" : "\u9700\u5148\u5347\u4e0a\u4e00\u6863", panel.x + 68, y + 45, 10, canUpgradeNext ? COLORS.green : "#745a46");
+
+    const button = { x: panel.x + panel.w - 58, y: y + 16, w: 42, h: 26, tier };
+    ui.upgradeEquipmentButtons.push(button);
+    rect(button.x, button.y, button.w, button.h, canUpgradeNext && affordable ? "#4e8f4f" : "#9a6b55");
+    strokeRect(button.x, button.y, button.w, button.h, COLORS.line, 2);
+    text(upgraded ? "\u5df2" : "\u5347", button.x + button.w / 2, button.y + 5, 13, COLORS.text, "bold", "center");
+  });
+
+  ui.closeEquipmentButton = { x: panel.x + panel.w - 50, y: panel.y + panel.h - 34, w: 38, h: 24 };
+  rect(ui.closeEquipmentButton.x, ui.closeEquipmentButton.y, ui.closeEquipmentButton.w, ui.closeEquipmentButton.h, "#7f5635");
+  strokeRect(ui.closeEquipmentButton.x, ui.closeEquipmentButton.y, ui.closeEquipmentButton.w, ui.closeEquipmentButton.h, COLORS.line, 2);
+  text("\u5173\u95ed", ui.closeEquipmentButton.x + ui.closeEquipmentButton.w / 2, ui.closeEquipmentButton.y + 4, 12, COLORS.text, "bold", "center");
+}
+
+function drawEquipmentIcon(x, y, level, dimmed) {
+  const glow = dimmed ? "#7b8c76" : COLORS.pcGlow;
+  rect(x - 13, y - 8, 28, 20, "#17222a");
+  strokeRect(x - 13, y - 8, 28, 20, COLORS.line, 2);
+  rect(x - 9, y - 4, 20, 11, glow);
+  rect(x - 2, y + 12, 8, 7, "#2d2522");
+  text(`L${level}`, x + 1, y + 21, 10, COLORS.line, "bold", "center");
+}
+
 function drawStaffIcon(staff, x, y, locked) {
   const shirt = locked ? "#8c755f" : {
     cashier: COLORS.blue,
@@ -1609,6 +1736,7 @@ function render() {
   drawProcurementPanel();
   drawWarehousePanel();
   drawHiringPanel();
+  drawEquipmentPanel();
 }
 
 function loop() {
