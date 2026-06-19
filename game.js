@@ -176,7 +176,9 @@ const ui = {
   closeHiringButton: null,
   equipmentButton: null,
   closeEquipmentButton: null,
+  cancelEquipmentSelectionButton: null,
   upgradeEquipmentButtons: [],
+  equipmentPcButtons: [],
   hireButtons: [],
   buyButtons: []
 };
@@ -253,6 +255,7 @@ function createPc(id, x, y) {
     seatX: x + 26,
     seatY: y + 48,
     occupiedBy: null,
+    equipmentLevel: 1,
     dirty: false
   };
 }
@@ -431,31 +434,58 @@ function getCurrentEquipmentTier() {
   return equipmentTiers.find((tier) => tier.level === state.equipmentLevel) || equipmentTiers[0];
 }
 
-function getEquipmentUpgradeCost(tier) {
-  return tier.pricePerPc * layout.pcs.length;
+function getEquipmentTier(level) {
+  return equipmentTiers.find((tier) => tier.level === level) || equipmentTiers[0];
 }
 
-function upgradeEquipment(tier) {
-  if (tier.level <= state.equipmentLevel) {
-    say("\u8bbe\u5907\u5df2\u7ecf\u8fbe\u5230\u8be5\u6863\u4f4d\u3002");
+function updateEquipmentLevel() {
+  state.equipmentLevel = Math.min(...layout.pcs.map((pc) => pc.equipmentLevel));
+}
+
+function openEquipmentPcSelection(tier) {
+  const hasCandidate = layout.pcs.some((pc) => pc.equipmentLevel + 1 === tier.level);
+  if (!hasCandidate) {
+    say("\u6ca1\u6709\u53ef\u5347\u7ea7\u5230\u8be5\u6863\u4f4d\u7684\u673a\u5668\u3002");
     return;
   }
 
-  if (tier.level !== state.equipmentLevel + 1) {
-    say("\u8bbe\u5907\u9700\u8981\u6309\u6863\u9010\u7ea7\u5347\u7ea7\u3002");
+  if (state.cash < tier.pricePerPc) {
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u5355\u53f0\u5347\u7ea7\u9700\u8981 ${tier.pricePerPc} \u5143\u3002`);
     return;
   }
 
-  const cost = getEquipmentUpgradeCost(tier);
+  state.pendingEquipmentTierLevel = tier.level;
+}
+
+function getPendingEquipmentTier() {
+  return equipmentTiers.find((tier) => tier.level === state.pendingEquipmentTierLevel);
+}
+
+function upgradePcEquipment(pc, tier) {
+  if (!pc || !tier) return;
+
+  if (tier.level <= pc.equipmentLevel) {
+    say(`${pc.id + 1} \u53f7\u673a\u5df2\u7ecf\u8fbe\u5230\u8be5\u6863\u4f4d\u3002`);
+    return;
+  }
+
+  if (tier.level !== pc.equipmentLevel + 1) {
+    say(`${pc.id + 1} \u53f7\u673a\u9700\u8981\u6309\u6863\u9010\u7ea7\u5347\u7ea7\u3002`);
+    return;
+  }
+
+  const cost = tier.pricePerPc;
   if (state.cash < cost) {
-    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u5347\u7ea7 ${tier.name} \u9700\u8981 ${cost} \u5143\u3002`);
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u5347\u7ea7 ${pc.id + 1} \u53f7\u673a\u9700\u8981 ${cost} \u5143\u3002`);
     return;
   }
 
   state.cash -= cost;
-  state.equipmentLevel = tier.level;
+  pc.equipmentLevel = tier.level;
+  updateEquipmentLevel();
   updateCafeLevel();
-  say(`\u8bbe\u5907\u5347\u7ea7\u5230 ${tier.name}\uff0c\u9ad8\u7aef\u5ba2\u4eba\u66f4\u613f\u610f\u6765\u4e86\u3002`);
+  state.pendingEquipmentTierLevel = null;
+  say(`${pc.id + 1} \u53f7\u673a\u5347\u7ea7\u5230 ${tier.name}\u3002`);
 }
 
 function createWorker(type) {
@@ -599,14 +629,29 @@ function handleTouch(x, y) {
   }
 
   if (state.equipmentOpen) {
+    const pendingTier = getPendingEquipmentTier();
+    if (pendingTier) {
+      if (isPointInRect(x, y, ui.cancelEquipmentSelectionButton)) {
+        state.pendingEquipmentTierLevel = null;
+        return;
+      }
+
+      const pcButton = ui.equipmentPcButtons.find((button) => isPointInRect(x, y, button));
+      if (pcButton) {
+        upgradePcEquipment(pcButton.pc, pendingTier);
+      }
+      return;
+    }
+
     if (isPointInRect(x, y, ui.closeEquipmentButton)) {
       state.equipmentOpen = false;
+      state.pendingEquipmentTierLevel = null;
       return;
     }
 
     const upgradeButton = ui.upgradeEquipmentButtons.find((button) => isPointInRect(x, y, button));
     if (upgradeButton) {
-      upgradeEquipment(upgradeButton.tier);
+      openEquipmentPcSelection(upgradeButton.tier);
     }
     return;
   }
@@ -1071,6 +1116,7 @@ function updateGuests(dt) {
 function update(dt) {
   state.time += dt;
   state.messageTimer = Math.max(0, state.messageTimer - dt);
+  updateEquipmentLevel();
   updateCafeLevel();
   updateSpawn();
   updateFrontDesk(dt);
@@ -1192,7 +1238,7 @@ function drawPc(pc) {
   rect(pc.x + 15, pc.y + 14, 10, 3, "#dfffe7");
   rect(pc.x + 21, pc.y + 31, 10, 8, "#2d2522");
 
-  text(`${pc.id + 1}号`, pc.x + pc.w / 2, pc.y - 17, 11, COLORS.dimText, "bold", "center");
+  text(`${pc.id + 1}\u53f7 L${pc.equipmentLevel}`, pc.x + pc.w / 2, pc.y - 17, 10, COLORS.dimText, "bold", "center");
 
   if (pc.dirty) {
     rect(pc.x + pc.w - 12, pc.y + 32, 8, 8, COLORS.red);
@@ -1611,16 +1657,17 @@ function drawEquipmentPanel() {
     h: view.height - HUD_HEIGHT - 18
   };
 
+  updateEquipmentLevel();
   const currentTier = getCurrentEquipmentTier();
   rect(panel.x, panel.y, panel.w, panel.h, "#f0c98a");
   strokeRect(panel.x, panel.y, panel.w, panel.h, COLORS.wallDark, 4);
   rect(panel.x, panel.y, panel.w, 42, "#8c4f35");
   text("\u8bbe\u5907\u5347\u7ea7", panel.x + 16, panel.y + 11, 18, COLORS.text, "bold");
-  text(`\u5f53\u524d ${currentTier.name}`, panel.x + panel.w - 130, panel.y + 14, 12, COLORS.text, "bold");
+  text(`\u5168\u5e97\u6700\u4f4e ${currentTier.name}`, panel.x + panel.w - 150, panel.y + 14, 12, COLORS.text, "bold");
 
   rect(panel.x + 10, panel.y + 50, panel.w - 20, 42, "#e3b86f");
   text(`\u5f53\u524d\u673a\u5668 ${layout.pcs.length} \u53f0  /  \u8bbe\u5907\u6863\u4f4d ${state.equipmentLevel}`, panel.x + 18, panel.y + 58, 12, "#5d4532", "bold");
-  text("\u8d39\u7528\u6309\u6bcf\u53f0\u4ef7\u683c x \u5f53\u524d\u673a\u5668\u6570\u8ba1\u7b97", panel.x + 18, panel.y + 74, 11, "#5d4532");
+  text("\u70b9\u51fb\u5347\u7ea7\u540e\u9009\u62e9\u5177\u4f53\u673a\u5668\uff0c\u5355\u53f0\u6263\u8d39", panel.x + 18, panel.y + 74, 11, "#5d4532");
 
   const startY = panel.y + 108;
   const cardH = 62;
@@ -1628,29 +1675,69 @@ function drawEquipmentPanel() {
     const y = startY + index * (cardH + 8);
     if (y + cardH > panel.y + panel.h - 42) return;
 
-    const canUpgradeNext = tier.level === state.equipmentLevel + 1;
-    const upgraded = tier.level <= state.equipmentLevel;
-    const totalCost = getEquipmentUpgradeCost(tier);
-    const affordable = state.cash >= totalCost;
+    const hasCandidate = layout.pcs.some((pc) => pc.equipmentLevel + 1 === tier.level);
+    const allUpgraded = layout.pcs.every((pc) => pc.equipmentLevel >= tier.level);
+    const affordable = state.cash >= tier.pricePerPc;
 
-    rect(panel.x + 10, y, panel.w - 20, cardH, canUpgradeNext ? "#f7dba5" : "#c5a575");
+    rect(panel.x + 10, y, panel.w - 20, cardH, hasCandidate ? "#f7dba5" : "#c5a575");
     strokeRect(panel.x + 10, y, panel.w - 20, cardH, "#9a7043", 2);
-    drawEquipmentIcon(panel.x + 30, y + 17, tier.level, upgraded);
+    drawEquipmentIcon(panel.x + 30, y + 17, tier.level, allUpgraded);
     text(tier.name, panel.x + 68, y + 8, 15, COLORS.line, "bold");
-    text(`\u6bcf\u53f0 ${tier.pricePerPc}  \u603b\u4ef7 ${totalCost}`, panel.x + 68, y + 30, 11, "#5d4532", "bold");
-    text(canUpgradeNext ? "\u53ef\u5347\u7ea7" : upgraded ? "\u5df2\u8fbe\u6210" : "\u9700\u5148\u5347\u4e0a\u4e00\u6863", panel.x + 68, y + 45, 10, canUpgradeNext ? COLORS.green : "#745a46");
+    text(`\u5355\u53f0 ${tier.pricePerPc}`, panel.x + 68, y + 30, 11, "#5d4532", "bold");
+    text(hasCandidate ? "\u53ef\u9009\u673a\u5668" : allUpgraded ? "\u5168\u90e8\u5df2\u8fbe\u6210" : "\u9700\u5148\u5347\u4e0a\u4e00\u6863", panel.x + 68, y + 45, 10, hasCandidate ? COLORS.green : "#745a46");
 
     const button = { x: panel.x + panel.w - 58, y: y + 16, w: 42, h: 26, tier };
     ui.upgradeEquipmentButtons.push(button);
-    rect(button.x, button.y, button.w, button.h, canUpgradeNext && affordable ? "#4e8f4f" : "#9a6b55");
+    rect(button.x, button.y, button.w, button.h, hasCandidate && affordable ? "#4e8f4f" : "#9a6b55");
     strokeRect(button.x, button.y, button.w, button.h, COLORS.line, 2);
-    text(upgraded ? "\u5df2" : "\u5347", button.x + button.w / 2, button.y + 5, 13, COLORS.text, "bold", "center");
+    text(allUpgraded ? "\u5df2" : "\u5347", button.x + button.w / 2, button.y + 5, 13, COLORS.text, "bold", "center");
   });
 
   ui.closeEquipmentButton = { x: panel.x + panel.w - 50, y: panel.y + panel.h - 34, w: 38, h: 24 };
   rect(ui.closeEquipmentButton.x, ui.closeEquipmentButton.y, ui.closeEquipmentButton.w, ui.closeEquipmentButton.h, "#7f5635");
   strokeRect(ui.closeEquipmentButton.x, ui.closeEquipmentButton.y, ui.closeEquipmentButton.w, ui.closeEquipmentButton.h, COLORS.line, 2);
   text("\u5173\u95ed", ui.closeEquipmentButton.x + ui.closeEquipmentButton.w / 2, ui.closeEquipmentButton.y + 4, 12, COLORS.text, "bold", "center");
+
+  drawEquipmentPcSelection(panel);
+}
+
+function drawEquipmentPcSelection(panel) {
+  const tier = getPendingEquipmentTier();
+  if (!tier) return;
+
+  ui.equipmentPcButtons.length = 0;
+  rect(panel.x + 16, panel.y + 92, panel.w - 32, panel.h - 138, "rgba(77, 52, 35, 0.92)");
+  strokeRect(panel.x + 16, panel.y + 92, panel.w - 32, panel.h - 138, COLORS.line, 3);
+  text(`\u9009\u62e9\u8981\u5347\u7ea7\u5230 ${tier.name} \u7684\u673a\u5668`, panel.x + panel.w / 2, panel.y + 104, 14, COLORS.text, "bold", "center");
+  text(`\u5355\u53f0\u8d39\u7528 ${tier.pricePerPc}`, panel.x + panel.w / 2, panel.y + 125, 12, COLORS.text, "bold", "center");
+
+  const cols = 2;
+  const cardW = (panel.w - 56) / cols;
+  const startY = panel.y + 152;
+  layout.pcs.forEach((pc, index) => {
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    const x = panel.x + 28 + col * (cardW + 8);
+    const y = startY + row * 58;
+    const currentTier = getEquipmentTier(pc.equipmentLevel);
+    const canUpgrade = pc.equipmentLevel + 1 === tier.level && state.cash >= tier.pricePerPc;
+
+    rect(x, y, cardW, 48, canUpgrade ? "#f7dba5" : "#c5a575");
+    strokeRect(x, y, cardW, 48, "#9a7043", 2);
+    text(`${pc.id + 1} \u53f7\u673a`, x + 10, y + 7, 13, COLORS.line, "bold");
+    text(currentTier.name, x + 10, y + 26, 10, "#5d4532", "bold");
+
+    const button = { x: x + cardW - 42, y: y + 10, w: 32, h: 26, pc };
+    ui.equipmentPcButtons.push(button);
+    rect(button.x, button.y, button.w, button.h, canUpgrade ? "#4e8f4f" : "#9a6b55");
+    strokeRect(button.x, button.y, button.w, button.h, COLORS.line, 2);
+    text("\u5347", button.x + button.w / 2, button.y + 6, 12, COLORS.text, "bold", "center");
+  });
+
+  ui.cancelEquipmentSelectionButton = { x: panel.x + panel.w - 66, y: panel.y + panel.h - 68, w: 48, h: 24 };
+  rect(ui.cancelEquipmentSelectionButton.x, ui.cancelEquipmentSelectionButton.y, ui.cancelEquipmentSelectionButton.w, ui.cancelEquipmentSelectionButton.h, "#7f5635");
+  strokeRect(ui.cancelEquipmentSelectionButton.x, ui.cancelEquipmentSelectionButton.y, ui.cancelEquipmentSelectionButton.w, ui.cancelEquipmentSelectionButton.h, COLORS.line, 2);
+  text("\u8fd4\u56de", ui.cancelEquipmentSelectionButton.x + ui.cancelEquipmentSelectionButton.w / 2, ui.cancelEquipmentSelectionButton.y + 4, 12, COLORS.text, "bold", "center");
 }
 
 function drawEquipmentIcon(x, y, level, dimmed) {
