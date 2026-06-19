@@ -17,75 +17,114 @@ const view = {
 screenCanvas.width = view.width * dpr;
 screenCanvas.height = view.height * dpr;
 ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+ctx.imageSmoothingEnabled = false;
 
 const raf = typeof requestAnimationFrame === "function"
   ? requestAnimationFrame
   : (callback) => setTimeout(callback, 16);
 
-const state = {
-  cash: 100,
-  reputation: 50,
-  seats: 4,
-  computerLevel: 1,
-  networkLevel: 1,
-  snackLevel: 0,
-  customers: [],
-  served: 0,
-  totalEarned: 0,
-  time: 0,
-  lastSpawnAt: 0,
-  message: "Cafe opened. Upgrade seats and PCs first.",
-  messageTimer: 4
+const TILE = 12;
+const COLORS = {
+  wall: "#2a2526",
+  wallDark: "#171516",
+  floor: "#d8b486",
+  floorAlt: "#c79c6d",
+  counter: "#8f4d2f",
+  counterTop: "#c07a42",
+  pcDesk: "#6a3f2b",
+  pcScreen: "#1b2730",
+  pcGlow: "#65e8a2",
+  line: "#241917",
+  text: "#fff4cf",
+  dimText: "#b99f7c",
+  red: "#e84855",
+  green: "#5ec27f",
+  yellow: "#ffd166",
+  blue: "#70a1ff"
 };
 
-const customerTypes = [
-  { name: "Student", color: "#64b5f6", patience: 8, spend: 14 },
-  { name: "Worker", color: "#81c784", patience: 7, spend: 18 },
-  { name: "Gamer", color: "#ffb74d", patience: 10, spend: 24 },
-  { name: "Night Owl", color: "#ba68c8", patience: 12, spend: 30 }
+const layout = createLayout();
+const state = {
+  cash: 100,
+  served: 0,
+  lost: 0,
+  time: 0,
+  nextGuestAt: 1,
+  guestId: 1,
+  guests: [],
+  frontDesk: {
+    busyGuestId: null,
+    timer: 0,
+    duration: 1.15
+  },
+  message: "First draft: guests enter, check in, play, leave.",
+  messageTimer: 5
+};
+
+const guestPalettes = [
+  { shirt: "#e84855", hair: "#2d1e1a" },
+  { shirt: "#70a1ff", hair: "#2d1e1a" },
+  { shirt: "#5ec27f", hair: "#3d2b22" },
+  { shirt: "#ffd166", hair: "#2d1e1a" }
 ];
 
-const upgrades = [
-  {
-    label: "Seat",
-    description: "Capacity +1",
-    getCost: () => Math.floor(80 * Math.pow(1.38, state.seats - 4)),
-    apply: () => {
-      state.seats += 1;
-      say("New seat installed. More guests can play.");
-    }
-  },
-  {
-    label: "PC",
-    description: "Higher spend",
-    getCost: () => Math.floor(120 * Math.pow(1.55, state.computerLevel - 1)),
-    apply: () => {
-      state.computerLevel += 1;
-      say("PCs upgraded. Guests pay more per session.");
-    }
-  },
-  {
-    label: "Net",
-    description: "Faster turnover",
-    getCost: () => Math.floor(100 * Math.pow(1.5, state.networkLevel - 1)),
-    apply: () => {
-      state.networkLevel += 1;
-      say("Network upgraded. Sessions finish faster.");
-    }
-  },
-  {
-    label: "Snack",
-    description: "Extra income",
-    getCost: () => Math.floor(90 * Math.pow(1.45, state.snackLevel)),
-    apply: () => {
-      state.snackLevel += 1;
-      say("Snack shelf added. Extra sales unlocked.");
-    }
-  }
-];
-
-const buttons = [];
 let lastFrameAt = Date.now();
+
+function createLayout() {
+  const room = {
+    x: 18,
+    y: 86,
+    w: view.width - 36,
+    h: Math.min(view.height - 132, view.width * 1.28)
+  };
+  room.y = Math.max(76, (view.height - room.h) / 2 + 14);
+
+  const counter = {
+    x: room.x + room.w * 0.32,
+    y: room.y + 52,
+    w: room.w * 0.42,
+    h: 38
+  };
+
+  const entrance = {
+    x: room.x - 4,
+    y: counter.y + 52
+  };
+
+  const queue = [
+    { x: counter.x - 12, y: counter.y + counter.h + 26 },
+    { x: counter.x - 40, y: counter.y + counter.h + 26 },
+    { x: counter.x - 68, y: counter.y + counter.h + 26 }
+  ];
+
+  const pcTop = counter.y + 126;
+  const pcGapX = room.w * 0.24;
+  const pcGapY = 80;
+  const pcLeft = room.x + room.w * 0.28;
+
+  const pcs = [
+    createPc(0, pcLeft, pcTop),
+    createPc(1, pcLeft + pcGapX, pcTop),
+    createPc(2, pcLeft, pcTop + pcGapY),
+    createPc(3, pcLeft + pcGapX, pcTop + pcGapY)
+  ];
+
+  return { room, counter, entrance, queue, pcs };
+}
+
+function createPc(id, x, y) {
+  return {
+    id,
+    x,
+    y,
+    w: 52,
+    h: 44,
+    seatX: x + 26,
+    seatY: y + 48,
+    occupiedBy: null,
+    dirty: false
+  };
+}
 
 function say(text) {
   state.message = text;
@@ -96,216 +135,309 @@ function random(min, max) {
   return Math.random() * (max - min) + min;
 }
 
-function spawnCustomer(now) {
-  if (state.customers.length >= state.seats) return;
-
-  const delay = Math.max(1.1, 3.25 - state.reputation / 55 - state.networkLevel * 0.08);
-  if (now - state.lastSpawnAt < delay) return;
-
-  const type = customerTypes[Math.floor(Math.random() * customerTypes.length)];
-  const sessionTime = Math.max(3.5, type.patience - state.networkLevel * 0.45 + random(-0.8, 1.2));
-
-  state.customers.push({
-    type,
-    progress: 0,
-    sessionTime,
-    wobble: random(0, Math.PI * 2)
-  });
-  state.lastSpawnAt = now;
+function distance(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-function finishCustomer(customer) {
-  const earned = customer.type.spend +
-    state.computerLevel * 7 +
-    state.snackLevel * Math.floor(random(3, 8)) +
-    Math.floor(state.reputation / 25);
+function moveToward(entity, target, speed, dt) {
+  const dx = target.x - entity.x;
+  const dy = target.y - entity.y;
+  const len = Math.hypot(dx, dy);
 
-  state.cash += earned;
-  state.totalEarned += earned;
+  if (len < 1) {
+    entity.x = target.x;
+    entity.y = target.y;
+    return true;
+  }
+
+  const step = Math.min(len, speed * dt);
+  entity.x += dx / len * step;
+  entity.y += dy / len * step;
+  return len <= step + 0.5;
+}
+
+function findFreePc() {
+  return layout.pcs.find((pc) => !pc.occupiedBy && !pc.dirty);
+}
+
+function spawnGuest() {
+  const palette = guestPalettes[Math.floor(Math.random() * guestPalettes.length)];
+  state.guests.push({
+    id: state.guestId,
+    x: layout.entrance.x - 34,
+    y: layout.entrance.y,
+    state: "entering",
+    queueIndex: -1,
+    pcId: null,
+    playTimer: 0,
+    playDuration: random(8, 13),
+    speed: random(44, 58),
+    palette
+  });
+  state.guestId += 1;
+}
+
+function updateSpawn() {
+  if (state.time < state.nextGuestAt) return;
+
+  const waitingGuests = state.guests.filter((guest) => (
+    guest.state === "entering" ||
+    guest.state === "queueing" ||
+    guest.state === "checkingIn"
+  )).length;
+
+  if (waitingGuests < 5) {
+    spawnGuest();
+  } else {
+    state.lost += 1;
+  }
+
+  state.nextGuestAt = state.time + random(2.3, 3.7);
+}
+
+function updateFrontDesk(dt) {
+  if (state.frontDesk.busyGuestId) {
+    state.frontDesk.timer -= dt;
+    if (state.frontDesk.timer > 0) return;
+
+    const guest = state.guests.find((item) => item.id === state.frontDesk.busyGuestId);
+    const pc = findFreePc();
+
+    if (guest && pc) {
+      pc.occupiedBy = guest.id;
+      guest.pcId = pc.id;
+      guest.state = "toPc";
+      guest.queueIndex = -1;
+      say(`Guest ${guest.id} checked in at PC ${pc.id + 1}.`);
+    } else if (guest) {
+      guest.state = "queueing";
+    }
+
+    state.frontDesk.busyGuestId = null;
+    state.frontDesk.timer = 0;
+  }
+
+  const nextGuest = state.guests.find((guest) => guest.state === "queueing" && guest.queueIndex === 0);
+  if (!nextGuest || !findFreePc()) return;
+
+  nextGuest.state = "checkingIn";
+  state.frontDesk.busyGuestId = nextGuest.id;
+  state.frontDesk.timer = state.frontDesk.duration;
+}
+
+function updateQueueTargets() {
+  const waiting = state.guests.filter((guest) => (
+    guest.state === "entering" ||
+    guest.state === "queueing"
+  ));
+
+  waiting.forEach((guest, index) => {
+    guest.queueIndex = Math.min(index, layout.queue.length - 1);
+    if (guest.state === "entering" && distance(guest, layout.queue[guest.queueIndex]) < 2) {
+      guest.state = "queueing";
+    }
+  });
+}
+
+function finishPlaying(guest, pc) {
+  const hourlyRate = 5;
+  const sessionHours = 2;
+  const income = hourlyRate * sessionHours;
+
+  state.cash += income;
   state.served += 1;
-  state.reputation = Math.min(100, state.reputation + 0.35);
+  pc.occupiedBy = null;
+  pc.dirty = true;
+  guest.state = "leaving";
+  say(`Guest ${guest.id} paid ${income}. Seat needs cleaning.`);
+}
 
-  if (state.served % 8 === 0) {
-    say(`Served ${state.served} guests. Reputation is rising.`);
+function autoClean(dt) {
+  layout.pcs.forEach((pc) => {
+    if (!pc.dirty) return;
+
+    pc.cleanTimer = (pc.cleanTimer || 2.2) - dt;
+    if (pc.cleanTimer <= 0) {
+      pc.dirty = false;
+      pc.cleanTimer = 0;
+    }
+  });
+}
+
+function updateGuests(dt) {
+  updateQueueTargets();
+
+  for (let index = state.guests.length - 1; index >= 0; index -= 1) {
+    const guest = state.guests[index];
+
+    if (guest.state === "entering" || guest.state === "queueing") {
+      const target = layout.queue[guest.queueIndex] || layout.queue[layout.queue.length - 1];
+      moveToward(guest, target, guest.speed, dt);
+      continue;
+    }
+
+    if (guest.state === "checkingIn") {
+      moveToward(guest, { x: layout.counter.x + 14, y: layout.counter.y + layout.counter.h + 18 }, guest.speed, dt);
+      continue;
+    }
+
+    if (guest.state === "toPc") {
+      const pc = layout.pcs[guest.pcId];
+      const arrived = moveToward(guest, { x: pc.seatX, y: pc.seatY }, guest.speed, dt);
+      if (arrived) {
+        guest.state = "playing";
+        guest.playTimer = guest.playDuration;
+      }
+      continue;
+    }
+
+    if (guest.state === "playing") {
+      const pc = layout.pcs[guest.pcId];
+      guest.x = pc.seatX;
+      guest.y = pc.seatY;
+      guest.playTimer -= dt;
+      if (guest.playTimer <= 0) {
+        finishPlaying(guest, pc);
+      }
+      continue;
+    }
+
+    if (guest.state === "leaving") {
+      const left = moveToward(guest, { x: layout.entrance.x - 42, y: layout.entrance.y }, guest.speed + 8, dt);
+      if (left) {
+        state.guests.splice(index, 1);
+      }
+    }
   }
 }
 
 function update(dt) {
   state.time += dt;
   state.messageTimer = Math.max(0, state.messageTimer - dt);
-  spawnCustomer(state.time);
-
-  for (let index = state.customers.length - 1; index >= 0; index -= 1) {
-    const customer = state.customers[index];
-    customer.progress += dt / customer.sessionTime;
-
-    if (customer.progress >= 1) {
-      finishCustomer(customer);
-      state.customers.splice(index, 1);
-    }
-  }
+  updateSpawn();
+  updateFrontDesk(dt);
+  updateGuests(dt);
+  autoClean(dt);
 }
 
-function roundedRect(x, y, width, height, radius) {
-  const r = Math.min(radius, width / 2, height / 2);
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + width, y, x + width, y + height, r);
-  ctx.arcTo(x + width, y + height, x, y + height, r);
-  ctx.arcTo(x, y + height, x, y, r);
-  ctx.arcTo(x, y, x + width, y, r);
-  ctx.closePath();
+function rect(x, y, w, h, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
+}
+
+function strokeRect(x, y, w, h, color, lineWidth = 2) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lineWidth;
+  ctx.strokeRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h));
 }
 
 function text(value, x, y, size, color, weight = "normal", align = "left") {
   ctx.fillStyle = color;
-  ctx.font = `${weight} ${size}px Arial, sans-serif`;
+  ctx.font = `${weight} ${size}px monospace`;
   ctx.textAlign = align;
   ctx.textBaseline = "top";
   ctx.fillText(value, x, y);
 }
 
-function drawBackground() {
-  const gradient = ctx.createLinearGradient(0, 0, 0, view.height);
-  gradient.addColorStop(0, "#22313a");
-  gradient.addColorStop(0.55, "#2c3f43");
-  gradient.addColorStop(1, "#172027");
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, view.width, view.height);
+function drawPixelFloor() {
+  const room = layout.room;
+  rect(0, 0, view.width, view.height, "#101417");
+  rect(room.x - 6, room.y - 6, room.w + 12, room.h + 12, COLORS.wallDark);
+  rect(room.x, room.y, room.w, room.h, COLORS.wall);
 
-  ctx.fillStyle = "#314449";
-  ctx.fillRect(0, view.height * 0.58, view.width, view.height * 0.42);
-
-  roundedRect(26, 28, view.width - 52, 58, 8);
-  ctx.fillStyle = "#191f27";
-  ctx.fill();
-  ctx.strokeStyle = "#ffc857";
-  ctx.lineWidth = 3;
-  ctx.stroke();
-  text("Wangba Tycoon", view.width / 2, 45, 24, "#ffe8a3", "bold", "center");
-}
-
-function drawStats() {
-  const stats = [
-    `Cash $${state.cash}`,
-    `Seats ${state.customers.length}/${state.seats}`,
-    `PC Lv.${state.computerLevel}`,
-    `Net Lv.${state.networkLevel}`,
-    `Rep ${Math.floor(state.reputation)}`
-  ];
-
-  stats.forEach((item, index) => {
-    const col = index % 2;
-    const row = Math.floor(index / 2);
-    const cardWidth = (view.width - 48) / 2;
-    const x = 18 + col * (cardWidth + 12);
-    const y = 104 + row * 38;
-
-    roundedRect(x, y, cardWidth, 28, 6);
-    ctx.fillStyle = "#3b5058";
-    ctx.fill();
-    text(item, x + 10, y + 6, 14, "#fff6d6", "bold");
-  });
-}
-
-function drawMessage() {
-  if (state.messageTimer <= 0) return;
-
-  roundedRect(18, 178, view.width - 36, 36, 8);
-  ctx.fillStyle = "rgba(255, 232, 163, 0.18)";
-  ctx.fill();
-  text(state.message, view.width / 2, 188, 13, "#fff0b8", "normal", "center");
-}
-
-function drawCafeFloor() {
-  const floorTop = 226;
-  const floorBottom = view.height - 184;
-  const floorHeight = Math.max(210, floorBottom - floorTop);
-
-  roundedRect(18, floorTop, view.width - 36, floorHeight, 8);
-  ctx.fillStyle = "#263841";
-  ctx.fill();
-
-  const cols = 2;
-  const seatWidth = (view.width - 72) / cols;
-  const seatHeight = 74;
-  const startY = floorTop + 22;
-
-  for (let index = 0; index < state.seats; index += 1) {
-    const col = index % cols;
-    const row = Math.floor(index / cols);
-    const x = 32 + col * (seatWidth + 18);
-    const y = startY + row * (seatHeight + 14);
-    const occupied = state.customers[index];
-
-    roundedRect(x, y, seatWidth, seatHeight, 8);
-    ctx.fillStyle = occupied ? "#3f626b" : "#30444c";
-    ctx.fill();
-
-    roundedRect(x + 14, y + 12, seatWidth - 28, 28, 4);
-    ctx.fillStyle = "#111827";
-    ctx.fill();
-    ctx.fillStyle = occupied ? "#75e6a5" : "#647987";
-    ctx.fillRect(x + 19, y + 17, seatWidth - 38, 18);
-
-    if (occupied) {
-      const bob = Math.sin(state.time * 4 + occupied.wobble) * 2;
-      ctx.fillStyle = occupied.type.color;
-      ctx.beginPath();
-      ctx.arc(x + seatWidth / 2, y + 54 + bob, 12, 0, Math.PI * 2);
-      ctx.fill();
-
-      const barWidth = seatWidth - 24;
-      ctx.fillStyle = "#172026";
-      ctx.fillRect(x + 12, y + seatHeight - 10, barWidth, 4);
-      ctx.fillStyle = "#ffe082";
-      ctx.fillRect(x + 12, y + seatHeight - 10, barWidth * occupied.progress, 4);
-    } else {
-      text("Empty", x + seatWidth / 2, y + 48, 13, "#b7c7cf", "normal", "center");
+  for (let y = room.y + TILE; y < room.y + room.h - TILE; y += TILE) {
+    for (let x = room.x + TILE; x < room.x + room.w - TILE; x += TILE) {
+      const color = ((x / TILE + y / TILE) % 2 === 0) ? COLORS.floor : COLORS.floorAlt;
+      rect(x, y, TILE, TILE, color);
     }
+  }
+
+  rect(room.x - 8, layout.entrance.y - 22, 14, 46, "#101417");
+  rect(room.x - 22, layout.entrance.y - 14, 22, 28, "#49342a");
+  rect(room.x - 42, layout.entrance.y - 5, 26, 10, COLORS.red);
+  rect(room.x - 20, layout.entrance.y - 13, 10, 26, COLORS.red);
+}
+
+function drawCounter() {
+  const c = layout.counter;
+  rect(c.x, c.y, c.w, c.h, COLORS.counter);
+  rect(c.x, c.y, c.w, 10, COLORS.counterTop);
+  strokeRect(c.x, c.y, c.w, c.h, COLORS.line, 3);
+  text("BAR", c.x + c.w / 2, c.y + 12, 16, COLORS.text, "bold", "center");
+
+  rect(c.x + c.w - 28, c.y + 12, 18, 16, "#20262b");
+  rect(c.x + c.w - 24, c.y + 16, 10, 6, COLORS.pcGlow);
+
+  if (state.frontDesk.busyGuestId) {
+    const progress = 1 - state.frontDesk.timer / state.frontDesk.duration;
+    rect(c.x + 8, c.y + c.h + 6, c.w - 16, 6, "#3a2b26");
+    rect(c.x + 8, c.y + c.h + 6, (c.w - 16) * progress, 6, COLORS.yellow);
   }
 }
 
-function drawButtons() {
-  buttons.length = 0;
-  const panelTop = view.height - 172;
+function drawPc(pc) {
+  rect(pc.x, pc.y, pc.w, pc.h, COLORS.pcDesk);
+  strokeRect(pc.x, pc.y, pc.w, pc.h, COLORS.line, 3);
+  rect(pc.x + 8, pc.y + 7, pc.w - 16, 22, COLORS.pcScreen);
+  rect(pc.x + 12, pc.y + 11, pc.w - 24, 14, pc.dirty ? "#6a5a4a" : COLORS.pcGlow);
+  rect(pc.x + 21, pc.y + 31, 10, 8, "#2d2522");
 
-  ctx.fillStyle = "#121920";
-  ctx.fillRect(0, panelTop, view.width, 172);
-  text("Upgrades", 18, panelTop + 14, 18, "#f9e6a2", "bold");
+  text(String(pc.id + 1).padStart(2, "0"), pc.x + pc.w / 2, pc.y - 16, 11, COLORS.dimText, "bold", "center");
 
-  const buttonWidth = (view.width - 54) / 2;
-  const buttonHeight = 52;
+  if (pc.dirty) {
+    rect(pc.x + pc.w - 12, pc.y + 32, 8, 8, COLORS.red);
+  }
 
-  upgrades.forEach((upgrade, index) => {
-    const col = index % 2;
-    const row = Math.floor(index / 2);
-    const x = 18 + col * (buttonWidth + 18);
-    const y = panelTop + 46 + row * 60;
-    const cost = upgrade.getCost();
-    const canBuy = state.cash >= cost;
+  const guest = state.guests.find((item) => item.id === pc.occupiedBy && item.state === "playing");
+  if (guest) {
+    const progress = 1 - guest.playTimer / guest.playDuration;
+    rect(pc.x, pc.y + pc.h + 15, pc.w, 5, "#3a2b26");
+    rect(pc.x, pc.y + pc.h + 15, pc.w * progress, 5, COLORS.yellow);
+  }
+}
 
-    roundedRect(x, y, buttonWidth, buttonHeight, 7);
-    ctx.fillStyle = canBuy ? "#2f7d69" : "#34414a";
-    ctx.fill();
-    ctx.strokeStyle = canBuy ? "#86efac" : "#55636b";
-    ctx.lineWidth = 1;
-    ctx.stroke();
+function drawGuest(guest) {
+  const x = Math.round(guest.x);
+  const y = Math.round(guest.y);
 
-    text(upgrade.label, x + 10, y + 7, 15, "#ffffff", "bold");
-    text(`${upgrade.description} $${cost}`, x + 10, y + 30, 12, canBuy ? "#def7ec" : "#b8c0c6");
+  rect(x - 5, y - 18, 10, 8, "#f3c596");
+  rect(x - 6, y - 21, 12, 5, guest.palette.hair);
+  rect(x - 7, y - 10, 14, 14, guest.palette.shirt);
+  rect(x - 8, y + 3, 6, 10, "#273444");
+  rect(x + 2, y + 3, 6, 10, "#273444");
 
-    buttons.push({ x, y, width: buttonWidth, height: buttonHeight, upgrade });
-  });
+  if (guest.state === "queueing") {
+    text("...", x, y - 36, 11, COLORS.text, "bold", "center");
+  }
+}
+
+function drawHud() {
+  rect(0, 0, view.width, 72, "#15191d");
+  rect(0, 70, view.width, 3, COLORS.counterTop);
+  text("BLACK NET CAFE", 16, 12, 18, COLORS.text, "bold");
+  text(`Cash ${state.cash}`, 16, 40, 13, COLORS.green, "bold");
+  text(`Served ${state.served}`, 112, 40, 13, COLORS.blue, "bold");
+  text(`Lost ${state.lost}`, 220, 40, 13, COLORS.red, "bold");
+
+  if (state.messageTimer > 0) {
+    rect(12, view.height - 38, view.width - 24, 26, "#1d252b");
+    text(state.message, view.width / 2, view.height - 31, 11, COLORS.text, "normal", "center");
+  }
+}
+
+function drawLegend() {
+  text("Entrance", layout.room.x + 8, layout.entrance.y - 46, 11, COLORS.red, "bold");
+  text("4 starter PCs", layout.room.x + layout.room.w / 2, layout.pcs[2].y + 70, 11, COLORS.dimText, "bold", "center");
 }
 
 function render() {
   ctx.clearRect(0, 0, view.width, view.height);
-  drawBackground();
-  drawStats();
-  drawMessage();
-  drawCafeFloor();
-  drawButtons();
+  drawPixelFloor();
+  drawCounter();
+  layout.pcs.forEach(drawPc);
+  drawLegend();
+  state.guests.forEach(drawGuest);
+  drawHud();
 }
 
 function loop() {
@@ -318,41 +450,13 @@ function loop() {
   raf(loop);
 }
 
-function handleTouch(x, y) {
-  const button = buttons.find((item) => (
-    x >= item.x &&
-    x <= item.x + item.width &&
-    y >= item.y &&
-    y <= item.y + item.height
-  ));
-
-  if (!button) return;
-
-  const cost = button.upgrade.getCost();
-  if (state.cash < cost) {
-    say("Not enough cash. Serve more guests first.");
-    return;
-  }
-
-  state.cash -= cost;
-  button.upgrade.apply();
-}
-
 function drawFatalError(error) {
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.fillStyle = "#1b1b1b";
-  ctx.fillRect(0, 0, view.width, view.height);
+  rect(0, 0, view.width, view.height, "#1b1b1b");
   text("Startup error", 24, 32, 22, "#ff7777", "bold");
   text(String(error && error.message ? error.message : error), 24, 72, 14, "#ffffff");
 }
 
 try {
-  wx.onTouchStart((event) => {
-    const touch = event.touches && event.touches[0];
-    if (!touch) return;
-    handleTouch(touch.clientX, touch.clientY);
-  });
-
   loop();
 } catch (error) {
   drawFatalError(error);
