@@ -183,9 +183,9 @@ function createLayout() {
 
   const counter = {
     x: room.x + room.w * 0.32,
-    y: room.y + 52,
+    y: room.y + 76,
     w: room.w * 0.42,
-    h: 38
+    h: 44
   };
 
   const entrance = {
@@ -221,21 +221,14 @@ function createLayout() {
   };
 
   const staffHome = {
-    cashier: { x: counter.x + counter.w - 22, y: counter.y + counter.h + 14 },
-    floor: { x: room.x + 44, y: room.y + room.h - 70 },
-    cleaner: { x: room.x + room.w - 42, y: room.y + room.h - 70 },
-    manager: { x: counter.x + counter.w + 24, y: counter.y + counter.h + 18 },
+    cashier: { x: counter.x + counter.w - 22, y: counter.y + counter.h - 8 },
+    floor: { x: room.x + 34, y: room.y + room.h - 76 },
+    cleaner: { x: room.x + room.w - 34, y: room.y + room.h - 76 },
+    manager: { x: counter.x + 18, y: counter.y + counter.h - 8 },
     companion: { x: room.x + room.w - 70, y: room.y + 90 }
   };
 
-  const patrolPoints = [
-    { x: room.x + 42, y: room.y + 96 },
-    { x: room.x + room.w - 54, y: room.y + 98 },
-    { x: room.x + 48, y: room.y + room.h - 76 },
-    { x: room.x + room.w - 58, y: room.y + room.h - 82 }
-  ];
-
-  return { room, counter, entrance, queue, pcs, toilet, staffHome, patrolPoints };
+  return { room, counter, entrance, queue, pcs, toilet, staffHome };
 }
 
 function createPc(id, x, y) {
@@ -429,12 +422,11 @@ function createWorker(type) {
     type,
     x: home.x,
     y: home.y,
-    state: type === "cashier" ? "station" : "patrol",
+    state: "station",
     taskTimer: 0,
     targetPcId: null,
     targetGuestId: null,
-    targetProductId: null,
-    patrolIndex: Math.floor(Math.random() * layout.patrolPoints.length)
+    targetProductId: null
   };
 }
 
@@ -443,7 +435,7 @@ function canWorkerClean(worker) {
 }
 
 function canWorkerDeliver(worker) {
-  return worker.type === "cashier" || worker.type === "floor" || worker.type === "manager";
+  return worker.type === "cashier" || worker.type === "manager";
 }
 
 function getWorkerLabel(type) {
@@ -457,7 +449,7 @@ function getWorkerLabel(type) {
 }
 
 function getIdleWorkers() {
-  return state.workers.filter((worker) => worker.state === "patrol" || worker.state === "station");
+  return state.workers.filter((worker) => worker.state === "station");
 }
 
 function calculateCafeLevel() {
@@ -743,10 +735,8 @@ function assignWorkerTasks() {
     if (canWorkerDeliver(worker) && assignDeliveryTask(worker)) return;
     if (canWorkerClean(worker) && assignCleaningTask(worker)) return;
 
-    if (worker.state === "station") {
-      const home = layout.staffHome[worker.type] || layout.staffHome.floor;
-      moveToward(worker, home, 34, 1 / 60);
-    }
+    const home = layout.staffHome[worker.type] || layout.staffHome.floor;
+    moveToward(worker, home, 34, 1 / 60);
   });
 }
 
@@ -800,11 +790,6 @@ function updateWorkers(dt) {
     if (worker.state === "station") {
       const home = layout.staffHome[worker.type] || layout.staffHome.floor;
       moveToward(worker, home, 36, dt);
-      return;
-    }
-
-    if (worker.state === "patrol") {
-      updateWorkerPatrol(worker, dt);
       return;
     }
 
@@ -880,13 +865,6 @@ function updateWorkers(dt) {
   });
 }
 
-function updateWorkerPatrol(worker, dt) {
-  const target = layout.patrolPoints[worker.patrolIndex % layout.patrolPoints.length];
-  if (moveToward(worker, target, 34, dt)) {
-    worker.patrolIndex = (worker.patrolIndex + 1) % layout.patrolPoints.length;
-  }
-}
-
 function cleanPcByWorker(pc) {
   pc.dirty = false;
   pc.cleanWorkerId = null;
@@ -925,7 +903,7 @@ function resetWorker(worker) {
   worker.targetGuestId = null;
   worker.targetProductId = null;
   worker.taskTimer = 0;
-  worker.state = worker.type === "cashier" ? "station" : "patrol";
+  worker.state = "station";
 }
 
 function updateManagerRestock(dt) {
@@ -1113,11 +1091,26 @@ function drawIndoorDetails() {
 
 function drawCounter() {
   const c = layout.counter;
+  rect(c.x - 36, c.y + 2, 28, c.h + 20, "#6b3d29");
+  strokeRect(c.x - 36, c.y + 2, 28, c.h + 20, COLORS.line, 2);
+  rect(c.x - 31, c.y + 12, 18, 3, COLORS.counterEdge);
+  rect(c.x - 31, c.y + 27, 18, 3, COLORS.counterEdge);
+  rect(c.x - 29, c.y + 6, 5, 6, COLORS.red);
+  rect(c.x - 20, c.y + 6, 5, 6, COLORS.yellow);
+  rect(c.x - 29, c.y + 19, 5, 6, COLORS.green);
+  rect(c.x - 20, c.y + 19, 5, 6, COLORS.blue);
+
+  rect(c.x + c.w + 8, c.y + 1, 30, c.h + 26, "#d7d0bf");
+  strokeRect(c.x + c.w + 8, c.y + 1, 30, c.h + 26, COLORS.line, 2);
+  rect(c.x + c.w + 12, c.y + 7, 22, 18, "#88c7dc");
+  rect(c.x + c.w + 12, c.y + 29, 22, 18, "#88c7dc");
+  rect(c.x + c.w + 22, c.y + 5, 2, c.h + 20, "#eef3e6");
+
   rect(c.x, c.y, c.w, c.h, COLORS.counter);
   rect(c.x, c.y, c.w, 10, COLORS.counterTop);
   rect(c.x + 6, c.y + c.h - 7, c.w - 12, 4, COLORS.counterEdge);
   strokeRect(c.x, c.y, c.w, c.h, COLORS.line, 3);
-  text("前台", c.x + c.w / 2, c.y + 11, 16, COLORS.text, "bold", "center");
+  text("\u524d\u53f0", c.x + c.w / 2, c.y + 13, 16, COLORS.text, "bold", "center");
 
   rect(c.x + c.w - 28, c.y + 12, 18, 16, "#20262b");
   rect(c.x + c.w - 24, c.y + 16, 10, 6, COLORS.pcGlow);
@@ -1550,11 +1543,13 @@ function drawStaffIcon(staff, x, y, locked) {
     manager: COLORS.yellow,
     companion: COLORS.red
   }[staff.id];
+  const hat = locked ? "#6b6258" : getWorkerHatColor(staff.id);
 
   rect(x - 10, y - 18, 20, 32, "#7b563b");
   strokeRect(x - 10, y - 18, 20, 32, COLORS.line, 2);
+  rect(x - 7, y - 20, 14, 5, hat);
+  rect(x - 5, y - 24, 10, 5, hat);
   rect(x - 5, y - 12, 10, 8, "#f3c596");
-  rect(x - 6, y - 15, 12, 4, "#2d1e1a");
   rect(x - 7, y - 4, 14, 13, shirt);
   rect(x - 6, y - 3, 12, 11, "#1f1b18");
   rect(x - 5, y - 1, 10, 3, COLORS.yellow);
@@ -1562,11 +1557,23 @@ function drawStaffIcon(staff, x, y, locked) {
   rect(x + 2, y + 8, 5, 6, "#273444");
 }
 
+function getWorkerHatColor(type) {
+  return {
+    cashier: COLORS.blue,
+    floor: COLORS.green,
+    cleaner: "#f2f2f2",
+    manager: COLORS.yellow,
+    companion: COLORS.red
+  }[type] || COLORS.counterEdge;
+}
+
 function drawWorker(worker) {
   const x = Math.round(worker.x);
   const y = Math.round(worker.y);
+  const hat = getWorkerHatColor(worker.type);
 
-  rect(x - 7, y - 23, 14, 5, "#2d1e1a");
+  rect(x - 8, y - 25, 16, 5, hat);
+  rect(x - 5, y - 30, 10, 6, hat);
   rect(x - 5, y - 19, 10, 8, "#f3c596");
   rect(x - 8, y - 11, 16, 16, "#1f1b18");
   rect(x - 7, y - 8, 14, 4, COLORS.yellow);
