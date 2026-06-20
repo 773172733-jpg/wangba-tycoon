@@ -2696,6 +2696,47 @@ function verticalGradientRect(x, y, w, h, topColor, bottomColor) {
   ctx.fillRect(Math.round(x), Math.round(midY), Math.round(w), Math.round(y + h - midY));
 }
 
+function pixelPanel(x, y, w, h, fill, light = COLORS.counterEdge, dark = COLORS.line) {
+  rect(x + 3, y + 3, w, h, "rgba(26, 15, 11, 0.32)");
+  rect(x, y, w, h, dark);
+  rect(x + 3, y + 3, w - 6, h - 6, fill);
+  rect(x + 3, y + 3, w - 6, 3, light);
+  rect(x + 3, y + h - 6, w - 6, 3, "rgba(42, 19, 13, 0.34)");
+  rect(x + 4, y + 4, 7, 7, "rgba(255, 244, 207, 0.18)");
+  rect(x + w - 11, y + 4, 7, 7, "rgba(255, 244, 207, 0.12)");
+  rect(x + 4, y + h - 11, 7, 7, "rgba(42, 19, 13, 0.22)");
+  rect(x + w - 11, y + h - 11, 7, 7, "rgba(42, 19, 13, 0.28)");
+}
+
+function woodPanel(x, y, w, h, fill = COLORS.counter, light = COLORS.counterEdge) {
+  pixelPanel(x, y, w, h, fill, light, COLORS.line);
+  rect(x + 8, y + 10, w - 16, 2, "rgba(255, 244, 207, 0.16)");
+  rect(x + 8, y + h - 13, w - 16, 2, "rgba(42, 19, 13, 0.28)");
+}
+
+function drawWoodPlanks(x, y, w, h, plankH = 18) {
+  for (let row = 0; row < h; row += plankH) {
+    const rowY = y + row;
+    rect(x, rowY, w, Math.min(plankH, h - row), row % (plankH * 2) === 0 ? COLORS.floor : COLORS.floorAlt);
+    rect(x, rowY, w, 1, "rgba(123, 78, 43, 0.46)");
+    const offset = row % (plankH * 4) === 0 ? 0 : 42;
+    for (let col = offset; col < w; col += 84) {
+      rect(x + col, rowY + 1, 1, Math.max(4, plankH - 2), "rgba(123, 78, 43, 0.25)");
+    }
+  }
+  rect(x, y + h - 1, w, 1, "rgba(123, 78, 43, 0.46)");
+}
+
+function drawTinyPlant(x, y, scale = 1) {
+  const s = scale;
+  rect(x - 8 * s, y + 7 * s, 16 * s, 11 * s, "#7a4528");
+  rect(x - 5 * s, y + 2 * s, 10 * s, 8 * s, "#9d5c32");
+  rect(x - 4 * s, y - 10 * s, 8 * s, 16 * s, COLORS.plant);
+  rect(x - 12 * s, y - 5 * s, 10 * s, 9 * s, "#3f8730");
+  rect(x + 2 * s, y - 7 * s, 12 * s, 10 * s, "#5cac3f");
+  rect(x - 7 * s, y - 15 * s, 14 * s, 8 * s, "#4e9f38");
+}
+
 function isAssetReady(name) {
   return assets[name] && assets[name].ready;
 }
@@ -2771,10 +2812,16 @@ function endWorldDraw() {
 
 function drawPixelFloor() {
   const room = layout.room;
-  verticalGradientRect(0, 0, WORLD.w, WORLD.h, "#0f2529", "#183136");
-  roundedRect(room.x - 16, room.y - 16, room.w + 32, room.h + 32, 12, "rgba(6, 18, 22, 0.5)");
-  roundedRect(room.x - 10, room.y - 10, room.w + 20, room.h + 20, 10, COLORS.wallDark);
-  roundedRect(room.x - 4, room.y - 4, room.w + 8, room.h + 8, 8, COLORS.wall);
+  verticalGradientRect(0, 0, WORLD.w, WORLD.h, "#17110e", "#2a1a14");
+  rect(room.x - 22, room.y - 22, room.w + 44, room.h + 44, "rgba(18, 10, 7, 0.5)");
+  rect(room.x - 16, room.y - 16, room.w + 32, room.h + 32, COLORS.line);
+  rect(room.x - 11, room.y - 11, room.w + 22, room.h + 22, COLORS.wallDark);
+  rect(room.x - 7, room.y - 7, room.w + 14, room.h + 14, COLORS.wall);
+  rect(room.x - 3, room.y - 3, room.w + 6, room.h + 6, COLORS.wallTop);
+  rect(room.x - 15, room.y - 15, 18, 18, COLORS.counterTop);
+  rect(room.x + room.w - 3, room.y - 15, 18, 18, COLORS.counterTop);
+  rect(room.x - 15, room.y + room.h - 3, 18, 18, COLORS.counterTop);
+  rect(room.x + room.w - 3, room.y + room.h - 3, 18, 18, COLORS.counterTop);
   drawTiledArea(room);
 
   drawPublicFloors();
@@ -2789,36 +2836,14 @@ function drawPixelFloor() {
 }
 
 function drawTiledArea(area) {
-  roundedRect(area.x, area.y, area.w, area.h, 5, COLORS.floor);
+  rect(area.x, area.y, area.w, area.h, COLORS.floor);
   if (isAssetReady("floorTile")) {
     drawAssetTiled("floorTile", area, 58 * SPRITE_SCALE.floor, 74 * SPRITE_SCALE.floor);
   } else {
-    rect(area.x, area.y, area.w, Math.min(18, area.h), "rgba(255,255,255,0.18)");
+    drawWoodPlanks(area.x, area.y, area.w, area.h, 18);
+    rect(area.x, area.y, area.w, Math.min(16, area.h), "rgba(255, 244, 207, 0.17)");
   }
-  const startX = Math.floor(area.x / TILE) * TILE;
-  const startY = Math.floor(area.y / TILE) * TILE;
-  const endX = area.x + area.w;
-  const endY = area.y + area.h;
-
-  for (let y = startY; y < endY; y += TILE) {
-    for (let x = startX; x < endX; x += TILE) {
-      const tileX = Math.max(x, area.x);
-      const tileY = Math.max(y, area.y);
-      const tileW = Math.min(x + TILE, endX) - tileX;
-      const tileH = Math.min(y + TILE, endY) - tileY;
-      if (tileW <= 0 || tileH <= 0) continue;
-
-      if ((Math.floor(x / TILE) + Math.floor(y / TILE)) % 2 === 0) rect(tileX, tileY, tileW, tileH, COLORS.floorAlt);
-    }
-  }
-
-  for (let y = Math.ceil(area.y / TILE) * TILE; y < endY; y += TILE) {
-    rect(area.x, y, area.w, 1, COLORS.floorLine);
-  }
-
-  for (let x = Math.ceil(area.x / TILE) * TILE; x < endX; x += TILE) {
-    rect(x, area.y, 1, area.h, COLORS.floorLine);
-  }
+  strokeRect(area.x, area.y, area.w, area.h, "rgba(42, 19, 13, 0.28)", 1);
 }
 
 function drawPublicFloors() {
@@ -3110,12 +3135,14 @@ function drawWindow(x, y) {
 
 function drawDoor() {
   const room = layout.room;
-  roundedRect(room.x - 12, layout.entrance.y - 32, 20, 64, 4, "#10252b");
-  softCard(room.x - 32, layout.entrance.y - 24, 30, 48, 4, "#6b8ea0");
-  roundedRect(room.x - 27, layout.entrance.y - 18, 20, 36, 3, "#9ec3cf");
-  rect(room.x - 10, layout.entrance.y - 1, 4, 4, COLORS.yellow);
-  roundedRect(room.x - 54, layout.entrance.y - 5, 28, 10, 4, "#e65b63");
-  roundedRect(room.x - 31, layout.entrance.y - 14, 10, 28, 4, "#e65b63");
+  rect(room.x - 14, layout.entrance.y - 34, 22, 68, COLORS.wallDark);
+  rect(room.x - 36, layout.entrance.y - 25, 31, 50, COLORS.line);
+  rect(room.x - 32, layout.entrance.y - 21, 23, 42, "#ead8a8");
+  text("\u5165\u53e3", room.x - 20, layout.entrance.y - 17, 12, COLORS.dimText, "bold", "center");
+  rect(room.x - 25, layout.entrance.y + 3, 13, 5, COLORS.dimText);
+  rect(room.x - 29, layout.entrance.y + 5, 8, 8, COLORS.dimText);
+  rect(room.x - 61, layout.entrance.y - 5, 28, 10, COLORS.red);
+  rect(room.x - 39, layout.entrance.y - 12, 10, 24, COLORS.red);
 }
 
 function drawIndoorDetails() {
@@ -3143,27 +3170,34 @@ function drawCounter() {
     return;
   }
 
-  softCard(c.x - 38, c.y + 1, 30, c.h + 22, 5, "#304750");
-  roundedRect(c.x - 31, c.y + 12, 18, 4, 2, COLORS.counterEdge);
-  roundedRect(c.x - 31, c.y + 28, 18, 4, 2, COLORS.counterEdge);
-  roundedRect(c.x - 29, c.y + 6, 6, 7, 2, COLORS.red);
-  roundedRect(c.x - 19, c.y + 6, 6, 7, 2, COLORS.yellow);
-  roundedRect(c.x - 29, c.y + 20, 6, 7, 2, COLORS.green);
-  roundedRect(c.x - 19, c.y + 20, 6, 7, 2, COLORS.blue);
+  woodPanel(c.x - 40, c.y + 2, 32, c.h + 30, "#513426");
+  rect(c.x - 34, c.y + 11, 20, 9, "#23282a");
+  rect(c.x - 31, c.y + 14, 14, 3, "#66c8ff");
+  rect(c.x - 34, c.y + 28, 20, 6, "#24201d");
+  rect(c.x - 30, c.y + 39, 5, 7, COLORS.red);
+  rect(c.x - 22, c.y + 39, 5, 7, COLORS.yellow);
+  rect(c.x - 30, c.y + 49, 5, 7, COLORS.green);
+  rect(c.x - 22, c.y + 49, 5, 7, COLORS.blue);
 
-  softCard(c.x - 6, c.y - 4, c.w + 12, c.h + 10, 8, "#345565");
-  verticalGradientRect(c.x, c.y, c.w, c.h, "#5e8791", "#3b6675");
-  roundedRect(c.x + 8, c.y + 7, c.w - 16, 9, 5, "rgba(255,255,255,0.2)");
-  roundedRect(c.x + 10, c.y + c.h - 9, c.w - 20, 5, 3, COLORS.counterEdge);
-  text("\u524d\u53f0", c.x + c.w / 2, c.y + 12, 18, COLORS.text, "bold", "center");
+  woodPanel(c.x - 8, c.y - 5, c.w + 16, c.h + 14, COLORS.counter, COLORS.counterEdge);
+  rect(c.x, c.y, c.w, 12, COLORS.counterTop);
+  rect(c.x + 7, c.y + 5, c.w - 14, 2, "rgba(255, 244, 207, 0.26)");
+  rect(c.x + 17, c.y + c.h - 1, c.w - 34, 10, "#6e3d23");
+  pixelPanel(c.x + c.w / 2 - 29, c.y + 15, 58, 22, "#e8bd73", "#fff1ba", COLORS.line);
+  text("\u524d\u53f0", c.x + c.w / 2, c.y + 20, 16, COLORS.line, "bold", "center");
 
-  roundedRect(c.x + c.w - 34, c.y + 12, 24, 19, 4, "#16252b");
-  roundedRect(c.x + c.w - 28, c.y + 16, 13, 8, 2, COLORS.pcGlow);
+  rect(c.x + c.w - 39, c.y - 20, 30, 21, COLORS.line);
+  rect(c.x + c.w - 35, c.y - 16, 22, 13, COLORS.pcScreen);
+  rect(c.x + c.w - 32, c.y - 13, 16, 7, COLORS.pcGlow);
+  rect(c.x + c.w - 28, c.y + 1, 8, 4, COLORS.line);
+  rect(c.x + 14, c.y - 17, 18, 13, "#efe1b6");
+  rect(c.x + 17, c.y - 13, 12, 2, COLORS.floorLine);
+  rect(c.x + 17, c.y - 8, 9, 2, COLORS.floorLine);
 
   if (state.frontDesk.busyGuestId) {
     const progress = 1 - state.frontDesk.timer / state.frontDesk.duration;
-    rect(c.x + 8, c.y + c.h + 6, c.w - 16, 6, "#3a2b26");
-    rect(c.x + 8, c.y + c.h + 6, (c.w - 16) * progress, 6, COLORS.yellow);
+    rect(c.x + 8, c.y + c.h + 13, c.w - 16, 6, COLORS.line);
+    rect(c.x + 9, c.y + c.h + 14, Math.max(0, (c.w - 18) * progress), 4, COLORS.yellow);
   }
 }
 
@@ -3196,16 +3230,30 @@ function drawPc(pc) {
   const vy = pc.y - 4;
   const vw = pc.w + 10;
   const vh = pc.h + 8;
-  ellipse(pc.seatX, pc.seatY + 8, 18, 7, "rgba(18, 30, 36, 0.18)");
-  rect(pc.seatX - 11, pc.seatY - 4, 22, 16, "#4a5e68");
-  rect(pc.x + 5, pc.y + pc.h + 1, pc.w - 10, 9, "rgba(20, 31, 37, 0.38)");
-  rect(vx - 1, vy - 1, vw + 2, vh + 2, COLORS.line);
-  rect(vx, vy, vw, vh, "#3d4a54");
-  rect(vx + 4, vy + 4, vw - 8, vh - 8, "#2e3a43");
-  rect(pc.x + 4, pc.y + 4, pc.w - 8, 22, "#101d24");
-  rect(pc.x + 8, pc.y + 8, pc.w - 16, 12, pc.broken ? "#8b2d2d" : pc.dirty ? "#707a7c" : COLORS.pcGlow);
-  rect(pc.x + 10, pc.y + 10, 6, 2, "#ecfff5");
-  rect(pc.x + 17, pc.y + 29, 8, 7, "#1d272e");
+  ellipse(pc.seatX, pc.seatY + 9, 20, 7, "rgba(26, 15, 11, 0.24)");
+  rect(pc.seatX - 13, pc.seatY - 3, 26, 18, COLORS.line);
+  rect(pc.seatX - 10, pc.seatY, 20, 13, "#2b6a75");
+  rect(pc.seatX - 7, pc.seatY - 7, 14, 8, "#36828c");
+  rect(pc.seatX - 3, pc.seatY + 14, 6, 12, COLORS.line);
+  rect(pc.seatX - 12, pc.seatY + 23, 24, 3, COLORS.line);
+  rect(vx - 3, vy + 22, vw + 6, 20, COLORS.line);
+  rect(vx, vy + 25, vw, 15, COLORS.pcDesk);
+  rect(vx + 4, vy + 25, vw - 8, 3, COLORS.counterEdge);
+  rect(vx + 4, vy + 40, 5, 15, COLORS.line);
+  rect(vx + vw - 9, vy + 40, 5, 15, COLORS.line);
+  rect(pc.x + pc.w - 10, pc.y + pc.h + 6, 12, 19, COLORS.line);
+  rect(pc.x + pc.w - 7, pc.y + pc.h + 9, 7, 13, "#182229");
+  rect(pc.x + pc.w - 5, pc.y + pc.h + 18, 3, 3, pc.broken ? COLORS.red : COLORS.pcGlow);
+  rect(vx + 5, vy + 34, 28, 6, COLORS.line);
+  rect(vx + 8, vy + 35, 22, 3, "#31383c");
+  rect(vx + vw - 18, vy + 33, 8, 8, COLORS.line);
+  rect(vx + vw - 16, vy + 35, 4, 4, "#31383c");
+  rect(pc.x + 5, pc.y + 1, pc.w - 10, 4, COLORS.line);
+  rect(pc.x + 12, pc.y + 5, pc.w - 24, 7, COLORS.line);
+  rect(pc.x + 4, pc.y + 4, pc.w - 8, 24, COLORS.line);
+  rect(pc.x + 8, pc.y + 8, pc.w - 16, 16, pc.broken ? "#8b2d2d" : pc.dirty ? "#707a7c" : COLORS.pcGlow);
+  rect(pc.x + 10, pc.y + 10, 7, 3, "#ecfff5");
+  rect(pc.x + 18, pc.y + 29, 8, 7, "#1d272e");
 
   text(`${pc.id + 1}\u53f7 L${pc.equipmentLevel}`, pc.x + pc.w / 2, pc.y - 20, 10, COLORS.dimText, "bold", "center");
   if (pc.areaId !== 1) {
@@ -3288,11 +3336,14 @@ function drawDemandBubble(guest) {
 }
 
 function drawHud() {
-  rect(0, 0, view.width, HUD_HEIGHT, COLORS.uiDark);
-  rect(0, HUD_HEIGHT - 3, view.width, 3, COLORS.counterTop);
-  text("\u5c0f\u9ed1\u7f51\u5427", 16, SAFE_TOP + 5, 21, COLORS.text, "bold");
-  rect(14, SAFE_TOP + 35, 96, 22, "rgba(105, 185, 109, 0.14)");
-  text(`\u73b0\u91d1 ${state.cash}`, 24, SAFE_TOP + 39, 13, COLORS.green, "bold");
+  rect(0, 0, view.width, HUD_HEIGHT, "#1a0f0b");
+  woodPanel(6, SAFE_TOP + 1, Math.min(view.width - 108, 284), 58, COLORS.uiDark, COLORS.counterEdge);
+  pixelPanel(14, SAFE_TOP + 6, 116, 26, "#e7bd73", "#fff1ba", COLORS.line);
+  text("\u5c0f\u9ed1\u7f51\u5427", 72, SAFE_TOP + 9, 18, COLORS.line, "bold", "center");
+  rect(16, SAFE_TOP + 36, 102, 18, "#3c2318");
+  circle(28, SAFE_TOP + 45, 8, COLORS.yellow);
+  rect(25, SAFE_TOP + 39, 6, 12, "#d99422");
+  text(`\u73b0\u91d1 ${state.cash}`, 42, SAFE_TOP + 39, 13, COLORS.text, "bold");
   drawCalendarHud();
   drawCleanlinessBar();
 
@@ -3303,36 +3354,38 @@ function drawHud() {
 }
 
 function drawCalendarHud() {
-  const w = Math.min(132, Math.max(98, view.width - 236));
-  const x = Math.max(132, view.width - w - 14);
-  const y = SAFE_TOP + 6;
+  const w = Math.min(126, Math.max(92, view.width - 244));
+  const x = 134;
+  const y = SAFE_TOP + 36;
   const fullLabel = `${getWeekdayName()}  ${getCurrentMonth()}\u6708${getCurrentDayOfMonth()}\u65e5`;
   const shortLabel = `${getWeekdayName()} ${getCurrentDayOfMonth()}\u65e5`;
   const dayLabel = w < 118 ? shortLabel : fullLabel;
   const iconColor = isLateNight() ? COLORS.blue : COLORS.yellow;
 
-  rect(x, y, w, 20, "rgba(245, 230, 200, 0.1)");
-  strokeRect(x, y, w, 20, COLORS.counterTop, 1);
+  rect(x, y, w, 18, "#3c2318");
+  strokeRect(x, y, w, 18, COLORS.counterTop, 1);
   if (isLateNight()) {
-    circle(x + 12, y + 10, 7, iconColor);
-    rect(x + 13, y + 3, 7, 14, COLORS.uiDark);
+    circle(x + 12, y + 9, 6, iconColor);
+    rect(x + 13, y + 3, 6, 12, "#3c2318");
   } else {
-    circle(x + 12, y + 10, 6, iconColor);
+    circle(x + 12, y + 9, 5, iconColor);
     rect(x + 11, y + 1, 2, 4, iconColor);
-    rect(x + 11, y + 15, 2, 4, iconColor);
-    rect(x + 3, y + 9, 4, 2, iconColor);
-    rect(x + 17, y + 9, 4, 2, iconColor);
+    rect(x + 11, y + 14, 2, 4, iconColor);
+    rect(x + 4, y + 8, 4, 2, iconColor);
+    rect(x + 17, y + 8, 4, 2, iconColor);
   }
-  text(fitTextToWidth(dayLabel, w - 30, 11, "bold"), x + 25, y + 4, 11, COLORS.text, "bold");
+  text(fitTextToWidth(dayLabel, w - 30, 10, "bold"), x + 25, y + 4, 10, COLORS.text, "bold");
 }
 
 function drawActionBar() {
   const y = view.height - ACTION_BAR_HEIGHT;
   clearActionButtons();
-  rect(0, y, view.width, ACTION_BAR_HEIGHT, COLORS.uiDark);
-  rect(0, y, view.width, 3, COLORS.counterTop);
+  rect(0, y, view.width, ACTION_BAR_HEIGHT, "#1a0f0b");
+  woodPanel(6, y + 4, view.width - 12, ACTION_BAR_HEIGHT - 8, COLORS.uiDark, COLORS.counterEdge);
 
-  text(`\u7f51\u5427 Lv.${state.cafeLevel}`, 16, y + 11, 13, COLORS.yellow, "bold");
+  text(`\u7f51\u5427 Lv.${state.cafeLevel}`, 18, y + 12, 13, COLORS.yellow, "bold");
+  rect(92, y + 16, 52, 7, COLORS.line);
+  rect(94, y + 18, Math.min(48, state.served % 48), 3, COLORS.green);
 
   const groupY = y + 31;
   const groupW = 34;
@@ -3373,10 +3426,53 @@ function drawActionBar() {
 }
 
 function drawActionButton(button, label, active = false) {
-  rect(button.x - 1, button.y - 1, button.w + 2, button.h + 2, COLORS.line);
-  rect(button.x, button.y, button.w, button.h, active ? "#4e9f74" : "#5D4037");
-  const size = button.w < 36 ? 11 : 12;
-  text(label, button.x + button.w / 2, button.y + (button.h - size) / 2, size, COLORS.text, "bold", "center");
+  pixelPanel(button.x, button.y, button.w, button.h, active ? "#3f8a57" : COLORS.counter, COLORS.counterEdge, COLORS.line);
+  if (button.h >= 30) {
+    drawActionIcon(label, button.x + button.w / 2, button.y + 10, active);
+    const size = button.w < 44 ? 10 : 11;
+    text(label, button.x + button.w / 2, button.y + button.h - 14, size, COLORS.text, "bold", "center");
+  } else {
+    const size = button.w < 36 ? 11 : 12;
+    text(label, button.x + button.w / 2, button.y + (button.h - size) / 2, size, COLORS.text, "bold", "center");
+  }
+}
+
+function drawActionIcon(label, x, y, active) {
+  const dark = COLORS.line;
+  const light = active ? COLORS.text : COLORS.counterEdge;
+  if (label === "\u4ed3\u5e93") {
+    rect(x - 10, y - 2, 20, 14, dark);
+    rect(x - 7, y + 1, 14, 9, "#b97635");
+    rect(x - 3, y - 5, 6, 4, light);
+  } else if (label === "\u62db\u8058") {
+    circle(x, y + 1, 6, "#f3c596");
+    rect(x - 8, y + 7, 16, 8, dark);
+    rect(x - 5, y + 8, 10, 6, "#203544");
+  } else if (label === "\u91c7\u8d2d") {
+    rect(x - 10, y + 1, 19, 10, dark);
+    rect(x - 7, y + 3, 13, 6, "#78a365");
+    rect(x - 7, y - 4, 4, 6, light);
+    circle(x - 6, y + 13, 2, dark);
+    circle(x + 6, y + 13, 2, dark);
+  } else if (label === "\u8bbe\u5907") {
+    rect(x - 10, y - 4, 20, 13, dark);
+    rect(x - 7, y - 1, 14, 7, COLORS.pcGlow);
+    rect(x - 4, y + 10, 8, 3, dark);
+  } else if (label === "\u6269\u79df") {
+    rect(x - 10, y - 4, 17, 17, dark);
+    rect(x - 7, y - 1, 11, 11, COLORS.floor);
+    rect(x + 6, y + 2, 6, 3, light);
+    rect(x + 9, y - 1, 3, 9, light);
+  } else if (label === "\u5e03\u5c40") {
+    rect(x - 10, y - 4, 8, 8, dark);
+    rect(x + 2, y - 4, 8, 8, dark);
+    rect(x - 10, y + 8, 8, 8, dark);
+    rect(x + 2, y + 8, 8, 8, dark);
+  } else if (label === "\u8bbe\u7f6e") {
+    rect(x - 8, y - 5, 16, 16, dark);
+    rect(x - 4, y - 1, 8, 8, light);
+    rect(x - 1, y + 2, 2, 2, dark);
+  }
 }
 
 function drawStockShelf() {
@@ -3425,17 +3521,19 @@ function drawToilet() {
 }
 
 function drawCleanlinessBar() {
-  const x = 122;
-  const y = SAFE_TOP + 48;
-  const w = Math.min(78, Math.max(54, view.width - 260));
-  const h = 9;
+  const x = 134;
+  const y = SAFE_TOP + 12;
+  const w = Math.min(116, Math.max(78, view.width - 260));
+  const h = 13;
   const ratio = Math.max(0, Math.min(1, state.cleanliness / 100));
   const fillColor = ratio > 0.55 ? COLORS.green : ratio > 0.3 ? COLORS.yellow : COLORS.red;
 
-  text("\u6e05\u6d01", x, y - 14, 10, COLORS.text, "bold");
-  rect(x - 1, y - 1, w + 2, h + 2, COLORS.line);
-  rect(x, y, w, h, "rgba(10, 24, 28, 0.55)");
-  rect(x + 1, y + 1, Math.max(0, Math.floor((w - 2) * ratio)), h - 2, fillColor);
+  text("\u6e05\u6d01", x, y - 1, 11, COLORS.text, "bold");
+  rect(x + 34, y - 2, w, h + 4, COLORS.line);
+  rect(x + 37, y + 1, w - 6, h - 2, "#2d2118");
+  rect(x + 39, y + 3, Math.max(0, Math.floor((w - 10) * ratio)), h - 6, fillColor);
+  rect(x + 39, y + 3, Math.max(0, Math.floor((w - 10) * ratio)), 2, "rgba(255, 244, 207, 0.22)");
+  text(`${Math.round(state.cleanliness)}%`, x + 38 + w, y, 10, COLORS.text, "bold", "right");
 }
 
 function getInventoryTotal() {
@@ -4269,15 +4367,26 @@ function drawLegend() {
 
 function drawIndoorDetailsModern() {
   const room = layout.room;
-  rect(room.x + 20, room.y + 12, 58, 26, COLORS.line);
-  rect(room.x + 22, room.y + 14, 54, 22, "#2f5968");
-  text("\u9ed1\u7f51\u5427", room.x + 49, room.y + 18, 12, COLORS.text, "bold", "center");
+  rect(room.x + 8, room.y + 8, room.w - 16, 40, "rgba(255, 244, 207, 0.16)");
+  for (let x = room.x + 18; x < room.x + room.w - 18; x += 42) {
+    rect(x, room.y + 10, 1, 36, "rgba(123, 78, 43, 0.28)");
+  }
+  pixelPanel(room.x + 22, room.y + 18, 72, 30, COLORS.counter, COLORS.counterEdge, COLORS.line);
+  text("\u5c0f\u9ed1\u7f51\u5427", room.x + 58, room.y + 25, 13, COLORS.text, "bold", "center");
+  rect(room.x + room.w - 88, room.y + 18, 52, 38, COLORS.line);
+  rect(room.x + room.w - 85, room.y + 21, 46, 32, "#ead8a8");
+  text("\u4e0a\u7f51", room.x + room.w - 62, room.y + 26, 11, COLORS.dimText, "bold", "center");
+  text("\u5feb\u4e50", room.x + room.w - 62, room.y + 39, 11, COLORS.dimText, "bold", "center");
+  rect(room.x + room.w - 148, room.y + 17, 54, 16, COLORS.line);
+  rect(room.x + room.w - 145, room.y + 20, 48, 10, "#7a4528");
+  drawTinyPlant(room.x + room.w - 121, room.y + 18, 0.75);
+  rect(room.x + room.w - 148, room.y + room.h - 65, 22, 30, COLORS.line);
+  rect(room.x + room.w - 145, room.y + room.h - 62, 16, 24, "#eddcae");
+  rect(room.x + room.w - 142, room.y + room.h - 58, 10, 7, "#7ca46a");
+  rect(room.x + room.w - 142, room.y + room.h - 49, 10, 7, "#d5a14b");
 
   if (!drawAsset("plant", room.x + room.w - 78, room.y + room.h - 90, 58, 78)) {
-    roundedRect(room.x + room.w - 54, room.y + room.h - 54, 24, 32, 4, "#8a6a45");
-    roundedRect(room.x + room.w - 49, room.y + room.h - 66, 16, 18, 8, COLORS.plant);
-    roundedRect(room.x + room.w - 59, room.y + room.h - 58, 16, 13, 7, COLORS.plant);
-    roundedRect(room.x + room.w - 39, room.y + room.h - 58, 16, 13, 7, COLORS.plant);
+    drawTinyPlant(room.x + room.w - 43, room.y + room.h - 56, 1.45);
   }
 }
 
