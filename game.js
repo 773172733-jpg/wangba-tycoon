@@ -3303,13 +3303,16 @@ function drawHud() {
 }
 
 function drawCalendarHud() {
-  const x = 120;
-  const y = SAFE_TOP + 7;
-  const dayLabel = `${getWeekdayName()}  ${getCurrentMonth()}\u6708${getCurrentDayOfMonth()}\u65e5`;
+  const w = Math.min(132, Math.max(98, view.width - 236));
+  const x = Math.max(132, view.width - w - 14);
+  const y = SAFE_TOP + 6;
+  const fullLabel = `${getWeekdayName()}  ${getCurrentMonth()}\u6708${getCurrentDayOfMonth()}\u65e5`;
+  const shortLabel = `${getWeekdayName()} ${getCurrentDayOfMonth()}\u65e5`;
+  const dayLabel = w < 118 ? shortLabel : fullLabel;
   const iconColor = isLateNight() ? COLORS.blue : COLORS.yellow;
 
-  rect(x, y, 122, 20, "rgba(245, 230, 200, 0.1)");
-  strokeRect(x, y, 122, 20, COLORS.counterTop, 1);
+  rect(x, y, w, 20, "rgba(245, 230, 200, 0.1)");
+  strokeRect(x, y, w, 20, COLORS.counterTop, 1);
   if (isLateNight()) {
     circle(x + 12, y + 10, 7, iconColor);
     rect(x + 13, y + 3, 7, 14, COLORS.uiDark);
@@ -3320,7 +3323,7 @@ function drawCalendarHud() {
     rect(x + 3, y + 9, 4, 2, iconColor);
     rect(x + 17, y + 9, 4, 2, iconColor);
   }
-  text(dayLabel, x + 25, y + 4, 11, COLORS.text, "bold");
+  text(fitTextToWidth(dayLabel, w - 30, 11, "bold"), x + 25, y + 4, 11, COLORS.text, "bold");
 }
 
 function drawActionBar() {
@@ -3422,14 +3425,14 @@ function drawToilet() {
 }
 
 function drawCleanlinessBar() {
-  const x = Math.min(view.width - 150, 148);
-  const y = SAFE_TOP + 17;
-  const w = 82;
+  const x = 122;
+  const y = SAFE_TOP + 48;
+  const w = Math.min(78, Math.max(54, view.width - 260));
   const h = 9;
   const ratio = Math.max(0, Math.min(1, state.cleanliness / 100));
   const fillColor = ratio > 0.55 ? COLORS.green : ratio > 0.3 ? COLORS.yellow : COLORS.red;
 
-  text("\u6e05\u6d01", x, y - 15, 10, COLORS.text, "bold");
+  text("\u6e05\u6d01", x, y - 14, 10, COLORS.text, "bold");
   rect(x - 1, y - 1, w + 2, h + 2, COLORS.line);
   rect(x, y, w, h, "rgba(10, 24, 28, 0.55)");
   rect(x + 1, y + 1, Math.max(0, Math.floor((w - 2) * ratio)), h - 2, fillColor);
