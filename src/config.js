@@ -69,11 +69,18 @@ const staffTypes = [
     desc: "\u6e05\u7406\u673a\u4f4d\u3001\u5395\u6240\u548c\u5730\u9762\u536b\u751f\u3002"
   },
   {
+    id: "repairman",
+    name: "\u7ef4\u4fee\u5458",
+    hireCost: 180,
+    salary: 120,
+    desc: "\u81ea\u52a8\u7ef4\u4fee\u635f\u574f\u7535\u8111\uff0c\u4e0d\u518d\u4ea7\u751f\u5355\u6b21\u7ef4\u4fee\u8d39\u3002"
+  },
+  {
     id: "manager",
     name: "\u5e97\u957f",
     hireCost: 380,
     salary: 220,
-    desc: "\u7ba1\u7406\u5458\u5de5\uff0c\u9700\u6536\u94f6+\u5916\u573a\u81f3\u5c11 3 \u4eba\u3002"
+    desc: "\u5168\u80fd\u7ba1\u7406\uff0c\u9700\u6536\u94f6+\u5916\u573a+\u4fdd\u6d01+\u7ef4\u4fee\u5404 1 \u4eba\u3002"
   },
   {
     id: "companion",

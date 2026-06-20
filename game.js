@@ -37,6 +37,10 @@ const raf = typeof requestAnimationFrame === "function"
 
 const TILE = 12;
 const SAVE_INTERVAL = 20;
+const GAME_DAY_SECONDS = 120;
+const GAME_MONTH_DAYS = 30;
+const DAMAGE_THRESHOLD_SESSIONS = 30;
+const DAMAGE_CHANCE_AFTER_THRESHOLD = 0.28;
 const {
   COLORS,
   SPRITE_SCALE,
@@ -60,6 +64,7 @@ const state = {
   served: 0,
   lost: 0,
   time: 0,
+  lastPayrollMonth: 0,
   nextGuestAt: 5,
   guestId: 1,
   guests: [],
@@ -112,6 +117,7 @@ const state = {
     cashier: 0,
     floor: 0,
     cleaner: 0,
+    repairman: 0,
     manager: 0,
     companion: 0
   },
@@ -239,6 +245,7 @@ function createLayout() {
     cashier: { x: counter.x + counter.w - 22, y: counter.y + counter.h - 8 },
     floor: { x: room.x + 34, y: room.y + room.h - 76 },
     cleaner: { x: room.x + room.w - 34, y: room.y + room.h - 76 },
+    repairman: { x: room.x + room.w - 72, y: room.y + room.h - 76 },
     manager: { x: counter.x + 18, y: counter.y + counter.h - 8 },
     companion: { x: room.x + room.w - 70, y: room.y + 90 }
   };
@@ -259,6 +266,8 @@ function createPc(id, x, y, areaId = 1, areaName = "\u5ba2\u5385") {
     areaName,
     occupiedBy: null,
     equipmentLevel: 1,
+    sessionsServed: 0,
+    broken: false,
     dirty: false
   };
 }
@@ -338,7 +347,7 @@ function getGuestTypeWeight(guestType) {
 function pcMatchesGuest(pc, guestType) {
   const area = getAreaById(pc.areaId);
   if (!area) return false;
-  if (pc.occupiedBy || pc.dirty) return false;
+  if (pc.occupiedBy || pc.dirty || pc.broken) return false;
   if (pc.equipmentLevel < guestType.minEquipmentLevel) return false;
   if (getAreaHourlyRate(pc.areaId) > guestType.maxRate) return false;
   if (guestType.areaPreference === "hall" && !isHallArea(area)) return false;
@@ -791,6 +800,8 @@ function rebuildPcsFromAreas(savedPcs = []) {
           pc.seatY = getPcSeatY(pc.y);
         }
         pc.equipmentLevel = Number.isFinite(savedPc.equipmentLevel) ? savedPc.equipmentLevel : pc.equipmentLevel;
+        pc.sessionsServed = Number.isFinite(savedPc.sessionsServed) ? savedPc.sessionsServed : 0;
+        pc.broken = Boolean(savedPc.broken);
         pc.dirty = Boolean(savedPc.dirty);
       }
       layout.pcs.push(pc);
@@ -902,6 +913,8 @@ function buildSaveData() {
     cleanliness: state.cleanliness,
     served: state.served,
     lost: state.lost,
+    time: state.time,
+    lastPayrollMonth: state.lastPayrollMonth,
     inventory: Object.assign({}, state.inventory),
     purchaseQuantities: Object.assign({}, state.purchaseQuantities),
     employees: Object.assign({}, state.employees),
@@ -920,6 +933,8 @@ function buildSaveData() {
       x: pc.x,
       y: pc.y,
       equipmentLevel: pc.equipmentLevel,
+      sessionsServed: pc.sessionsServed,
+      broken: pc.broken,
       dirty: pc.dirty
     }))
   };
@@ -959,6 +974,8 @@ function restoreGame() {
   state.cleanliness = Number.isFinite(data.cleanliness) ? data.cleanliness : state.cleanliness;
   state.served = Number.isFinite(data.served) ? data.served : state.served;
   state.lost = Number.isFinite(data.lost) ? data.lost : state.lost;
+  state.time = Number.isFinite(data.time) ? data.time : state.time;
+  state.lastPayrollMonth = Number.isFinite(data.lastPayrollMonth) ? data.lastPayrollMonth : state.lastPayrollMonth;
   state.inventory = Object.assign({}, data.inventory || {});
   state.purchaseQuantities = Object.assign({}, data.purchaseQuantities || {});
   state.employees = Object.assign({}, state.employees, data.employees || {});
@@ -1189,6 +1206,16 @@ function findTappedDirtyPc(x, y) {
   ));
 }
 
+function findTappedBrokenPc(x, y) {
+  return layout.pcs.find((pc) => (
+    pc.broken &&
+    x >= pc.x - 8 &&
+    x <= pc.x + pc.w + 8 &&
+    y >= pc.y - 36 &&
+    y <= pc.y + pc.h + 18
+  ));
+}
+
 function cleanPc(pc) {
   pc.dirty = false;
   pc.cleanTimer = 0;
@@ -1218,12 +1245,113 @@ function cleanToilet() {
   return true;
 }
 
+function getRepairCost(pc) {
+  return 60 + pc.equipmentLevel * 40;
+}
+
+function hasFreeRepairStaff() {
+  return state.employees.repairman > 0 || state.employees.manager > 0;
+}
+
+function breakPc(pc) {
+  pc.broken = true;
+  pc.sessionsServed = 0;
+  pc.repairWorkerId = null;
+  markSaveDirty();
+  say(`${pc.id + 1} \u53f7\u673a\u635f\u574f\uff0c\u6682\u65f6\u65e0\u6cd5\u63a5\u5f85\u5ba2\u4eba\u3002`);
+}
+
+function maybeBreakPc(pc) {
+  if (!pc || pc.broken || pc.sessionsServed < DAMAGE_THRESHOLD_SESSIONS) return false;
+  if (Math.random() < DAMAGE_CHANCE_AFTER_THRESHOLD) {
+    breakPc(pc);
+    return true;
+  }
+  return false;
+}
+
+function repairPc(pc, free = false) {
+  if (!pc || !pc.broken) return false;
+
+  const cost = getRepairCost(pc);
+  const freeRepair = free || hasFreeRepairStaff();
+  if (!freeRepair && state.cash < cost) {
+    say(`\u7ef4\u4fee ${pc.id + 1} \u53f7\u673a\u9700\u8981 ${cost} \u5143\uff0c\u73b0\u91d1\u4e0d\u8db3\u3002`);
+    return true;
+  }
+
+  if (!freeRepair) state.cash -= cost;
+  pc.broken = false;
+  pc.repairWorkerId = null;
+  markSaveDirty();
+  say(freeRepair ? `${pc.id + 1} \u53f7\u673a\u5df2\u514d\u8d39\u7ef4\u4fee\u3002` : `${pc.id + 1} \u53f7\u673a\u5df2\u7ef4\u4fee\uff0c\u82b1\u8d39 ${cost} \u5143\u3002`);
+  return true;
+}
+
 function getCoreStaffCount() {
-  return state.employees.cashier + state.employees.floor;
+  return state.employees.cashier + state.employees.floor + state.employees.cleaner + state.employees.repairman;
 }
 
 function getEmployeeTotal() {
   return Object.keys(state.employees).reduce((total, key) => total + state.employees[key], 0);
+}
+
+function getStaffHireTotal(staff) {
+  return staff.hireCost + staff.salary;
+}
+
+function getMonthlyPayrollTotal() {
+  return staffTypes.reduce((total, staff) => total + (state.employees[staff.id] || 0) * staff.salary, 0);
+}
+
+function rebuildAfterLayoff() {
+  rebuildWorkersFromEmployees();
+  updateCafeLevel();
+  markSaveDirty();
+}
+
+function layoffUntilPayrollAffordable() {
+  const laidOff = [];
+  const sorted = staffTypes.slice().sort((a, b) => b.salary - a.salary);
+
+  while (getMonthlyPayrollTotal() > state.cash) {
+    const target = sorted.find((staff) => (state.employees[staff.id] || 0) > 0);
+    if (!target) break;
+    state.employees[target.id] -= 1;
+    laidOff.push(target.name);
+  }
+
+  if (laidOff.length > 0) rebuildAfterLayoff();
+  return laidOff;
+}
+
+function processMonthlyPayroll() {
+  const payroll = getMonthlyPayrollTotal();
+  if (payroll <= 0) return;
+
+  const laidOff = layoffUntilPayrollAffordable();
+  const remainingPayroll = getMonthlyPayrollTotal();
+  if (remainingPayroll <= 0) {
+    if (laidOff.length > 0) {
+      say(`\u73b0\u91d1\u4e0d\u8db3\uff0c${laidOff.join("\u3001")} \u79bb\u804c\u4e86\u3002`);
+    }
+    return;
+  }
+
+  state.cash -= remainingPayroll;
+  markSaveDirty();
+  say(laidOff.length > 0
+    ? `\u73b0\u91d1\u4e0d\u8db3\uff0c${laidOff.join("\u3001")} \u79bb\u804c\uff1b\u5df2\u53d1\u5269\u4f59\u5de5\u8d44 ${remainingPayroll} \u5143\u3002`
+    : `\u5df2\u9884\u53d1\u672c\u6708\u5de5\u8d44 ${remainingPayroll} \u5143\u3002`);
+}
+
+function updatePayroll() {
+  const completedMonths = Math.floor(getDayIndex() / GAME_MONTH_DAYS);
+  if (completedMonths <= state.lastPayrollMonth) return;
+
+  state.lastPayrollMonth = completedMonths;
+  processMonthlyPayroll();
+  markSaveDirty();
 }
 
 function getEquipmentTier(level) {
@@ -1311,6 +1439,10 @@ function canWorkerClean(worker) {
   return worker.type === "floor" || worker.type === "cleaner" || worker.type === "manager";
 }
 
+function canWorkerRepair(worker) {
+  return worker.type === "repairman" || worker.type === "manager";
+}
+
 function canWorkerDeliver(worker) {
   return worker.type === "cashier" || worker.type === "manager";
 }
@@ -1320,6 +1452,7 @@ function getWorkerLabel(type) {
     cashier: "\u6536\u94f6",
     floor: "\u5916\u573a",
     cleaner: "\u4fdd\u6d01",
+    repairman: "\u7ef4\u4fee",
     manager: "\u5e97\u957f",
     companion: "\u966a\u73a9"
   }[type] || "\u5458\u5de5";
@@ -1350,7 +1483,12 @@ function updateCafeLevel() {
 
 function getStaffRequirement(staff) {
   if (staff.id === "manager") {
-    return getCoreStaffCount() >= 3 ? "" : "\u9700\u6536\u94f6+\u5916\u573a\u81f3\u5c11 3 \u4eba";
+    return state.employees.cashier >= 1 &&
+      state.employees.floor >= 1 &&
+      state.employees.cleaner >= 1 &&
+      state.employees.repairman >= 1
+      ? ""
+      : "\u9700\u6536\u94f6+\u5916\u573a+\u4fdd\u6d01+\u7ef4\u4fee\u5404 1 \u4eba";
   }
 
   if (staff.id === "companion") {
@@ -1362,7 +1500,7 @@ function getStaffRequirement(staff) {
 }
 
 function canHireStaff(staff) {
-  return !getStaffRequirement(staff) && state.cash >= staff.hireCost;
+  return !getStaffRequirement(staff) && state.cash >= getStaffHireTotal(staff);
 }
 
 function hireStaff(staff) {
@@ -1372,17 +1510,18 @@ function hireStaff(staff) {
     return;
   }
 
-  if (state.cash < staff.hireCost) {
-    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u62db\u8058 ${staff.name} \u9700\u8981 ${staff.hireCost} \u5143\u3002`);
+  const totalCost = getStaffHireTotal(staff);
+  if (state.cash < totalCost) {
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u62db\u8058 ${staff.name} \u9700\u8981 ${totalCost} \u5143\uff08\u542b\u9996\u6708\u5de5\u8d44\uff09\u3002`);
     return;
   }
 
-  state.cash -= staff.hireCost;
+  state.cash -= totalCost;
   state.employees[staff.id] += 1;
   state.workers.push(createWorker(staff.id));
   updateCafeLevel();
   markSaveDirty();
-  say(`\u5df2\u62db\u8058 ${staff.name}\uff0c\u5f53\u524d\u5458\u5de5 ${getEmployeeTotal()} \u4eba\u3002`);
+  say(`\u5df2\u62db\u8058 ${staff.name}\uff0c\u5df2\u9884\u53d1\u9996\u6708\u5de5\u8d44\u3002`);
 }
 
 function isPointInRect(x, y, button) {
@@ -1652,7 +1791,7 @@ function handleTouch(x, y) {
       }
       openConfirmDialog(
         "\u786e\u8ba4\u62db\u8058",
-        `\u786e\u5b9a\u82b1\u8d39 ${staff.hireCost} \u5143\u62db\u8058\u4e00\u4e2a ${staff.name} \u5417\uff1f`,
+        `\u786e\u5b9a\u82b1\u8d39 ${getStaffHireTotal(staff)} \u5143\u62db\u8058\u4e00\u4e2a ${staff.name} \u5417\uff1f\u8d39\u7528\u5df2\u5305\u542b\u9996\u6708\u5de5\u8d44\u3002`,
         () => hireStaff(staff)
       );
     }
@@ -1746,6 +1885,12 @@ function handleTouch(x, y) {
   }
 
   if (placePendingExpansion(worldPoint.x, worldPoint.y)) {
+    return;
+  }
+
+  const brokenPc = findTappedBrokenPc(worldPoint.x, worldPoint.y);
+  if (brokenPc) {
+    repairPc(brokenPc, false);
     return;
   }
 
@@ -1931,7 +2076,7 @@ function findFreePc(guest = null) {
   if (guest && guest.guestType) {
     return layout.pcs.find((pc) => pcMatchesGuest(pc, guest.guestType));
   }
-  return layout.pcs.find((pc) => !pc.occupiedBy && !pc.dirty);
+  return layout.pcs.find((pc) => !pc.occupiedBy && !pc.dirty && !pc.broken);
 }
 
 function spawnGuest(guestType) {
@@ -1988,11 +2133,49 @@ function updateSpawn() {
   state.nextGuestAt = state.time + getNextGuestInterval();
 }
 
-function getDayFactor() {
-  const dayTime = state.time % 120;
-  if (dayTime < 25) return 0.55;
-  if (dayTime < 85) return 1.15;
-  return 0.75;
+function getDayIndex() {
+  return Math.floor(state.time / GAME_DAY_SECONDS);
+}
+
+function getCurrentDayOfMonth() {
+  return getDayIndex() % GAME_MONTH_DAYS + 1;
+}
+
+function getCurrentMonth() {
+  return Math.floor(getDayIndex() / GAME_MONTH_DAYS) + 1;
+}
+
+function getWeekdayIndex() {
+  return getDayIndex() % 7;
+}
+
+function getWeekdayName() {
+  return ["\u5468\u4e00", "\u5468\u4e8c", "\u5468\u4e09", "\u5468\u56db", "\u5468\u4e94", "\u5468\u516d", "\u5468\u65e5"][getWeekdayIndex()];
+}
+
+function getCurrentHour() {
+  return Math.floor((state.time % GAME_DAY_SECONDS) / GAME_DAY_SECONDS * 24);
+}
+
+function isWeekendRushDay() {
+  return getWeekdayIndex() >= 4;
+}
+
+function isGoldenHour() {
+  const hour = getCurrentHour();
+  return hour >= 17 && hour < 20;
+}
+
+function isLateNight() {
+  const hour = getCurrentHour();
+  return hour >= 23 || hour < 7;
+}
+
+function getTimeTrafficFactor() {
+  let factor = isWeekendRushDay() ? 1.45 : 1;
+  if (isGoldenHour()) factor *= isWeekendRushDay() ? 1.75 : 1.35;
+  if (isLateNight()) factor *= 0.46;
+  return factor;
 }
 
 function getTrafficPower() {
@@ -2000,7 +2183,7 @@ function getTrafficPower() {
   const cleanlinessFactor = 0.35 + state.cleanliness / 100 * 0.75;
   const equipmentFactor = 0.65 + equipmentAverage * 0.18;
   const scaleFactor = 0.62 + Math.min(layout.pcs.length, 12) * 0.05;
-  return cleanlinessFactor * equipmentFactor * scaleFactor * getDayFactor() * getActivityTrafficFactor();
+  return cleanlinessFactor * equipmentFactor * scaleFactor * getTimeTrafficFactor() * getActivityTrafficFactor();
 }
 
 function getActivityTrafficFactor() {
@@ -2076,12 +2259,15 @@ function finishPlaying(guest, pc) {
 
   state.cash += income;
   state.served += 1;
+  pc.sessionsServed += 1;
   pc.occupiedBy = null;
   pc.dirty = true;
   guest.state = "leaving";
   state.cleanliness = Math.max(0, state.cleanliness - 3);
   markSaveDirty();
-  say(`顾客 ${guest.id} 下机结账，收入 ${income} 元。机位需要清理。`);
+  if (!maybeBreakPc(pc)) {
+    say(`顾客 ${guest.id} 下机结账，收入 ${income} 元。机位需要清理。`);
+  }
 }
 
 function updateCleanliness(dt) {
@@ -2100,12 +2286,23 @@ function updateCleanliness(dt) {
 
 function assignWorkerTasks() {
   getIdleWorkers().forEach((worker) => {
+    if (canWorkerRepair(worker) && assignRepairTask(worker)) return;
     if (canWorkerDeliver(worker) && assignDeliveryTask(worker)) return;
     if (canWorkerClean(worker) && assignCleaningTask(worker)) return;
 
     const home = layout.staffHome[worker.type] || layout.staffHome.floor;
     moveToward(worker, home, 34, 1 / 60);
   });
+}
+
+function assignRepairTask(worker) {
+  const pc = layout.pcs.find((item) => item.broken && !item.repairWorkerId);
+  if (!pc) return false;
+
+  pc.repairWorkerId = worker.id;
+  worker.state = "toRepairPc";
+  worker.targetPcId = pc.id;
+  return true;
 }
 
 function assignDeliveryTask(worker) {
@@ -2170,6 +2367,31 @@ function updateWorkers(dt) {
       if (moveToPcSeat(worker, pc, 58, dt)) {
         worker.state = "cleaningPc";
         worker.taskTimer = worker.type === "cleaner" ? 1.1 : 1.6;
+      }
+      return;
+    }
+
+    if (worker.state === "toRepairPc") {
+      const pc = layout.pcs[worker.targetPcId];
+      if (!pc || !pc.broken) {
+        resetWorker(worker);
+        return;
+      }
+      if (moveToPcSeat(worker, pc, 58, dt)) {
+        worker.state = "repairingPc";
+        worker.taskTimer = worker.type === "manager" ? 1.6 : 1.25;
+      }
+      return;
+    }
+
+    if (worker.state === "repairingPc") {
+      worker.taskTimer -= dt;
+      if (worker.taskTimer <= 0) {
+        const pc = layout.pcs[worker.targetPcId];
+        if (pc && pc.broken) {
+          repairPc(pc, true);
+        }
+        resetWorker(worker);
       }
       return;
     }
@@ -2268,6 +2490,7 @@ function serveGuestDemandByWorker(guest) {
 function resetWorker(worker) {
   const pc = layout.pcs[worker.targetPcId];
   if (pc && pc.cleanWorkerId === worker.id) pc.cleanWorkerId = null;
+  if (pc && pc.repairWorkerId === worker.id) pc.repairWorkerId = null;
   if (state.toilet.cleanWorkerId === worker.id) state.toilet.cleanWorkerId = null;
 
   worker.targetPcId = null;
@@ -2395,6 +2618,7 @@ function update(dt) {
   updateGuests(dt);
   updateWorkers(dt);
   updateCleanliness(dt);
+  updatePayroll();
   updateLayoutHints(dt);
   updateAutoSave(dt);
 }
@@ -2951,7 +3175,11 @@ function drawPc(pc) {
     if (pc.areaId !== 1) {
       text(pc.areaName, pc.x + pc.w / 2, pc.y - 34, 9, COLORS.yellow, "bold", "center");
     }
-    if (pc.dirty) {
+    if (pc.broken) {
+      rect(pc.x + pc.w - 12, pc.y + 25, 10, 12, COLORS.red);
+      text("!", pc.x + pc.w - 7, pc.y + 24, 13, COLORS.text, "bold", "center");
+      drawCleanBubble(pc.x + pc.w / 2, pc.y - 44, "\u7ef4\u4fee");
+    } else if (pc.dirty) {
       rect(pc.x + pc.w - 11, pc.y + 27, 8, 8, COLORS.red);
       drawCleanBubble(pc.x + pc.w / 2, pc.y - 44, "\u6e05\u6d01");
     }
@@ -2975,7 +3203,7 @@ function drawPc(pc) {
   rect(vx, vy, vw, vh, "#3d4a54");
   rect(vx + 4, vy + 4, vw - 8, vh - 8, "#2e3a43");
   rect(pc.x + 4, pc.y + 4, pc.w - 8, 22, "#101d24");
-  rect(pc.x + 8, pc.y + 8, pc.w - 16, 12, pc.dirty ? "#707a7c" : COLORS.pcGlow);
+  rect(pc.x + 8, pc.y + 8, pc.w - 16, 12, pc.broken ? "#8b2d2d" : pc.dirty ? "#707a7c" : COLORS.pcGlow);
   rect(pc.x + 10, pc.y + 10, 6, 2, "#ecfff5");
   rect(pc.x + 17, pc.y + 29, 8, 7, "#1d272e");
 
@@ -2984,7 +3212,11 @@ function drawPc(pc) {
     text(pc.areaName, pc.x + pc.w / 2, pc.y - 30, 9, COLORS.yellow, "bold", "center");
   }
 
-  if (pc.dirty) {
+  if (pc.broken) {
+    roundedRect(pc.x + pc.w - 13, pc.y + 25, 10, 12, 3, COLORS.red);
+    text("!", pc.x + pc.w - 8, pc.y + 24, 13, COLORS.text, "bold", "center");
+    drawCleanBubble(pc.x + pc.w / 2, pc.y - 40, "\u7ef4\u4fee");
+  } else if (pc.dirty) {
     roundedRect(pc.x + pc.w - 11, pc.y + 27, 8, 8, 3, COLORS.red);
     drawCleanBubble(pc.x + pc.w / 2, pc.y - 40, "\u6e05\u6d01");
   }
@@ -3061,12 +3293,34 @@ function drawHud() {
   text("\u5c0f\u9ed1\u7f51\u5427", 16, SAFE_TOP + 5, 21, COLORS.text, "bold");
   rect(14, SAFE_TOP + 35, 96, 22, "rgba(105, 185, 109, 0.14)");
   text(`\u73b0\u91d1 ${state.cash}`, 24, SAFE_TOP + 39, 13, COLORS.green, "bold");
+  drawCalendarHud();
   drawCleanlinessBar();
 
   if (state.messageTimer > 0) {
     rect(12, view.height - ACTION_BAR_HEIGHT - 40, view.width - 24, 28, "rgba(28, 48, 56, 0.88)");
     text(state.message, view.width / 2, view.height - ACTION_BAR_HEIGHT - 31, 11, COLORS.text, "normal", "center");
   }
+}
+
+function drawCalendarHud() {
+  const x = 120;
+  const y = SAFE_TOP + 7;
+  const dayLabel = `${getWeekdayName()}  ${getCurrentMonth()}\u6708${getCurrentDayOfMonth()}\u65e5`;
+  const iconColor = isLateNight() ? COLORS.blue : COLORS.yellow;
+
+  rect(x, y, 122, 20, "rgba(245, 230, 200, 0.1)");
+  strokeRect(x, y, 122, 20, COLORS.counterTop, 1);
+  if (isLateNight()) {
+    circle(x + 12, y + 10, 7, iconColor);
+    rect(x + 13, y + 3, 7, 14, COLORS.uiDark);
+  } else {
+    circle(x + 12, y + 10, 6, iconColor);
+    rect(x + 11, y + 1, 2, 4, iconColor);
+    rect(x + 11, y + 15, 2, 4, iconColor);
+    rect(x + 3, y + 9, 4, 2, iconColor);
+    rect(x + 17, y + 9, 4, 2, iconColor);
+  }
+  text(dayLabel, x + 25, y + 4, 11, COLORS.text, "bold");
 }
 
 function drawActionBar() {
@@ -3452,7 +3706,7 @@ function drawHiringPanel() {
     strokeRect(panel.x + 10, y, panel.w - 20, cardH, "#9a7043", 2);
     drawStaffIcon(staff, panel.x + 22, y + 17, Boolean(requirement));
     text(`${staff.name} x${count}`, panel.x + 62, y + 7, 14, COLORS.line, "bold");
-    text(`\u62db ${staff.hireCost}  \u6708\u85aa ${staff.salary}`, panel.x + 62, y + 26, 10, "#5d4532", "bold");
+    text(`\u5165\u804c ${getStaffHireTotal(staff)}  \u6708\u85aa ${staff.salary}`, panel.x + 62, y + 26, 10, "#5d4532", "bold");
     const button = { x: panel.x + panel.w - 54, y: y + 10, w: 38, h: 24, staff };
     const desc = fitTextToWidth(requirement || staff.desc, button.x - (panel.x + 62) - 8, 9);
     text(desc, panel.x + 62, y + 42, 9, requirement ? COLORS.red : "#5d4532");
@@ -3943,6 +4197,7 @@ function drawStaffIcon(staff, x, y, locked) {
     cashier: COLORS.blue,
     floor: COLORS.green,
     cleaner: "#9dd3df",
+    repairman: "#d88435",
     manager: COLORS.yellow,
     companion: COLORS.red
   }[staff.id];
@@ -3965,6 +4220,7 @@ function getWorkerHatColor(type) {
     cashier: COLORS.blue,
     floor: COLORS.green,
     cleaner: "#f2f2f2",
+    repairman: "#d88435",
     manager: COLORS.yellow,
     companion: COLORS.red
   }[type] || COLORS.counterEdge;
