@@ -36,42 +36,20 @@ const raf = typeof requestAnimationFrame === "function"
   : (callback) => setTimeout(callback, 16);
 
 const TILE = 12;
-const COLORS = {
-  wall: "#8B5E3C",
-  wallTop: "#A0724A",
-  wallDark: "#3E2723",
-  floor: "#E8D5A3",
-  floorAlt: "#DEC98C",
-  floorLine: "#C4A060",
-  counter: "#6D4C31",
-  counterTop: "#B8860B",
-  counterEdge: "#DAA520",
-  pcDesk: "#5D3A1A",
-  pcScreen: "#1a1a2e",
-  pcGlow: "#7CFC00",
-  line: "#2B1B17",
-  text: "#FFF8E7",
-  dimText: "#8D6E63",
-  red: "#E74C3C",
-  green: "#6B8E23",
-  yellow: "#FFD700",
-  blue: "#5DADE2",
-  plant: "#4CAF50",
-  shadow: "#1a1814",
-  glass: "#87CEEB",
-  uiDark: "#3E2723",
-  uiPanel: "#F5E6C8"
-};
+const SAVE_INTERVAL = 20;
+const {
+  COLORS,
+  SPRITE_SCALE,
+  assetSources,
+  products,
+  staffTypes,
+  equipmentTiers,
+  expansionTypes,
+  demandProductIds,
+  guestTypes
+} = require("./src/config");
 
 const assets = {};
-const SPRITE_SCALE = {
-  counter: 1,
-  pc: 1,
-  guest: 1,
-  worker: 1,
-  plant: 1,
-  floor: 1
-};
 
 const layout = createLayout();
 const state = {
@@ -104,6 +82,16 @@ const state = {
   settingsOpen: false,
   testMode: loadTestModeSetting(),
   saveTimer: 0,
+  saveDirty: false,
+  actionGroup: "daily",
+  panelPages: {
+    procurement: 0,
+    warehouse: 0,
+    hiring: 0,
+    expansion: 0,
+    equipment: 0,
+    equipmentPc: 0
+  },
   pendingExpansion: null,
   confirmDialog: null,
   purchaseQuantities: {},
@@ -146,177 +134,11 @@ const guestPalettes = [
   { shirt: "#ffd166", hair: "#2d1e1a" }
 ];
 
-const products = [
-  { id: "noodle", name: "\u6ce1\u9762", unlockLevel: 1, cost: 20, quantity: 10, sellPrice: 6 },
-  { id: "water", name: "\u77ff\u6cc9\u6c34", unlockLevel: 1, cost: 12, quantity: 12, sellPrice: 3 },
-  { id: "sausage", name: "\u70e4\u80a0", unlockLevel: 1, cost: 18, quantity: 10, sellPrice: 5 },
-  { id: "betel", name: "\u69df\u6994", unlockLevel: 1, cost: 30, quantity: 10, sellPrice: 7 },
-  { id: "cigarette", name: "\u9999\u70df", unlockLevel: 1, cost: 45, quantity: 5, sellPrice: 18 },
-  { id: "snack", name: "\u96f6\u98df\u5c0f\u5403", unlockLevel: 2, cost: 35, quantity: 10, sellPrice: 8 },
-  { id: "drink", name: "\u591a\u54c1\u79cd\u996e\u6599", unlockLevel: 2, cost: 42, quantity: 12, sellPrice: 7 },
-  { id: "meal", name: "\u9884\u5236\u5feb\u9910", unlockLevel: 3, cost: 80, quantity: 8, sellPrice: 18 },
-  { id: "milkTea", name: "\u5976\u8336", unlockLevel: 4, cost: 120, quantity: 10, sellPrice: 22 }
-];
-
-const staffTypes = [
-  {
-    id: "cashier",
-    name: "\u6536\u94f6\u5458",
-    hireCost: 120,
-    salary: 80,
-    desc: "\u524d\u53f0\u5f00\u673a\u3001\u6536\u94f6\uff0c\u540e\u7eed\u63a5\u5165\u8f6e\u73ed\u3002"
-  },
-  {
-    id: "floor",
-    name: "\u5916\u573a",
-    hireCost: 100,
-    salary: 70,
-    desc: "\u9001\u8d27\u3001\u6536\u62fe\u4e0b\u673a\u673a\u4f4d\u3002"
-  },
-  {
-    id: "cleaner",
-    name: "\u4fdd\u6d01",
-    hireCost: 90,
-    salary: 65,
-    desc: "\u6e05\u7406\u673a\u4f4d\u3001\u5395\u6240\u548c\u5730\u9762\u536b\u751f\u3002"
-  },
-  {
-    id: "manager",
-    name: "\u5e97\u957f",
-    hireCost: 380,
-    salary: 220,
-    desc: "\u7ba1\u7406\u5458\u5de5\uff0c\u9700\u6536\u94f6+\u5916\u573a\u81f3\u5c11 3 \u4eba\u3002"
-  },
-  {
-    id: "companion",
-    name: "\u966a\u73a9",
-    hireCost: 260,
-    salary: 160,
-    desc: "\u9ad8\u7aef\u7f51\u5496\u670d\u52a1\uff0c\u9700\u5e97\u957f + Lv.3\u3002"
-  }
-];
-
-const equipmentTiers = [
-  { level: 1, name: "1080 + i3", pricePerPc: 0 },
-  { level: 2, name: "2080 + i5", pricePerPc: 3000 },
-  { level: 3, name: "3080 + i7", pricePerPc: 5000 },
-  { level: 4, name: "4080 + i9", pricePerPc: 7000 },
-  { level: 5, name: "5080 + R9", pricePerPc: 10000 }
-];
-
-const expansionTypes = [
-  {
-    id: "multiRoom",
-    name: "\u591a\u4eba\u95f4",
-    pcOptions: [4, 6, 8],
-    baseCost: 1800,
-    pricePerPc: 650,
-    desc: "\u9002\u5408\u5c0f\u961f\u5f00\u9ed1\uff0c\u53ef\u81ea\u5b9a\u4e49 4-8 \u53f0\u673a\u3002"
-  },
-  {
-    id: "doubleRoom",
-    name: "\u53cc\u4eba\u95f4",
-    pcOptions: [2],
-    baseCost: 1600,
-    pricePerPc: 700,
-    desc: "\u53cc\u4eba\u5e76\u6392\uff0c\u540e\u7eed\u53ef\u63a5\u966a\u73a9\u548c\u60c5\u4fa3\u5ba2\u3002"
-  },
-  {
-    id: "singleRoom",
-    name: "\u5355\u4eba\u95f4",
-    pcOptions: [1],
-    baseCost: 1200,
-    pricePerPc: 900,
-    desc: "\u5b89\u9759\u79c1\u5bc6\uff0c\u540e\u7eed\u5438\u5f15\u9ad8\u7aef\u73a9\u5bb6\u3002"
-  },
-  {
-    id: "capsuleRoom",
-    name: "\u80f6\u56ca\u5355\u95f4",
-    pcOptions: [1],
-    baseCost: 2400,
-    pricePerPc: 1100,
-    desc: "\u5e26\u4f11\u606f\u80f6\u56ca\uff0c\u4e3a\u5305\u591c\u73a9\u6cd5\u94fa\u8def\u3002"
-  },
-  {
-    id: "showerRoom",
-    name: "\u6dcb\u6d74\u623f",
-    pcOptions: [0],
-    baseCost: 1800,
-    pricePerPc: 0,
-    desc: "\u6d17\u6fa1\u914d\u5957\uff0c\u540e\u7eed\u63a5\u5165\u5305\u591c\u548c\u6e05\u6d01\u538b\u529b\u3002"
-  },
-  {
-    id: "chessRoom",
-    name: "\u68cb\u724c\u5ba4",
-    pcOptions: [0],
-    baseCost: 2200,
-    pricePerPc: 0,
-    desc: "\u975e\u4e0a\u673a\u6536\u5165\u533a\uff0c\u540e\u7eed\u63a5\u5165\u968f\u673a\u724c\u5c40\u4e8b\u4ef6\u3002"
-  }
-];
-
-const demandProductIds = [
-  "noodle",
-  "water",
-  "sausage",
-  "betel",
-  "cigarette",
-  "snack",
-  "drink",
-  "meal",
-  "milkTea"
-];
-
-const guestTypes = [
-  {
-    id: "budgetHall",
-    name: "\u4f4e\u6d88\u5927\u5385\u5ba2",
-    areaPreference: "hall",
-    maxRate: 8,
-    minEquipmentLevel: 1,
-    spendChance: 0.22,
-    weight: 5
-  },
-  {
-    id: "regularHall",
-    name: "\u666e\u901a\u6563\u5ba2",
-    areaPreference: "hall",
-    maxRate: 12,
-    minEquipmentLevel: 1,
-    spendChance: 0.36,
-    weight: 4
-  },
-  {
-    id: "roomDuo",
-    name: "\u5305\u95f4\u5ba2",
-    areaPreference: "room",
-    maxRate: 22,
-    minEquipmentLevel: 1,
-    spendChance: 0.46,
-    weight: 3.8
-  },
-  {
-    id: "privateRoom",
-    name: "\u79c1\u5bc6\u5305\u95f4\u5ba2",
-    areaPreference: "room",
-    maxRate: 30,
-    minEquipmentLevel: 1,
-    spendChance: 0.5,
-    weight: 1.8
-  },
-  {
-    id: "highSpec",
-    name: "\u914d\u7f6e\u515a",
-    areaPreference: "any",
-    maxRate: 32,
-    minEquipmentLevel: 3,
-    spendChance: 0.55,
-    weight: 1.4
-  }
-];
-
 const ui = {
   procurementButton: null,
+  dailyGroupButton: null,
+  buildGroupButton: null,
+  systemGroupButton: null,
   closeProcurementButton: null,
   warehouseButton: null,
   closeWarehouseButton: null,
@@ -341,6 +163,7 @@ const ui = {
   confirmYesButton: null,
   confirmNoButton: null,
   priceButtons: [],
+  pageButtons: [],
   purchaseBatchButtons: [],
   rentAreaButtons: [],
   upgradeEquipmentButtons: [],
@@ -531,6 +354,7 @@ function adjustAreaRate(area, delta) {
   if (!area || area.pcCount <= 0) return;
   const current = getAreaHourlyRate(area.id);
   area.hourlyRate = Math.max(3, Math.min(60, current + delta));
+  markSaveDirty();
   say(`${area.name} \u8ba1\u8d39\u8c03\u6574\u4e3a ${area.hourlyRate} \u5143/\u5c0f\u65f6\u3002`);
 }
 
@@ -607,6 +431,7 @@ function placePendingExpansion(worldX, worldY) {
   state.pendingExpansion = null;
   updateEquipmentLevel();
   updateCafeLevel();
+  markSaveDirty();
   say(`\u5df2\u653e\u7f6e ${type.name}${pending.pcCount ? ` ${pending.pcCount} \u53f0\u673a` : ""}\uff0c\u65b0\u533a\u57df\u5f00\u5f20\u3002`);
   return true;
 }
@@ -727,6 +552,7 @@ function addPublicFloor(worldX, worldY) {
   ));
   if (existingIndex >= 0) {
     state.publicFloors.splice(existingIndex, 1);
+    markSaveDirty();
     say("\u5df2\u79fb\u9664\u8fd9\u5757\u516c\u533a\u5730\u7816\u3002");
     return;
   }
@@ -746,6 +572,7 @@ function addPublicFloor(worldX, worldY) {
   candidate.floor.typeId = "publicFloor";
   candidate.floor.name = "\u516c\u533a\u5730\u7816";
   state.publicFloors.push(candidate.floor);
+  markSaveDirty();
   say(candidate.hostType === "floor" ? "\u516c\u533a\u8fc7\u9053\u5df2\u5bf9\u9f50\u5ef6\u5c55\u3002" : "\u5df2\u8d34\u5899\u94fa\u8bbe\u516c\u533a\u5730\u7816\uff0c\u5899\u4f53\u5df2\u6253\u901a\u3002");
 }
 
@@ -888,6 +715,7 @@ function movePcLayout(worldX, worldY) {
   pc.seatX = pc.x + pc.w / 2;
   pc.seatY = getPcSeatY(pc.y);
   state.selectedPcId = null;
+  markSaveDirty();
   say(`${pc.id + 1} \u53f7\u673a\u4f4d\u7f6e\u5df2\u8c03\u6574\u3002`);
 }
 
@@ -917,6 +745,7 @@ function moveAreaLayout(worldX, worldY) {
 
   moveAreaTo(area, candidate.area.x, candidate.area.y);
   state.selectedAreaId = null;
+  markSaveDirty();
   say(`${area.name} \u5df2\u91cd\u65b0\u6446\u653e\uff0c\u95e8\u6d1e\u4f1a\u81ea\u52a8\u91cd\u7b97\u3002`);
 }
 
@@ -996,6 +825,44 @@ function say(text) {
   state.messageTimer = 4;
 }
 
+function markSaveDirty() {
+  state.saveDirty = true;
+}
+
+function getPanelPage(key, pageCount) {
+  const raw = state.panelPages[key] || 0;
+  return Math.max(0, Math.min(Math.max(0, pageCount - 1), raw));
+}
+
+function setPanelPage(key, page, pageCount) {
+  state.panelPages[key] = Math.max(0, Math.min(Math.max(0, pageCount - 1), page));
+}
+
+function getPageCount(total, pageSize) {
+  return Math.max(1, Math.ceil(total / Math.max(1, pageSize)));
+}
+
+function drawPanelPager(key, panel, page, pageCount) {
+  if (pageCount <= 1) return;
+
+  const y = panel.y + panel.h - 34;
+  const prevButton = { x: panel.x + 12, y, w: 42, h: 24, pageKey: key, delta: -1, pageCount };
+  const nextButton = { x: panel.x + 58, y, w: 42, h: 24, pageKey: key, delta: 1, pageCount };
+  ui.pageButtons.push(prevButton, nextButton);
+
+  drawWidePanelButton(prevButton, "\u4e0a\u9875", page > 0 ? "#7f5635" : "#9a6b55");
+  drawWidePanelButton(nextButton, "\u4e0b\u9875", page < pageCount - 1 ? "#4e8f4f" : "#9a6b55");
+  text(`${page + 1}/${pageCount}`, panel.x + 112, y + 5, 12, COLORS.line, "bold");
+}
+
+function handlePageButton(button) {
+  if (!button) return false;
+
+  const page = getPanelPage(button.pageKey, button.pageCount);
+  setPanelPage(button.pageKey, page + button.delta, button.pageCount);
+  return true;
+}
+
 function readStorage(key) {
   try {
     return wx.getStorageSync(key);
@@ -1070,7 +937,10 @@ function saveGame(silent = false) {
   if (!silent) {
     say(saved ? "\u5df2\u4fdd\u5b58\u5f53\u524d\u7f51\u5427\u8fdb\u5ea6\u3002" : "\u5b58\u6863\u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u5fae\u4fe1\u5b58\u50a8\u6743\u9650\u3002");
   }
-  state.saveTimer = 0;
+  if (saved) {
+    state.saveDirty = false;
+    state.saveTimer = 0;
+  }
   return saved;
 }
 
@@ -1153,6 +1023,7 @@ function setTestMode(enabled) {
   if (enabled) {
     say("\u5df2\u5f00\u542f\u6d4b\u8bd5\u6a21\u5f0f\uff0c\u5237\u65b0\u540e\u56de\u5230\u6d4b\u8bd5\u5f00\u5c40\u3002");
   } else {
+    markSaveDirty();
     saveGame(true);
     say("\u5df2\u5173\u95ed\u6d4b\u8bd5\u6a21\u5f0f\uff0c\u672c\u5730\u5b58\u6863\u5df2\u542f\u7528\u3002");
   }
@@ -1201,6 +1072,7 @@ function buyProduct(product, quantity = getPurchaseQuantity(product)) {
 
   state.cash -= cost;
   state.inventory[product.id] = (state.inventory[product.id] || 0) + quantity;
+  markSaveDirty();
   say(`\u91c7\u8d2d ${product.name} x${quantity}\uff0c\u5e93\u5b58\u5df2\u5165\u8d26\u3002`);
 }
 
@@ -1209,6 +1081,7 @@ function restockProduct(product, silent = false) {
 
   state.cash -= product.cost;
   state.inventory[product.id] = (state.inventory[product.id] || 0) + product.quantity;
+  markSaveDirty();
   if (!silent) {
     say(`\u5e97\u957f\u81ea\u52a8\u8865\u8d27 ${product.name} x${product.quantity}\u3002`);
   }
@@ -1290,6 +1163,7 @@ function serveGuestDemand(guest) {
 
   state.inventory[product.id] = stock - 1;
   state.cash += product.sellPrice;
+  markSaveDirty();
   say(`\u9001\u51fa ${product.name}\uff0c\u989d\u5916\u6536\u5165 ${product.sellPrice} \u5143\u3002`);
   guest.demand = null;
   return true;
@@ -1320,6 +1194,7 @@ function cleanPc(pc) {
   pc.cleanTimer = 0;
   pc.cleanWorkerId = null;
   state.cleanliness = Math.min(100, state.cleanliness + 8);
+  markSaveDirty();
   say(`\u5df2\u6e05\u6d01 ${pc.id + 1} \u53f7\u673a\uff0c\u6e05\u6d01\u503c\u56de\u5347\u3002`);
 }
 
@@ -1338,6 +1213,7 @@ function cleanToilet() {
   state.toilet.useCount = 0;
   state.toilet.cleanWorkerId = null;
   state.cleanliness = Math.min(100, state.cleanliness + 12);
+  markSaveDirty();
   say("\u5395\u6240\u5df2\u6e05\u6d01\uff0c\u5ba2\u4eba\u4f53\u9a8c\u597d\u4e86\u4e00\u70b9\u3002");
   return true;
 }
@@ -1350,16 +1226,23 @@ function getEmployeeTotal() {
   return Object.keys(state.employees).reduce((total, key) => total + state.employees[key], 0);
 }
 
-function getCurrentEquipmentTier() {
-  return equipmentTiers.find((tier) => tier.level === state.equipmentLevel) || equipmentTiers[0];
-}
-
 function getEquipmentTier(level) {
   return equipmentTiers.find((tier) => tier.level === level) || equipmentTiers[0];
 }
 
+function getAverageEquipmentLevel() {
+  if (layout.pcs.length === 0) return 1;
+  const total = layout.pcs.reduce((sum, pc) => sum + pc.equipmentLevel, 0);
+  return total / layout.pcs.length;
+}
+
+function getMinimumEquipmentLevel() {
+  if (layout.pcs.length === 0) return 1;
+  return Math.min(...layout.pcs.map((pc) => pc.equipmentLevel));
+}
+
 function updateEquipmentLevel() {
-  state.equipmentLevel = Math.min(...layout.pcs.map((pc) => pc.equipmentLevel));
+  state.equipmentLevel = Math.max(1, Math.floor(getAverageEquipmentLevel()));
 }
 
 function openEquipmentPcSelection(tier) {
@@ -1405,6 +1288,7 @@ function upgradePcEquipment(pc, tier) {
   updateEquipmentLevel();
   updateCafeLevel();
   state.pendingEquipmentTierLevel = null;
+  markSaveDirty();
   say(`${pc.id + 1} \u53f7\u673a\u5347\u7ea7\u5230 ${tier.name}\u3002`);
 }
 
@@ -1448,11 +1332,11 @@ function getIdleWorkers() {
 function calculateCafeLevel() {
   const employeeTotal = getEmployeeTotal();
   const machineCount = layout.pcs.length;
-  const equipmentLevel = state.equipmentLevel;
+  const equipmentAverage = getAverageEquipmentLevel();
 
-  if (employeeTotal >= 6 && machineCount >= 10 && equipmentLevel >= 4) return 4;
-  if (employeeTotal >= 4 && machineCount >= 8 && equipmentLevel >= 3) return 3;
-  if (employeeTotal >= 2 && machineCount >= 6 && equipmentLevel >= 2) return 2;
+  if (employeeTotal >= 6 && machineCount >= 10 && equipmentAverage >= 3.5) return 4;
+  if (employeeTotal >= 4 && machineCount >= 8 && equipmentAverage >= 2.6) return 3;
+  if (employeeTotal >= 2 && machineCount >= 6 && equipmentAverage >= 1.6) return 2;
   return 1;
 }
 
@@ -1461,7 +1345,7 @@ function updateCafeLevel() {
   if (nextLevel > state.cafeLevel) {
     say(`\u7f51\u5427\u5347\u5230 Lv.${nextLevel}\uff0c\u65b0\u529f\u80fd\u5c06\u9010\u6b65\u89e3\u9501\u3002`);
   }
-  state.cafeLevel = nextLevel;
+  state.cafeLevel = Math.max(state.cafeLevel, nextLevel);
 }
 
 function getStaffRequirement(staff) {
@@ -1497,6 +1381,7 @@ function hireStaff(staff) {
   state.employees[staff.id] += 1;
   state.workers.push(createWorker(staff.id));
   updateCafeLevel();
+  markSaveDirty();
   say(`\u5df2\u62db\u8058 ${staff.name}\uff0c\u5f53\u524d\u5458\u5de5 ${getEmployeeTotal()} \u4eba\u3002`);
 }
 
@@ -1523,6 +1408,16 @@ function closePanels() {
   state.layoutToolActive = false;
   state.selectedAreaId = null;
   state.selectedPcId = null;
+}
+
+function clearActionButtons() {
+  ui.procurementButton = null;
+  ui.warehouseButton = null;
+  ui.hiringButton = null;
+  ui.equipmentButton = null;
+  ui.expansionButton = null;
+  ui.layoutButton = null;
+  ui.settingsButton = null;
 }
 
 function screenToWorld(x, y) {
@@ -1618,6 +1513,11 @@ function handleTouch(x, y) {
       }
       return;
     }
+    return;
+  }
+
+  const pageButton = ui.pageButtons.find((button) => isPointInRect(x, y, button));
+  if (pageButton && handlePageButton(pageButton)) {
     return;
   }
 
@@ -1784,6 +1684,17 @@ function handleTouch(x, y) {
     if (upgradeButton) {
       openEquipmentPcSelection(upgradeButton.tier);
     }
+    return;
+  }
+
+  const groupButtons = [
+    { button: ui.dailyGroupButton, group: "daily" },
+    { button: ui.buildGroupButton, group: "build" },
+    { button: ui.systemGroupButton, group: "system" }
+  ];
+  const groupHit = groupButtons.find((item) => isPointInRect(x, y, item.button));
+  if (groupHit) {
+    state.actionGroup = groupHit.group;
     return;
   }
 
@@ -2169,6 +2080,7 @@ function finishPlaying(guest, pc) {
   pc.dirty = true;
   guest.state = "leaving";
   state.cleanliness = Math.max(0, state.cleanliness - 3);
+  markSaveDirty();
   say(`顾客 ${guest.id} 下机结账，收入 ${income} 元。机位需要清理。`);
 }
 
@@ -2325,6 +2237,7 @@ function cleanPcByWorker(pc) {
   pc.dirty = false;
   pc.cleanWorkerId = null;
   state.cleanliness = Math.min(100, state.cleanliness + 7);
+  markSaveDirty();
   say(`\u5458\u5de5\u5df2\u6e05\u7406 ${pc.id + 1} \u53f7\u673a\u3002`);
 }
 
@@ -2333,6 +2246,7 @@ function cleanToiletByWorker() {
   state.toilet.useCount = 0;
   state.toilet.cleanWorkerId = null;
   state.cleanliness = Math.min(100, state.cleanliness + 10);
+  markSaveDirty();
   say("\u5458\u5de5\u5df2\u6e05\u7406\u5395\u6240\u3002");
 }
 
@@ -2345,6 +2259,7 @@ function serveGuestDemandByWorker(guest) {
 
   state.inventory[product.id] -= 1;
   state.cash += product.sellPrice;
+  markSaveDirty();
   say(`\u5458\u5de5\u9001\u51fa ${product.name}\uff0c\u989d\u5916\u6536\u5165 ${product.sellPrice} \u5143\u3002`);
   guest.demand = null;
   return true;
@@ -2446,6 +2361,7 @@ function updateGuests(dt) {
         state.toilet.dirty = state.toilet.useCount >= 2 || Math.random() < 0.35;
         state.cleanliness = Math.max(0, state.cleanliness - 4);
         guest.state = "backToPc";
+        markSaveDirty();
         say("\u5395\u6240\u88ab\u4f7f\u7528\u4e86\uff0c\u6e05\u6d01\u503c\u4e0b\u964d\u3002");
       }
       continue;
@@ -2493,9 +2409,10 @@ function updateLayoutHints(dt) {
 
 function updateAutoSave(dt) {
   if (state.testMode) return;
+  if (!state.saveDirty) return;
 
   state.saveTimer += dt;
-  if (state.saveTimer >= 4) {
+  if (state.saveTimer >= SAVE_INTERVAL) {
     saveGame(true);
   }
 }
@@ -2557,6 +2474,29 @@ function verticalGradientRect(x, y, w, h, topColor, bottomColor) {
 
 function isAssetReady(name) {
   return assets[name] && assets[name].ready;
+}
+
+function loadAssets() {
+  Object.keys(assetSources).forEach((name) => {
+    const src = assetSources[name];
+    if (!src) return;
+
+    const image = typeof wx.createImage === "function"
+      ? wx.createImage()
+      : typeof screenCanvas.createImage === "function"
+        ? screenCanvas.createImage()
+        : null;
+    if (!image) return;
+
+    assets[name] = { image, ready: false, failed: false };
+    image.onload = () => {
+      assets[name].ready = true;
+    };
+    image.onerror = () => {
+      assets[name].failed = true;
+    };
+    image.src = src;
+  });
 }
 
 function drawAsset(name, x, y, w, h) {
@@ -3131,36 +3071,55 @@ function drawHud() {
 
 function drawActionBar() {
   const y = view.height - ACTION_BAR_HEIGHT;
+  clearActionButtons();
   rect(0, y, view.width, ACTION_BAR_HEIGHT, COLORS.uiDark);
   rect(0, y, view.width, 3, COLORS.counterTop);
 
   text(`\u7f51\u5427 Lv.${state.cafeLevel}`, 16, y + 11, 13, COLORS.yellow, "bold");
 
-  const buttonW = view.width < 350 ? 32 : 38;
-  const gap = view.width < 350 ? 4 : 5;
-  const buttonH = 34;
-  const startX = Math.max(62, view.width - (buttonW + gap) * 7 - 6);
-  ui.settingsButton = { x: startX, y: y + 12, w: buttonW, h: buttonH };
-  ui.warehouseButton = { x: startX + (buttonW + gap), y: y + 12, w: buttonW, h: buttonH };
-  ui.hiringButton = { x: startX + (buttonW + gap) * 2, y: y + 12, w: buttonW, h: buttonH };
-  ui.equipmentButton = { x: startX + (buttonW + gap) * 3, y: y + 12, w: buttonW, h: buttonH };
-  ui.expansionButton = { x: startX + (buttonW + gap) * 4, y: y + 12, w: buttonW, h: buttonH };
-  ui.layoutButton = { x: startX + (buttonW + gap) * 5, y: y + 12, w: buttonW, h: buttonH };
-  ui.procurementButton = { x: startX + (buttonW + gap) * 6, y: y + 12, w: buttonW, h: buttonH };
+  const groupY = y + 31;
+  const groupW = 34;
+  const groupGap = 4;
+  ui.dailyGroupButton = { x: 14, y: groupY, w: groupW, h: 20 };
+  ui.buildGroupButton = { x: 14 + (groupW + groupGap), y: groupY, w: groupW, h: 20 };
+  ui.systemGroupButton = { x: 14 + (groupW + groupGap) * 2, y: groupY, w: groupW, h: 20 };
+  drawActionButton(ui.dailyGroupButton, "\u65e5", state.actionGroup === "daily");
+  drawActionButton(ui.buildGroupButton, "\u5efa", state.actionGroup === "build");
+  drawActionButton(ui.systemGroupButton, "\u7cfb", state.actionGroup === "system");
 
-  drawActionButton(ui.settingsButton, "\u8bbe\u7f6e");
-  drawActionButton(ui.warehouseButton, "\u4ed3\u5e93");
-  drawActionButton(ui.hiringButton, "\u62db\u8058");
-  drawActionButton(ui.equipmentButton, "\u8bbe\u5907");
-  drawActionButton(ui.expansionButton, "\u6269\u79df");
-  drawActionButton(ui.layoutButton, "\u5e03\u5c40", state.layoutToolActive);
-  drawActionButton(ui.procurementButton, "\u91c7\u8d2d");
+  const buttonW = view.width < 350 ? 42 : 48;
+  const gap = view.width < 350 ? 5 : 6;
+  const buttonH = 34;
+  const actionSets = {
+    daily: [
+      ["warehouseButton", "\u4ed3\u5e93"],
+      ["hiringButton", "\u62db\u8058"],
+      ["procurementButton", "\u91c7\u8d2d"]
+    ],
+    build: [
+      ["equipmentButton", "\u8bbe\u5907"],
+      ["expansionButton", "\u6269\u79df"],
+      ["layoutButton", "\u5e03\u5c40", state.layoutToolActive]
+    ],
+    system: [
+      ["settingsButton", "\u8bbe\u7f6e"]
+    ]
+  };
+  const actions = actionSets[state.actionGroup] || actionSets.daily;
+  const startX = Math.max(126, view.width - (buttonW + gap) * actions.length - 8);
+
+  actions.forEach((action, index) => {
+    const button = { x: startX + (buttonW + gap) * index, y: y + 12, w: buttonW, h: buttonH };
+    ui[action[0]] = button;
+    drawActionButton(button, action[1], Boolean(action[2]));
+  });
 }
 
 function drawActionButton(button, label, active = false) {
   rect(button.x - 1, button.y - 1, button.w + 2, button.h + 2, COLORS.line);
   rect(button.x, button.y, button.w, button.h, active ? "#4e9f74" : "#5D4037");
-  text(label, button.x + button.w / 2, button.y + 9, button.w < 36 ? 11 : 12, COLORS.text, "bold", "center");
+  const size = button.w < 36 ? 11 : 12;
+  text(label, button.x + button.w / 2, button.y + (button.h - size) / 2, size, COLORS.text, "bold", "center");
 }
 
 function drawStockShelf() {
@@ -3270,7 +3229,13 @@ function drawProcurementPanel() {
   const cols = 2;
   const cardW = (panel.w - 26 - gap) / cols;
   const cardH = 92;
-  products.forEach((product, index) => {
+  const rows = Math.max(1, Math.floor((panel.y + panel.h - 42 - startY) / (cardH + gap)));
+  const pageSize = rows * cols;
+  const pageCount = getPageCount(products.length, pageSize);
+  const page = getPanelPage("procurement", pageCount);
+  const visibleProducts = products.slice(page * pageSize, page * pageSize + pageSize);
+
+  visibleProducts.forEach((product, index) => {
     const col = index % cols;
     const row = Math.floor(index / cols);
     const x = panel.x + 10 + col * (cardW + gap);
@@ -3314,6 +3279,8 @@ function drawProcurementPanel() {
       text("\u4e70", button.x + button.w / 2, button.y + 3, 13, COLORS.text, "bold", "center");
     }
   });
+
+  drawPanelPager("procurement", panel, page, pageCount);
 
   rect(ui.closeProcurementButton.x, ui.closeProcurementButton.y, ui.closeProcurementButton.w, ui.closeProcurementButton.h, "#7f5635");
   strokeRect(ui.closeProcurementButton.x, ui.closeProcurementButton.y, ui.closeProcurementButton.w, ui.closeProcurementButton.h, COLORS.line, 2);
@@ -3406,8 +3373,13 @@ function drawWarehousePanel() {
   const cols = 2;
   const cardW = (panel.w - 26 - gap) / cols;
   const cardH = 58;
+  const rows = Math.max(1, Math.floor((panel.y + panel.h - 44 - startY) / (cardH + gap)));
+  const pageSize = rows * cols;
+  const pageCount = getPageCount(products.length, pageSize);
+  const page = getPanelPage("warehouse", pageCount);
+  const visibleProducts = products.slice(page * pageSize, page * pageSize + pageSize);
 
-  products.forEach((product, index) => {
+  visibleProducts.forEach((product, index) => {
     const col = index % cols;
     const row = Math.floor(index / cols);
     const x = panel.x + 10 + col * (cardW + gap);
@@ -3428,6 +3400,8 @@ function drawWarehousePanel() {
 
   ui.warehouseProcurementButton = { x: panel.x + panel.w - 104, y: panel.y + panel.h - 34, w: 54, h: 24 };
   ui.closeWarehouseButton = { x: panel.x + panel.w - 46, y: panel.y + panel.h - 34, w: 34, h: 24 };
+
+  drawPanelPager("warehouse", panel, page, pageCount);
 
   rect(ui.warehouseProcurementButton.x, ui.warehouseProcurementButton.y, ui.warehouseProcurementButton.w, ui.warehouseProcurementButton.h, "#4e8f4f");
   strokeRect(ui.warehouseProcurementButton.x, ui.warehouseProcurementButton.y, ui.warehouseProcurementButton.w, ui.warehouseProcurementButton.h, COLORS.line, 2);
@@ -3462,7 +3436,12 @@ function drawHiringPanel() {
 
   const startY = panel.y + 88;
   const cardH = 62;
-  staffTypes.forEach((staff, index) => {
+  const pageSize = Math.max(1, Math.floor((panel.y + panel.h - 42 - startY) / (cardH + 6)));
+  const pageCount = getPageCount(staffTypes.length, pageSize);
+  const page = getPanelPage("hiring", pageCount);
+  const visibleStaff = staffTypes.slice(page * pageSize, page * pageSize + pageSize);
+
+  visibleStaff.forEach((staff, index) => {
     const y = startY + index * (cardH + 6);
     if (y + cardH > panel.y + panel.h - 42) return;
 
@@ -3484,6 +3463,7 @@ function drawHiringPanel() {
   });
 
   ui.closeHiringButton = { x: panel.x + panel.w - 50, y: panel.y + panel.h - 34, w: 38, h: 24 };
+  drawPanelPager("hiring", panel, page, pageCount);
   rect(ui.closeHiringButton.x, ui.closeHiringButton.y, ui.closeHiringButton.w, ui.closeHiringButton.h, "#7f5635");
   strokeRect(ui.closeHiringButton.x, ui.closeHiringButton.y, ui.closeHiringButton.w, ui.closeHiringButton.h, COLORS.line, 2);
   text("\u5173\u95ed", ui.closeHiringButton.x + ui.closeHiringButton.w / 2, ui.closeHiringButton.y + 4, 12, COLORS.text, "bold", "center");
@@ -3515,7 +3495,12 @@ function drawExpansionPanel() {
   const offers = getExpansionOffers();
   const startY = panel.y + 96;
   const cardH = 54;
-  offers.forEach((offer, index) => {
+  const pageSize = Math.max(1, Math.floor((panel.y + panel.h - 42 - startY) / (cardH + 6)));
+  const pageCount = getPageCount(offers.length, pageSize);
+  const page = getPanelPage("expansion", pageCount);
+  const visibleOffers = offers.slice(page * pageSize, page * pageSize + pageSize);
+
+  visibleOffers.forEach((offer, index) => {
     const y = startY + index * (cardH + 6);
     if (y + cardH > panel.y + panel.h - 42) return;
 
@@ -3546,6 +3531,7 @@ function drawExpansionPanel() {
   });
 
   ui.closeExpansionButton = { x: panel.x + panel.w - 50, y: panel.y + panel.h - 34, w: 38, h: 24 };
+  drawPanelPager("expansion", panel, page, pageCount);
   rect(ui.closeExpansionButton.x, ui.closeExpansionButton.y, ui.closeExpansionButton.w, ui.closeExpansionButton.h, "#7f5635");
   strokeRect(ui.closeExpansionButton.x, ui.closeExpansionButton.y, ui.closeExpansionButton.w, ui.closeExpansionButton.h, COLORS.line, 2);
   text("\u5173\u95ed", ui.closeExpansionButton.x + ui.closeExpansionButton.w / 2, ui.closeExpansionButton.y + 4, 12, COLORS.text, "bold", "center");
@@ -3682,20 +3668,27 @@ function drawEquipmentPanel() {
   };
 
   updateEquipmentLevel();
-  const currentTier = getCurrentEquipmentTier();
+  const averageLevel = getAverageEquipmentLevel();
+  const minimumLevel = getMinimumEquipmentLevel();
   rect(panel.x, panel.y, panel.w, panel.h, "#f0c98a");
   strokeRect(panel.x, panel.y, panel.w, panel.h, COLORS.wallDark, 4);
   rect(panel.x, panel.y, panel.w, 42, "#8c4f35");
   text("\u8bbe\u5907\u5347\u7ea7", panel.x + 16, panel.y + 11, 18, COLORS.text, "bold");
-  text(`\u5168\u5e97\u6700\u4f4e ${currentTier.name}`, panel.x + panel.w - 150, panel.y + 14, 12, COLORS.text, "bold");
+  text(`\u5e73\u5747 ${averageLevel.toFixed(1)}`, panel.x + panel.w - 92, panel.y + 14, 12, COLORS.text, "bold");
 
   rect(panel.x + 10, panel.y + 50, panel.w - 20, 42, "#e3b86f");
-  text(`\u5f53\u524d\u673a\u5668 ${layout.pcs.length} \u53f0  /  \u8bbe\u5907\u6863\u4f4d ${state.equipmentLevel}`, panel.x + 18, panel.y + 58, 12, "#5d4532", "bold");
-  text("\u70b9\u51fb\u5347\u7ea7\u540e\u9009\u62e9\u5177\u4f53\u673a\u5668\uff0c\u5355\u53f0\u6263\u8d39", panel.x + 18, panel.y + 74, 11, "#5d4532");
+  text(`\u673a\u5668 ${layout.pcs.length} \u53f0 / \u5747\u6863 ${state.equipmentLevel} / \u6700\u4f4e L${minimumLevel}`, panel.x + 18, panel.y + 58, 12, "#5d4532", "bold");
+  text("\u7f51\u5427\u7b49\u7ea7\u6309\u5e73\u5747\u8bbe\u5907\u8bc4\u4f30\uff0c\u5df2\u89e3\u9501\u4e0d\u56de\u9000", panel.x + 18, panel.y + 74, 11, "#5d4532");
 
   const startY = panel.y + 108;
   const cardH = 62;
-  equipmentTiers.slice(1).forEach((tier, index) => {
+  const tierOptions = equipmentTiers.slice(1);
+  const pageSize = Math.max(1, Math.floor((panel.y + panel.h - 42 - startY) / (cardH + 8)));
+  const pageCount = getPageCount(tierOptions.length, pageSize);
+  const page = getPanelPage("equipment", pageCount);
+  const visibleTiers = tierOptions.slice(page * pageSize, page * pageSize + pageSize);
+
+  visibleTiers.forEach((tier, index) => {
     const y = startY + index * (cardH + 8);
     if (y + cardH > panel.y + panel.h - 42) return;
 
@@ -3717,10 +3710,13 @@ function drawEquipmentPanel() {
     text(allUpgraded ? "\u5df2" : "\u5347", button.x + button.w / 2, button.y + 5, 13, COLORS.text, "bold", "center");
   });
 
-  ui.closeEquipmentButton = { x: panel.x + panel.w - 50, y: panel.y + panel.h - 34, w: 38, h: 24 };
-  rect(ui.closeEquipmentButton.x, ui.closeEquipmentButton.y, ui.closeEquipmentButton.w, ui.closeEquipmentButton.h, "#7f5635");
-  strokeRect(ui.closeEquipmentButton.x, ui.closeEquipmentButton.y, ui.closeEquipmentButton.w, ui.closeEquipmentButton.h, COLORS.line, 2);
-  text("\u5173\u95ed", ui.closeEquipmentButton.x + ui.closeEquipmentButton.w / 2, ui.closeEquipmentButton.y + 4, 12, COLORS.text, "bold", "center");
+  if (!getPendingEquipmentTier()) {
+    ui.closeEquipmentButton = { x: panel.x + panel.w - 50, y: panel.y + panel.h - 34, w: 38, h: 24 };
+    drawPanelPager("equipment", panel, page, pageCount);
+    rect(ui.closeEquipmentButton.x, ui.closeEquipmentButton.y, ui.closeEquipmentButton.w, ui.closeEquipmentButton.h, "#7f5635");
+    strokeRect(ui.closeEquipmentButton.x, ui.closeEquipmentButton.y, ui.closeEquipmentButton.w, ui.closeEquipmentButton.h, COLORS.line, 2);
+    text("\u5173\u95ed", ui.closeEquipmentButton.x + ui.closeEquipmentButton.w / 2, ui.closeEquipmentButton.y + 4, 12, COLORS.text, "bold", "center");
+  }
 
   drawEquipmentPcSelection(panel);
 }
@@ -3738,7 +3734,13 @@ function drawEquipmentPcSelection(panel) {
   const cols = 2;
   const cardW = (panel.w - 56) / cols;
   const startY = panel.y + 152;
-  layout.pcs.forEach((pc, index) => {
+  const rows = Math.max(1, Math.floor((panel.y + panel.h - 92 - startY) / 58));
+  const pageSize = rows * cols;
+  const pageCount = getPageCount(layout.pcs.length, pageSize);
+  const page = getPanelPage("equipmentPc", pageCount);
+  const visiblePcs = layout.pcs.slice(page * pageSize, page * pageSize + pageSize);
+
+  visiblePcs.forEach((pc, index) => {
     const col = index % cols;
     const row = Math.floor(index / cols);
     const x = panel.x + 28 + col * (cardW + 8);
@@ -3757,6 +3759,8 @@ function drawEquipmentPcSelection(panel) {
     strokeRect(button.x, button.y, button.w, button.h, COLORS.line, 2);
     text("\u5347", button.x + button.w / 2, button.y + 6, 12, COLORS.text, "bold", "center");
   });
+
+  drawPanelPager("equipmentPc", { x: panel.x + 16, y: panel.y + 92, w: panel.w - 32, h: panel.h - 138 }, page, pageCount);
 
   ui.cancelEquipmentSelectionButton = { x: panel.x + panel.w - 66, y: panel.y + panel.h - 68, w: 48, h: 24 };
   rect(ui.cancelEquipmentSelectionButton.x, ui.cancelEquipmentSelectionButton.y, ui.cancelEquipmentSelectionButton.w, ui.cancelEquipmentSelectionButton.h, "#7f5635");
@@ -4020,6 +4024,7 @@ function drawIndoorDetailsModern() {
 
 function render() {
   ctx.clearRect(0, 0, view.width, view.height);
+  ui.pageButtons.length = 0;
   beginWorldDraw();
   drawPixelFloor();
   drawCounter();
@@ -4057,6 +4062,7 @@ function drawFatalError(error) {
   text(String(error && error.message ? error.message : error), 24, 72, 14, "#ffffff");
 }
 
+loadAssets();
 restoreGame();
 
 try {
