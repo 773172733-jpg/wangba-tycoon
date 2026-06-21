@@ -48,6 +48,7 @@ const TILE = 12;
 const PUBLIC_FLOOR_SIZE = 60;
 const PUBLIC_FLOOR_HALF = PUBLIC_FLOOR_SIZE / 2;
 const PUBLIC_FLOOR_ATTACH_DISTANCE = 88;
+const PUBLIC_FLOOR_COST = 120;
 const SAVE_INTERVAL = 20;
 const GAME_DAY_SECONDS = 120;
 const GAME_MONTH_DAYS = 30;
@@ -64,6 +65,7 @@ const {
   staffTypes,
   equipmentTiers,
   expansionTypes,
+  partitionTypes,
   demandProductIds,
   guestTypes
 } = require("./src/config");
@@ -117,6 +119,7 @@ const state = {
     equipmentPc: 0
   },
   pendingExpansion: null,
+  pendingPartitionTypeId: null,
   pendingPcPurchase: null,
   pendingMahjongPurchase: false,
   pendingEquipmentTierLevel: null,
@@ -151,6 +154,7 @@ const state = {
   workers: [],
   mahjongTables: [],
   publicFloors: [],
+  partitions: [],
   inventory: {},
   message: "客人进门、前台开机、上机读条、下机离场。",
   messageTimer: 5
@@ -395,6 +399,19 @@ function getNewPcCost(tierLevel = 1) {
     .reduce((total, tier) => total + tier.pricePerPc, NEW_PC_BASE_COST);
 }
 
+function getEquipmentHourlyRate(level) {
+  const tier = getEquipmentTier(level);
+  return tier && Number.isFinite(tier.hourlyRate) ? tier.hourlyRate : 5;
+}
+
+function getPartitionType(typeId) {
+  return partitionTypes.find((type) => type.id === typeId);
+}
+
+function getPartitionCost(type) {
+  return type ? type.cost : 0;
+}
+
 function getAreaSize(type, pcCount) {
   if (type.id === "multiRoom") {
     if (pcCount >= 8) return { w: 430, h: 260 };
@@ -434,8 +451,8 @@ function isRoomArea(area) {
 }
 
 function getAreaHourlyRate(areaId) {
-  const area = getAreaById(areaId);
-  return area && Number.isFinite(area.hourlyRate) ? area.hourlyRate : getDefaultAreaRate(area && area.typeId);
+  const pc = layout.pcs.find((item) => item.areaId === areaId);
+  return pc ? getPcHourlyRate(pc) : getEquipmentHourlyRate(1);
 }
 
 function chooseWeightedGuestType() {
@@ -449,14 +466,8 @@ function chooseWeightedGuestType() {
 }
 
 function getGuestTypeWeight(guestType) {
-  const roomPcCount = layout.pcs.filter((pc) => isRoomArea(getAreaById(pc.areaId))).length;
-  if (guestType.areaPreference === "room") {
-    return roomPcCount > 0 ? guestType.weight + roomPcCount * 0.85 : guestType.weight * 0.18;
-  }
-  if (guestType.areaPreference === "any" && roomPcCount > 0) {
-    return guestType.weight + roomPcCount * 0.25;
-  }
-  return guestType.weight;
+  const matchingPcCount = layout.pcs.filter((pc) => pc.equipmentLevel >= guestType.minEquipmentLevel).length;
+  return matchingPcCount > 0 ? guestType.weight + matchingPcCount * 0.18 : guestType.weight * 0.25;
 }
 
 function pcMatchesGuest(pc, guestType) {
@@ -464,9 +475,7 @@ function pcMatchesGuest(pc, guestType) {
   if (!area) return false;
   if (pc.occupiedBy || pc.dirty || pc.broken) return false;
   if (pc.equipmentLevel < guestType.minEquipmentLevel) return false;
-  if (getAreaHourlyRate(pc.areaId) > guestType.maxRate) return false;
-  if (guestType.areaPreference === "hall" && !isHallArea(area)) return false;
-  if (guestType.areaPreference === "room" && !isRoomArea(area)) return false;
+  if (getPcHourlyRate(pc) > guestType.maxRate) return false;
   return true;
 }
 
@@ -589,6 +598,7 @@ function getWorldBoundItems() {
   const items = [layout.room, layout.toilet]
     .concat(state ? state.rentedAreas : [])
     .concat(state ? state.publicFloors : [])
+    .concat(state ? state.partitions : [])
     .concat(state ? state.mahjongTables : [])
     .concat(layout.pcs.map((pc) => getPcVisualBounds(pc)));
   return items.filter((item) => item && Number.isFinite(item.x) && Number.isFinite(item.y));
@@ -679,11 +689,39 @@ function getAreaAtPoint(x, y) {
       return area;
     }
   }
+  for (let index = state.publicFloors.length - 1; index >= 0; index -= 1) {
+    const floor = state.publicFloors[index];
+    if (isPointInsideRect(x, y, floor)) return createHallExtensionArea(floor);
+  }
   return null;
+}
+
+function createHallExtensionArea(floor) {
+  const hall = state.rentedAreas[0];
+  return {
+    id: 1,
+    typeId: "livingRoom",
+    name: "\u5927\u5385\u6269\u5c55",
+    pcCount: hall ? hall.pcCount : layout.pcs.length,
+    pcCapacity: getMaxOperationalPcs(),
+    x: floor.x,
+    y: floor.y,
+    w: floor.w,
+    h: floor.h,
+    isPublicFloorExtension: true
+  };
 }
 
 function getPcAtPoint(x, y) {
   return layout.pcs.find((pc) => isPointInsideRect(x, y, getPcVisualBounds(pc), 2));
+}
+
+function getPartitionAtPoint(x, y) {
+  for (let index = state.partitions.length - 1; index >= 0; index -= 1) {
+    const partition = state.partitions[index];
+    if (isPointInsideRect(x, y, partition, 4)) return partition;
+  }
+  return null;
 }
 
 function handleLayoutTouch(worldX, worldY) {
@@ -694,6 +732,11 @@ function handleLayoutTouch(worldX, worldY) {
 
   if (state.layoutMode === "floor") {
     addPublicFloor(worldX, worldY);
+    return true;
+  }
+
+  if (state.layoutMode === "partition") {
+    addPartition(worldX, worldY);
     return true;
   }
 
@@ -736,6 +779,11 @@ function addPublicFloor(worldX, worldY) {
     return;
   }
 
+  if (state.cash < PUBLIC_FLOOR_COST) {
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u94fa\u4e00\u5757\u5730\u7816\u9700\u8981 ${PUBLIC_FLOOR_COST} \u5143\u3002`);
+    return;
+  }
+
   const candidate = getPublicFloorCandidate(worldX, worldY);
   if (!candidate || !isPublicFloorPlacementFree(candidate.floor)) {
     state.invalidFloorHint = {
@@ -750,9 +798,37 @@ function addPublicFloor(worldX, worldY) {
   candidate.floor.id = `floor-${candidate.floor.x}-${candidate.floor.y}`;
   candidate.floor.typeId = "publicFloor";
   candidate.floor.name = "\u516c\u533a\u5730\u7816";
+  state.cash -= PUBLIC_FLOOR_COST;
   state.publicFloors.push(candidate.floor);
   markSaveDirty();
-  say(candidate.hostType === "floor" ? "\u516c\u533a\u8fc7\u9053\u5df2\u5bf9\u9f50\u5ef6\u5c55\u3002" : "\u5df2\u8d34\u5899\u94fa\u8bbe\u516c\u533a\u5730\u7816\uff0c\u5899\u4f53\u5df2\u6253\u901a\u3002");
+  say(candidate.hostType === "floor" ? `\u516c\u533a\u8fc7\u9053\u5df2\u5ef6\u5c55\uff0c\u82b1\u8d39 ${PUBLIC_FLOOR_COST}\u3002` : `\u5df2\u94fa\u8bbe\u5730\u7816\uff0c\u82b1\u8d39 ${PUBLIC_FLOOR_COST}\u3002`);
+}
+
+function addPartition(worldX, worldY) {
+  const type = getPartitionType(state.pendingPartitionTypeId);
+  if (!type) {
+    say("\u5148\u5728\u5efa\u8bbe\u9762\u677f\u91cc\u9009\u62e9\u8981\u6446\u653e\u7684\u9694\u65ad\u3002");
+    return;
+  }
+
+  const partition = getPartitionCandidate(type, worldX, worldY);
+  if (!isPartitionPlacementValid(partition)) {
+    say("\u8fd9\u91cc\u6446\u4e0d\u4e0b\u9694\u65ad\uff0c\u9700\u8981\u5728\u5df2\u94fa\u5730\u7816\u7684\u5ba4\u5185\u7a7a\u5730\u3002");
+    return;
+  }
+  if (state.cash < type.cost) {
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c${type.name}\u9700\u8981 ${type.cost} \u5143\u3002`);
+    return;
+  }
+
+  state.cash -= type.cost;
+  partition.id = `partition-${Date.now()}-${state.partitions.length}`;
+  state.partitions.push(partition);
+  state.pendingPartitionTypeId = null;
+  state.layoutToolActive = false;
+  state.layoutMode = "off";
+  markSaveDirty();
+  say(`\u5df2\u6446\u653e ${type.name}\uff0c\u82b1\u8d39 ${type.cost} \u5143\u3002`);
 }
 
 function getPublicFloorCandidate(worldX, worldY) {
@@ -793,6 +869,38 @@ function canAttachPublicFloor(floor) {
   const attachedToWall = getStructuralAreas().some((area) => sharesWall(area, floor));
   const attachedToFloor = state.publicFloors.some((item) => sharesWall(item, floor) && isAlignedPublicFloor(item, floor));
   return attachedToWall || attachedToFloor;
+}
+
+function getPartitionCandidate(type, worldX, worldY) {
+  const vertical = Math.abs(worldY - (state.camera.y + view.height / 2)) > Math.abs(worldX - (state.camera.x + view.width / 2));
+  const w = vertical ? type.h : type.w;
+  const h = vertical ? type.w : type.h;
+  return {
+    typeId: type.id,
+    x: snapPcPosition(worldX - w / 2),
+    y: snapPcPosition(worldY - h / 2),
+    w,
+    h,
+    orientation: vertical ? "vertical" : "horizontal"
+  };
+}
+
+function isPartitionPlacementValid(partition) {
+  if (!partition) return false;
+  const center = { x: partition.x + partition.w / 2, y: partition.y + partition.h / 2 };
+  const area = getWalkableAreaAtPoint(center.x, center.y);
+  if (!area || area.typeId === "toiletRoom") return false;
+  if (!isPointInsideRect(partition.x, partition.y, area, -2) ||
+      !isPointInsideRect(partition.x + partition.w, partition.y + partition.h, area, -2)) {
+    return false;
+  }
+  if (layout.pcs.some((pc) => rectanglesOverlap(partition, getPcVisualBounds(pc), 6))) return false;
+  if (state.mahjongTables.some((table) => rectanglesOverlap(partition, table, 6))) return false;
+  if (state.partitions.some((item) => rectanglesOverlap(partition, item, 3))) return false;
+  return !getDoorAreaPairs().some(([a, b]) => {
+    const door = getDoorGeometryBetween(a, b);
+    return door && rectanglesOverlap(partition, door.rect, 8);
+  });
 }
 
 function getPublicFloorWallCandidates(host, worldX, worldY, size) {
@@ -949,9 +1057,13 @@ function movePcLayout(worldX, worldY) {
   }
 
   const pc = layout.pcs.find((item) => item.id + 1 === state.selectedPcId);
-  const area = pc && getAreaById(pc.areaId);
-  if (!pc || !area) {
+  if (!pc) {
     state.selectedPcId = null;
+    return;
+  }
+  const area = getAreaAtPoint(worldX, worldY) || getAreaById(pc.areaId);
+  if (!area) {
+    say("\u7535\u8111\u9700\u8981\u653e\u5728\u5df2\u94fa\u5730\u7816\u7684\u533a\u57df\u5185\u3002");
     return;
   }
 
@@ -969,6 +1081,14 @@ function movePcLayout(worldX, worldY) {
 
   pc.x = nextX;
   pc.y = nextY;
+  if (pc.areaId !== area.id) {
+    const oldArea = getAreaById(pc.areaId);
+    if (oldArea) oldArea.pcCount = Math.max(0, (oldArea.pcCount || 0) - 1);
+    const newArea = getAreaById(area.id);
+    if (newArea) newArea.pcCount = (newArea.pcCount || 0) + 1;
+    pc.areaId = area.id;
+    pc.areaName = area.id === 1 ? "\u5ba2\u5385" : area.name;
+  }
   updatePcSeat(pc);
   state.selectedPcId = null;
   markSaveDirty();
@@ -1038,9 +1158,20 @@ function moveAreaLayout(worldX, worldY) {
 }
 
 function deleteAreaLayout(worldX, worldY) {
+  const partition = getPartitionAtPoint(worldX, worldY);
+  if (partition) {
+    const type = getPartitionType(partition.typeId);
+    const refund = Math.floor(getPartitionCost(type) / 2);
+    state.partitions = state.partitions.filter((item) => item.id !== partition.id);
+    state.cash += refund;
+    markSaveDirty();
+    say(`\u5df2\u79fb\u9664 ${type ? type.name : "\u9694\u65ad"}\uff0c\u56de\u6536 ${refund} \u5143\u3002`);
+    return;
+  }
+
   const area = getAreaAtPoint(worldX, worldY);
   if (!area || area.id === 1 || area.id === layout.toilet.id) {
-    say("\u70b9\u51fb\u60f3\u5220\u9664\u7684\u5df2\u6269\u79df\u5305\u95f4\u3002");
+    say("\u70b9\u51fb\u60f3\u5220\u9664\u7684\u9694\u65ad\u6216\u65e7\u5305\u95f4\u3002");
     return;
   }
 
@@ -1162,6 +1293,21 @@ function normalizePublicFloor(floor) {
     y,
     w: PUBLIC_FLOOR_SIZE,
     h: PUBLIC_FLOOR_SIZE
+  };
+}
+
+function normalizePartition(partition) {
+  const type = getPartitionType(partition.typeId);
+  if (!type) return null;
+  const vertical = partition.orientation === "vertical";
+  return {
+    id: partition.id || `partition-${partition.x}-${partition.y}`,
+    typeId: type.id,
+    x: Number.isFinite(partition.x) ? partition.x : layout.room.x,
+    y: Number.isFinite(partition.y) ? partition.y : layout.room.y,
+    w: vertical ? type.h : type.w,
+    h: vertical ? type.w : type.h,
+    orientation: vertical ? "vertical" : "horizontal"
   };
 }
 
@@ -1349,6 +1495,7 @@ function buildSaveData() {
     nextAreaId: state.nextAreaId,
     rentedAreas: state.rentedAreas.map((area) => Object.assign({}, area)),
     publicFloors: state.publicFloors.map((floor) => Object.assign({}, floor)),
+    partitions: state.partitions.map((partition) => Object.assign({}, partition)),
     mahjongTables: state.mahjongTables.map((table) => Object.assign({}, table)),
     toilet: {
       dirty: state.toilet.dirty,
@@ -1437,6 +1584,9 @@ function restoreGame() {
     ? data.publicFloors
       .map(normalizePublicFloor)
       .filter((floor, index, floors) => floors.findIndex((item) => item.x === floor.x && item.y === floor.y) === index)
+    : [];
+  state.partitions = Array.isArray(data.partitions)
+    ? data.partitions.map(normalizePartition).filter(Boolean)
     : [];
   state.mahjongTables = Array.isArray(data.mahjongTables)
     ? data.mahjongTables.map((table, index) => ({
@@ -1766,8 +1916,6 @@ function pickWeightedDemandProductId(guest, pc) {
 
 function shouldCreateCompanionDemand(guest, pc) {
   if (!guest || !pc || pc.equipmentLevel < 4 || state.employees.companion < 1) return false;
-  const area = getAreaById(pc.areaId);
-  if (!area || !["singleRoom", "doubleRoom", "capsuleRoom"].includes(area.typeId)) return false;
   const chance = pc.equipmentLevel >= 5 ? 0.34 : 0.18;
   const guestBonus = guest.guestType && guest.guestType.id === "highSpec" ? 0.08 : 0;
   return Math.random() < chance + guestBonus;
@@ -2049,19 +2197,22 @@ function isPcPlacementValid(area, pc) {
 }
 
 function isPcLayoutPositionValid(area, pc, ignorePcId = null) {
-  if (!isPcPositionSafeForArea(pc, area)) return false;
-
   const bounds = getPcVisualBounds(pc);
-  const safeArea = {
-    x: area.x + 4,
-    y: area.y + 18,
-    w: area.w - 8,
-    h: area.h - 18
-  };
-  if (bounds.x < safeArea.x || bounds.y < safeArea.y ||
-      bounds.x + bounds.w > safeArea.x + safeArea.w ||
-      bounds.y + bounds.h > safeArea.y + safeArea.h) {
-    return false;
+  if (area.id === 1) {
+    if (!isPcInsideHallNetwork(bounds)) return false;
+  } else {
+    if (!isPcPositionSafeForArea(pc, area)) return false;
+    const safeArea = {
+      x: area.x + 4,
+      y: area.y + 18,
+      w: area.w - 8,
+      h: area.h - 18
+    };
+    if (bounds.x < safeArea.x || bounds.y < safeArea.y ||
+        bounds.x + bounds.w > safeArea.x + safeArea.w ||
+        bounds.y + bounds.h > safeArea.y + safeArea.h) {
+      return false;
+    }
   }
 
   const deskBounds = getPcDeskBounds(pc);
@@ -2076,10 +2227,26 @@ function isPcLayoutPositionValid(area, pc, ignorePcId = null) {
     return rectanglesOverlap(seatBounds, otherSeat, -8);
   });
   if (overlapsPc) return false;
+  if (state.partitions.some((partition) => rectanglesOverlap(bounds, partition, 4))) return false;
 
   const fixedObstacles = area.id === 1 ? getFixedPcPlacementObstacles() : [];
   const doorObstacles = getAreaDoorPlacementObstacles(area);
   return !fixedObstacles.concat(doorObstacles).some((obstacle) => rectanglesOverlap(bounds, obstacle, 4));
+}
+
+function isPcInsideHallNetwork(bounds) {
+  const inset = 6;
+  const points = [
+    { x: bounds.x + inset, y: bounds.y + inset },
+    { x: bounds.x + bounds.w - inset, y: bounds.y + inset },
+    { x: bounds.x + inset, y: bounds.y + bounds.h - inset },
+    { x: bounds.x + bounds.w - inset, y: bounds.y + bounds.h - inset },
+    { x: bounds.x + bounds.w / 2, y: bounds.y + bounds.h / 2 }
+  ];
+  return points.every((point) => {
+    const area = getWalkableAreaAtPoint(point.x, point.y);
+    return area && (area.id === 1 || area.typeId === "publicFloor");
+  });
 }
 
 function getAreaDoorPlacementObstacles(area) {
@@ -2139,7 +2306,8 @@ function placePendingPcPurchase(worldX, worldY) {
   }
 
   state.cash -= pending.cost;
-  candidate.area.pcCount += 1;
+  const owningArea = getAreaById(candidate.pc.areaId);
+  if (owningArea) owningArea.pcCount += 1;
   layout.pcs.push(candidate.pc);
   state.pendingPcPurchase = null;
   updateEquipmentLevel();
@@ -2188,8 +2356,9 @@ function isMahjongPlacementValid(area, table) {
   }
   const overlapsPc = layout.pcs.some((pc) => rectanglesOverlap(table, getPcVisualBounds(pc), 2));
   const overlapsTable = state.mahjongTables.some((other) => rectanglesOverlap(table, other, 4));
+  const overlapsPartition = state.partitions.some((partition) => rectanglesOverlap(table, partition, 4));
   const blocksDoor = getAreaDoorPlacementObstacles(area).some((obstacle) => rectanglesOverlap(table, obstacle, 4));
-  return !overlapsPc && !overlapsTable && !blocksDoor;
+  return !overlapsPc && !overlapsTable && !overlapsPartition && !blocksDoor;
 }
 
 function placePendingMahjongPurchaseAtPreview() {
@@ -2414,6 +2583,7 @@ function closePanels() {
   state.settingsOpen = false;
   state.pendingEquipmentTierLevel = null;
   state.pendingExpansion = null;
+  state.pendingPartitionTypeId = null;
   state.pendingPcPurchase = null;
   state.pendingMahjongPurchase = false;
   state.pcActionMenu = null;
@@ -2422,6 +2592,7 @@ function closePanels() {
   state.layoutToolActive = false;
   state.selectedAreaId = null;
   state.selectedPcId = null;
+  state.layoutMode = "off";
 }
 
 function clearActionButtons() {
@@ -2485,8 +2656,7 @@ function getPcSellValue(pc) {
 }
 
 function getPcHourlyRate(pc) {
-  const area = pc && getAreaById(pc.areaId);
-  return area && Number.isFinite(area.hourlyRate) ? area.hourlyRate : getDefaultAreaRate("livingRoom");
+  return pc ? getEquipmentHourlyRate(pc.equipmentLevel) : getEquipmentHourlyRate(1);
 }
 
 function openPcActionMenu(pc, screenX, screenY) {
@@ -2617,6 +2787,28 @@ function sellPc(pc) {
   updateCafeLevel();
   markSaveDirty();
   say(`\u5df2\u51fa\u552e ${removedId + 1} \u53f7\u673a\uff0c\u56de\u6536 ${value} \u5143\u3002`);
+}
+
+function handleBuildOffer(offer) {
+  if (!offer) return;
+  state.expansionOpen = false;
+  state.selectedAreaId = null;
+  state.selectedPcId = null;
+  state.pendingPartitionTypeId = null;
+  if (offer.kind === "floor") {
+    state.layoutToolActive = true;
+    state.layoutMode = "floor";
+    say(`\u5df2\u8fdb\u5165\u94fa\u5730\u7816\u6a21\u5f0f\uff0c\u6bcf\u5757 ${PUBLIC_FLOOR_COST} \u5143\uff0c\u70b9\u51fb\u5730\u56fe\u94fa\u8bbe\u3002`);
+    return;
+  }
+  if (offer.kind === "partition") {
+    const type = getPartitionType(offer.typeId);
+    if (!type) return;
+    state.pendingPartitionTypeId = type.id;
+    state.layoutToolActive = true;
+    state.layoutMode = "partition";
+    say(`\u5df2\u9009\u62e9 ${type.name}\uff0c\u5bf9\u51c6\u5730\u56fe\u4e2d\u5fc3\u540e\u70b9\u51fb\u6446\u653e\uff0c\u82b1\u8d39 ${type.cost} \u5143\u3002`);
+  }
 }
 
 function renumberPcs(removedId = null) {
@@ -2793,9 +2985,9 @@ function handleTouch(x, y) {
       return;
     }
 
-    const rentButton = ui.rentAreaButtons.find((button) => isPointInRect(x, y, button));
-    if (rentButton) {
-      rentArea(rentButton.type, rentButton.pcCount);
+    const buildButton = ui.rentAreaButtons.find((button) => isPointInRect(x, y, button));
+    if (buildButton) {
+      handleBuildOffer(buildButton.offer);
     }
     return;
   }
@@ -2812,6 +3004,7 @@ function handleTouch(x, y) {
       state.layoutToolActive = modeButton.mode !== "off";
       state.selectedAreaId = null;
       state.selectedPcId = null;
+      if (modeButton.mode !== "partition") state.pendingPartitionTypeId = null;
       state.layoutOpen = false;
       say(modeButton.message);
     }
@@ -3088,11 +3281,18 @@ function isMachineBlockingPoint(x, y) {
     y <= pc.y + pc.h - 2
   ));
   if (blockedByPc) return true;
-  return state.mahjongTables.some((table) => (
+  const blockedByTable = state.mahjongTables.some((table) => (
     x >= table.x - 6 &&
     x <= table.x + table.w + 6 &&
     y >= table.y - 6 &&
     y <= table.y + table.h + 6
+  ));
+  if (blockedByTable) return true;
+  return state.partitions.some((partition) => (
+    x >= partition.x - 3 &&
+    x <= partition.x + partition.w + 3 &&
+    y >= partition.y - 3 &&
+    y <= partition.y + partition.h + 3
   ));
 }
 
@@ -3611,7 +3811,7 @@ function updateQueueTargets() {
 }
 
 function finishPlaying(guest, pc) {
-  const hourlyRate = getAreaHourlyRate(pc.areaId);
+  const hourlyRate = getPcHourlyRate(pc);
   const sessionHours = 2;
   const income = hourlyRate * sessionHours;
 
@@ -4798,8 +4998,8 @@ function drawLayoutSelection() {
   if (state.layoutMode === "pc" && state.selectedPcId) {
     const pc = getSelectedPc();
     if (pc) {
-      const area = getAreaById(pc.areaId);
       const candidate = getPcMoveCandidate(pc);
+      const area = getAreaAtPoint(candidate.x + candidate.w / 2, candidate.y + candidate.h / 2) || getAreaById(pc.areaId);
       const canPlace = Boolean(area) && isPcLayoutPositionValid(area, candidate, pc.id);
       const bounds = getPcVisualBounds(candidate);
       rect(bounds.x, bounds.y, bounds.w, bounds.h, canPlace ? "rgba(105, 185, 109, 0.25)" : "rgba(217, 74, 69, 0.28)");
@@ -4810,11 +5010,17 @@ function drawLayoutSelection() {
 
   if (state.layoutMode === "floor") {
     drawPublicFloorPlacementHint();
-    text("\u5e03\u5c40\uff1a\u8d34\u5899\u6216\u5bf9\u9f50\u4e0a\u4e00\u5757\u5730\u7816", state.camera.x + view.width / 2, state.camera.y + HUD_HEIGHT + 8, 12, COLORS.yellow, "bold", "center");
+    text(`\u5efa\u8bbe\uff1a\u94fa\u8bbe\u5730\u7816 ${PUBLIC_FLOOR_COST}/\u5757`, state.camera.x + view.width / 2, state.camera.y + HUD_HEIGHT + 8, 12, COLORS.yellow, "bold", "center");
+  }
+
+  if (state.layoutMode === "partition") {
+    drawPartitionPlacementHint();
+    const type = getPartitionType(state.pendingPartitionTypeId);
+    text(`\u5efa\u8bbe\uff1a${type ? type.name : "\u9694\u65ad"}\uff0c\u70b9\u51fb\u653e\u7f6e`, state.camera.x + view.width / 2, state.camera.y + HUD_HEIGHT + 8, 12, COLORS.yellow, "bold", "center");
   }
 
   if (state.layoutMode === "deleteArea") {
-    text("\u5e03\u5c40\uff1a\u70b9\u51fb\u5305\u95f4\u5220\u9664\uff0c\u8fd4\u8fd8\u4e00\u534a\u6269\u79df\u8d39", state.camera.x + view.width / 2, state.camera.y + HUD_HEIGHT + 8, 12, COLORS.yellow, "bold", "center");
+    text("\u5e03\u5c40\uff1a\u70b9\u51fb\u9694\u65ad\u6216\u65e7\u5305\u95f4\u5220\u9664", state.camera.x + view.width / 2, state.camera.y + HUD_HEIGHT + 8, 12, COLORS.yellow, "bold", "center");
   }
 }
 
@@ -4829,10 +5035,22 @@ function drawPublicFloorPlacementHint() {
     h: PUBLIC_FLOOR_SIZE
   };
   clampAreaToWorld(floor);
-  const canPlace = Boolean(candidate) && isPublicFloorPlacementFree(floor);
+  const canPlace = Boolean(candidate) && isPublicFloorPlacementFree(floor) && state.cash >= PUBLIC_FLOOR_COST;
   rect(floor.x, floor.y, floor.w, floor.h, canPlace ? "rgba(105, 185, 109, 0.28)" : "rgba(217, 74, 69, 0.28)");
   strokeRect(floor.x, floor.y, floor.w, floor.h, canPlace ? COLORS.green : COLORS.red, 3);
-  text(canPlace ? "\u53ef\u94fa\u8fc7\u9053" : "\u65e0\u6cd5\u94fa\u8bbe", floor.x + floor.w / 2, floor.y + floor.h / 2 - 8, 12, COLORS.text, "bold", "center");
+  text(canPlace ? "\u53ef\u94fa\u8bbe" : "\u65e0\u6cd5\u94fa\u8bbe", floor.x + floor.w / 2, floor.y + floor.h / 2 - 8, 12, COLORS.text, "bold", "center");
+}
+
+function drawPartitionPlacementHint() {
+  const type = getPartitionType(state.pendingPartitionTypeId);
+  if (!type) return;
+  const worldX = state.camera.x + view.width / 2;
+  const worldY = state.camera.y + (view.height - ACTION_BAR_HEIGHT + HUD_HEIGHT) / 2;
+  const partition = getPartitionCandidate(type, worldX, worldY);
+  const canPlace = isPartitionPlacementValid(partition) && state.cash >= type.cost;
+  rect(partition.x, partition.y, partition.w, partition.h, canPlace ? "rgba(105, 185, 109, 0.3)" : "rgba(217, 74, 69, 0.3)");
+  strokeRect(partition.x, partition.y, partition.w, partition.h, canPlace ? COLORS.green : COLORS.red, 3);
+  text(canPlace ? "\u53ef\u6446\u653e" : "\u4e0d\u53ef\u6446\u653e", partition.x + partition.w / 2, partition.y - 17, 12, COLORS.text, "bold", "center");
 }
 
 function drawWindow(x, y) {
@@ -5387,7 +5605,7 @@ function drawActionBar() {
     ],
     build: [
       ["equipmentButton", "\u8bbe\u5907"],
-      ["expansionButton", "\u6269\u79df"],
+      ["expansionButton", "\u5efa\u8bbe"],
       ["layoutButton", "\u5e03\u5c40", state.layoutToolActive]
     ],
     system: [
@@ -5437,7 +5655,7 @@ function drawActionIcon(label, x, y, active) {
     rect(x - 10, y - 4, 20, 13, dark);
     rect(x - 7, y - 1, 14, 7, COLORS.pcGlow);
     rect(x - 4, y + 10, 8, 3, dark);
-  } else if (label === "\u6269\u79df") {
+  } else if (label === "\u6269\u79df" || label === "\u5efa\u8bbe") {
     rect(x - 10, y - 4, 17, 17, dark);
     rect(x - 7, y - 1, 11, 11, COLORS.floor);
     rect(x + 6, y + 2, 6, 3, light);
@@ -5819,14 +6037,14 @@ function drawExpansionPanel() {
   rect(panel.x, panel.y, panel.w, panel.h, "#f0c98a");
   strokeRect(panel.x, panel.y, panel.w, panel.h, COLORS.wallDark, 4);
   rect(panel.x, panel.y, panel.w, 42, "#8c4f35");
-  text("\u6269\u79df\u533a\u57df", panel.x + 16, panel.y + 11, 18, COLORS.text, "bold");
-  text(`\u7a7a\u95f4 ${state.rentedAreas.length}`, panel.x + panel.w - 78, panel.y + 14, 12, COLORS.text, "bold");
+  text("\u81ea\u7531\u5efa\u8bbe", panel.x + 16, panel.y + 11, 18, COLORS.text, "bold");
+  text(`\u5730\u7816 ${state.publicFloors.length}`, panel.x + panel.w - 88, panel.y + 14, 12, COLORS.text, "bold");
 
   rect(panel.x + 10, panel.y + 48, panel.w - 20, 38, "#e3b86f");
-  text(`\u5df2\u79df\uff1a${getRentedAreaSummary()}`, panel.x + 18, panel.y + 56, 11, "#5d4532", "bold");
-  text("\u9009\u65b9\u6848\u540e\u56de\u5230\u5730\u56fe\uff0c\u70b9\u7a7a\u5730\u653e\u7f6e", panel.x + 18, panel.y + 72, 10, "#5d4532");
+  text(`\u5730\u7816\u6bcf\u5757 ${PUBLIC_FLOOR_COST}\u5143\uff0c\u7528\u9694\u65ad\u81ea\u7531\u505a\u5305\u95f4`, panel.x + 18, panel.y + 56, 11, "#5d4532", "bold");
+  text("\u4e0a\u673a\u6536\u8d39\u7531\u7535\u8111\u914d\u7f6e\u51b3\u5b9a\uff0c\u4e0d\u518d\u6309\u5305\u95f4\u533a\u5206", panel.x + 18, panel.y + 72, 10, "#5d4532");
 
-  const offers = getExpansionOffers();
+  const offers = getBuildOffers();
   const startY = panel.y + 96;
   const cardH = 54;
   const pageSize = Math.max(1, Math.floor((panel.y + panel.h - 42 - startY) / (cardH + 6)));
@@ -5838,31 +6056,19 @@ function drawExpansionPanel() {
     const y = startY + index * (cardH + 6);
     if (y + cardH > panel.y + panel.h - 42) return;
 
-    const cost = getAreaRentCost(offer.type, offer.pcCount);
-    const unlockLevel = getExpansionUnlockLevel(offer.type);
-    const affordable = state.cash >= cost;
-    const unlocked = state.cafeLevel >= unlockLevel;
-    const canRent = affordable && unlocked;
-    const areaCount = getRentedAmenityCount(offer.type.id);
-    const title = offer.pcCount
-      ? `${offer.type.name} ${offer.pcCount}\u4eba\u5bb9\u91cf`
-      : `${offer.type.name} x${areaCount}`;
-
-    rect(panel.x + 10, y, panel.w - 20, cardH, canRent ? "#f7dba5" : "#c5a575");
+    const affordable = state.cash >= offer.cost;
+    rect(panel.x + 10, y, panel.w - 20, cardH, affordable ? "#f7dba5" : "#c5a575");
     strokeRect(panel.x + 10, y, panel.w - 20, cardH, "#9a7043", 2);
-    drawExpansionIcon(offer.type, panel.x + 30, y + 26, !canRent);
-    text(title, panel.x + 58, y + 7, 13, COLORS.line, "bold");
-    text(`\u79df\u91d1 ${cost}`, panel.x + 58, y + 24, 10, "#5d4532", "bold");
-    const note = !unlocked
-      ? `Lv.${unlockLevel}\u5f00\u653e`
-      : offer.pcCount ? `\u7a7a\u623f\u95f4\uff0c\u540e\u7eed\u53ef\u653e ${offer.pcCount} \u53f0\u7535\u8111` : "\u653e\u7f6e\u529f\u80fd\u533a\uff0c\u540e\u7eed\u63a5\u4e8b\u4ef6";
-    text(note, panel.x + 58, y + 38, 9, unlocked ? "#5d4532" : COLORS.red);
+    drawBuildOfferIcon(offer, panel.x + 30, y + 26, !affordable);
+    text(offer.name, panel.x + 58, y + 7, 13, COLORS.line, "bold");
+    text(`\u82b1\u8d39 ${offer.cost}`, panel.x + 58, y + 24, 10, "#5d4532", "bold");
+    text(fitTextToWidth(offer.desc, panel.w - 138, 9), panel.x + 58, y + 38, 9, "#5d4532");
 
-    const button = { x: panel.x + panel.w - 52, y: y + 13, w: 34, h: 26, type: offer.type, pcCount: offer.pcCount };
+    const button = { x: panel.x + panel.w - 52, y: y + 13, w: 34, h: 26, offer };
     ui.rentAreaButtons.push(button);
-    rect(button.x, button.y, button.w, button.h, canRent ? "#4e8f4f" : "#9a6b55");
+    rect(button.x, button.y, button.w, button.h, affordable ? "#4e8f4f" : "#9a6b55");
     strokeRect(button.x, button.y, button.w, button.h, COLORS.line, 2);
-    text("\u79df", button.x + button.w / 2, button.y + 6, 12, COLORS.text, "bold", "center");
+    text("\u5efa", button.x + button.w / 2, button.y + 6, 12, COLORS.text, "bold", "center");
   });
 
   ui.closeExpansionButton = { x: panel.x + panel.w - 50, y: panel.y + panel.h - 34, w: 38, h: 24 };
@@ -5870,6 +6076,44 @@ function drawExpansionPanel() {
   rect(ui.closeExpansionButton.x, ui.closeExpansionButton.y, ui.closeExpansionButton.w, ui.closeExpansionButton.h, "#7f5635");
   strokeRect(ui.closeExpansionButton.x, ui.closeExpansionButton.y, ui.closeExpansionButton.w, ui.closeExpansionButton.h, COLORS.line, 2);
   text("\u5173\u95ed", ui.closeExpansionButton.x + ui.closeExpansionButton.w / 2, ui.closeExpansionButton.y + 4, 12, COLORS.text, "bold", "center");
+}
+
+function getBuildOffers() {
+  return [
+    {
+      kind: "floor",
+      id: "floor",
+      name: "\u94fa\u8bbe\u5730\u7816",
+      cost: PUBLIC_FLOOR_COST,
+      desc: "\u5411\u5916\u6269\u5927\u5927\u5385\uff0c\u6bcf\u6b21\u94fa\u4e00\u5757\u3002"
+    }
+  ].concat(partitionTypes.map((type) => ({
+    kind: "partition",
+    id: type.id,
+    typeId: type.id,
+    name: type.name,
+    cost: type.cost,
+    desc: type.desc
+  })));
+}
+
+function drawBuildOfferIcon(offer, x, y, dimmed) {
+  rect(x - 14, y - 14, 28, 28, "#7b563b");
+  strokeRect(x - 14, y - 14, 28, 28, COLORS.line, 2);
+  if (offer.kind === "floor") {
+    rect(x - 9, y - 8, 18, 18, dimmed ? "#8c755f" : COLORS.floor);
+    rect(x - 9, y - 2, 18, 2, COLORS.floorLine);
+    rect(x - 3, y - 8, 2, 18, COLORS.floorLine);
+    return;
+  }
+  if (offer.typeId === "plant") {
+    drawTinyPlant(x, y + 4, dimmed ? 0.55 : 0.65);
+    return;
+  }
+  const fill = dimmed ? "#8c755f" : offer.typeId === "soundWall" ? "#6f6657" : COLORS.pcDesk;
+  rect(x - 11, y - 5, 22, 10, fill);
+  rect(x - 10, y - 3, 20, 2, COLORS.counterEdge);
+  rect(x - 3, y - 8, 2, 16, COLORS.line);
 }
 
 function getExpansionOffers() {
@@ -5950,22 +6194,6 @@ function drawLayoutPanel() {
     {
       x: fullX,
       y: panel.y + 110,
-      w: halfW,
-      mode: "area",
-      label: "\u91cd\u6446\u5305\u95f4",
-      message: "\u5e03\u5c40\uff1a\u70b9\u5305\u95f4\u9009\u4e2d\uff0c\u62d6\u52a8\u5730\u56fe\u5bf9\u51c6\u7eff\u8272\u6846\u540e\u70b9\u51fb\u653e\u7f6e\u3002"
-    },
-    {
-      x: fullX + halfW + 8,
-      y: panel.y + 110,
-      w: halfW,
-      mode: "deleteArea",
-      label: "\u5220\u9664\u5305\u95f4",
-      message: "\u5e03\u5c40\uff1a\u70b9\u5305\u95f4\u5220\u9664\uff0c\u8fd4\u8fd8\u4e00\u534a\u6269\u79df\u8d39\u3002"
-    },
-    {
-      x: fullX,
-      y: panel.y + 148,
       w: fullW,
       mode: "pc",
       label: "\u79fb\u52a8\u7535\u8111",
@@ -5973,15 +6201,23 @@ function drawLayoutPanel() {
     },
     {
       x: fullX,
-      y: panel.y + 186,
-      w: fullW,
+      y: panel.y + 148,
+      w: halfW,
       mode: "floor",
       label: "\u94fa\u516c\u533a\u5730\u7816",
-      message: "\u5e03\u5c40\uff1a\u70b9\u5730\u56fe\u94fa\u516c\u533a\u5730\u7816\uff0c\u518d\u70b9\u540c\u4f4d\u7f6e\u53ef\u79fb\u9664\u3002"
+      message: `\u5e03\u5c40\uff1a\u70b9\u5730\u56fe\u94fa\u5730\u7816\uff0c\u6bcf\u5757 ${PUBLIC_FLOOR_COST} \u5143\u3002`
+    },
+    {
+      x: fullX + halfW + 8,
+      y: panel.y + 148,
+      w: halfW,
+      mode: "deleteArea",
+      label: "\u5220\u9664\u88c5\u4fee",
+      message: "\u5e03\u5c40\uff1a\u70b9\u9694\u65ad\u53ef\u5220\u9664\uff0c\u65e7\u5305\u95f4\u4e5f\u53ef\u517c\u5bb9\u5220\u9664\u3002"
     },
     {
       x: fullX,
-      y: panel.y + 224,
+      y: panel.y + 186,
       w: fullW,
       mode: "off",
       label: "\u9000\u51fa\u5e03\u5c40",
@@ -6009,10 +6245,11 @@ function drawLayoutPanel() {
 
 function getLayoutModeLabel(mode) {
   return {
-    area: "\u91cd\u6446\u5305\u95f4",
-    deleteArea: "\u5220\u9664\u5305\u95f4",
+    area: "\u91cd\u6446\u65e7\u5305\u95f4",
+    deleteArea: "\u5220\u9664\u88c5\u4fee",
     pc: "\u79fb\u52a8\u7535\u8111",
-    floor: "\u94fa\u516c\u533a\u5730\u7816"
+    floor: "\u94fa\u516c\u533a\u5730\u7816",
+    partition: "\u6446\u653e\u9694\u65ad"
   }[mode] || "\u672a\u5f00\u542f";
 }
 
@@ -6043,12 +6280,9 @@ function drawEquipmentPanel() {
   const maxPcs = getMaxOperationalPcs();
   text(`\u673a\u5668 ${layout.pcs.length}/${maxPcs} / \u5747\u6863 ${state.equipmentLevel} / \u6700\u4f4e L${minimumLevel}`, panel.x + 18, panel.y + 58, 12, "#5d4532", "bold");
   text("\u7f51\u5427\u7b49\u7ea7\u6309\u5e73\u5747\u8bbe\u5907\u8bc4\u4f30\uff0c\u5df2\u89e3\u9501\u4e0d\u56de\u9000", panel.x + 18, panel.y + 74, 11, "#5d4532");
-  ui.purchaseMahjongButton = { x: panel.x + panel.w - 106, y: panel.y + 82, w: 88, h: 24 };
-  rect(ui.purchaseMahjongButton.x, ui.purchaseMahjongButton.y, ui.purchaseMahjongButton.w, ui.purchaseMahjongButton.h, state.cash >= MAHJONG_TABLE_COST ? "#4e8f4f" : "#9a6b55");
-  strokeRect(ui.purchaseMahjongButton.x, ui.purchaseMahjongButton.y, ui.purchaseMahjongButton.w, ui.purchaseMahjongButton.h, COLORS.line, 2);
-  text(`\u9ebb\u5c06\u684c ${MAHJONG_TABLE_COST}`, ui.purchaseMahjongButton.x + ui.purchaseMahjongButton.w / 2, ui.purchaseMahjongButton.y + 5, 10, COLORS.text, "bold", "center");
+  ui.purchaseMahjongButton = null;
 
-  const startY = panel.y + 116;
+  const startY = panel.y + 104;
   const cardH = 62;
   const tierOptions = equipmentTiers;
   const pageSize = Math.max(1, Math.floor((panel.y + panel.h - 42 - startY) / (cardH + 8)));
@@ -6073,7 +6307,7 @@ function drawEquipmentPanel() {
     strokeRect(panel.x + 10, y, panel.w - 20, cardH, "#9a7043", 2);
     drawEquipmentIcon(panel.x + 30, y + 17, tier.level, canUpgradeTier ? allUpgraded : false);
     text(tier.name, panel.x + 68, y + 8, 15, COLORS.line, "bold");
-    text(`\u65b0\u8d2d ${purchaseCost}`, panel.x + 68, y + 28, 11, "#5d4532", "bold");
+    text(`\u65b0\u8d2d ${purchaseCost} / \u6536\u8d39 ${tier.hourlyRate}\u5143h`, panel.x + 68, y + 28, 11, "#5d4532", "bold");
     const upgradeDesc = hasCandidate
       ? `\u5347\u7ea7\u4f4e\u81f3 ${minUpgradeCost} / \u53ef\u9009\u673a\u5668`
       : allUpgraded ? "\u5168\u90e8\u5df2\u8fbe\u6210" : "\u6ca1\u6709\u53ef\u5347\u7ea7\u673a\u5668";
@@ -6216,7 +6450,7 @@ function drawSettingsPanel() {
     state.audio.sfxEnabled ? "\u6309\u952e\u70b9\u51fb\u58f0\uff1a\u5f00" : "\u6309\u952e\u70b9\u51fb\u58f0\uff1a\u5173",
     state.audio.sfxEnabled ? COLORS.green : "#9a6b55"
   );
-  drawWidePanelButton(ui.pricingButton, "\u533a\u57df\u8ba1\u8d39", "#4e8f4f");
+  drawWidePanelButton(ui.pricingButton, "\u914d\u7f6e\u8ba1\u8d39", "#4e8f4f");
   drawWidePanelButton(ui.saveGameButton, "\u624b\u52a8\u4fdd\u5b58", state.testMode ? "#9a6b55" : "#4e8f4f");
   drawWidePanelButton(ui.clearSaveButton, "\u5220\u9664\u5b58\u6863", "#9a6b55");
   drawWidePanelButton(ui.closeSettingsButton, "\u5173\u95ed", "#7f5635");
@@ -6249,33 +6483,20 @@ function drawPricingPanel() {
   rect(panel.x, panel.y, panel.w, panel.h, "#f0c98a");
   strokeRect(panel.x, panel.y, panel.w, panel.h, COLORS.wallDark, 4);
   rect(panel.x, panel.y, panel.w, 42, "#8c4f35");
-  text("\u533a\u57df\u8ba1\u8d39", panel.x + 16, panel.y + 11, 18, COLORS.text, "bold");
-  text("\u4ef7\u683c\u4f1a\u5f71\u54cd\u987e\u5ba2\u662f\u5426\u5165\u5ea7", panel.x + 16, panel.y + 52, 11, "#5d4532", "bold");
+  text("\u914d\u7f6e\u8ba1\u8d39", panel.x + 16, panel.y + 11, 18, COLORS.text, "bold");
+  text("\u73b0\u5728\u4e0a\u673a\u6536\u8d39\u53ea\u7531\u7535\u8111\u914d\u7f6e\u51b3\u5b9a", panel.x + 16, panel.y + 52, 11, "#5d4532", "bold");
 
   ui.priceButtons = [];
-  const areas = getPricingAreas().slice(0, 6);
+  const tiers = equipmentTiers.slice(0, 6);
   const rowH = 48;
-  areas.forEach((area, index) => {
+  tiers.forEach((tier, index) => {
     const rowY = panel.y + 76 + index * rowH;
     rect(panel.x + 12, rowY, panel.w - 24, 40, "#f7dba5");
     strokeRect(panel.x + 12, rowY, panel.w - 24, 40, "#9a7043", 2);
-    text(area.name, panel.x + 24, rowY + 7, 13, COLORS.line, "bold");
-    text(`${area.pcCount} \u53f0 / ${getAreaPcSummary(area)} / ${getAreaHourlyRate(area.id)}\u5143/\u5c0f\u65f6`, panel.x + 24, rowY + 25, 10, "#5d4532", "bold");
-
-    const minusButton = { x: panel.x + panel.w - 94, y: rowY + 7, w: 30, h: 26, area, delta: -1 };
-    const plusButton = { x: panel.x + panel.w - 54, y: rowY + 7, w: 30, h: 26, area, delta: 1 };
-    ui.priceButtons.push(minusButton, plusButton);
-    rect(minusButton.x, minusButton.y, minusButton.w, minusButton.h, "#9a6b55");
-    strokeRect(minusButton.x, minusButton.y, minusButton.w, minusButton.h, COLORS.line, 2);
-    text("-", minusButton.x + minusButton.w / 2, minusButton.y + 5, 15, COLORS.text, "bold", "center");
-    rect(plusButton.x, plusButton.y, plusButton.w, plusButton.h, "#4e8f4f");
-    strokeRect(plusButton.x, plusButton.y, plusButton.w, plusButton.h, COLORS.line, 2);
-    text("+", plusButton.x + plusButton.w / 2, plusButton.y + 5, 15, COLORS.text, "bold", "center");
+    drawEquipmentIcon(panel.x + 34, rowY + 12, tier.level, false);
+    text(tier.name, panel.x + 62, rowY + 7, 13, COLORS.line, "bold");
+    text(`${tier.hourlyRate}\u5143/\u5c0f\u65f6  \u65b0\u8d2d ${getNewPcCost(tier.level)}\u5143`, panel.x + 62, rowY + 25, 10, "#5d4532", "bold");
   });
-
-  if (getPricingAreas().length > areas.length) {
-    text("\u66f4\u591a\u533a\u57df\u5f85\u63a5\u5165\u6eda\u52a8\u9762\u677f", panel.x + 16, panel.y + panel.h - 72, 11, "#5d4532", "bold");
-  }
 
   ui.closePricingButton = { x: panel.x + panel.w - 70, y: panel.y + panel.h - 42, w: 52, h: 28 };
   drawWidePanelButton(ui.closePricingButton, "\u5173\u95ed", "#7f5635");
@@ -6466,6 +6687,30 @@ function drawMahjongTables() {
   });
 }
 
+function drawPartitions() {
+  state.partitions.forEach((partition) => {
+    const type = getPartitionType(partition.typeId);
+    ellipse(partition.x + partition.w / 2, partition.y + partition.h, Math.max(10, partition.w / 2), 5, "rgba(58, 36, 24, 0.18)");
+    if (partition.typeId === "plant") {
+      drawTinyPlant(partition.x + partition.w / 2, partition.y + partition.h - 12, 0.95);
+      return;
+    }
+    const fill = partition.typeId === "soundWall" ? "#6f6657" : "#9a642f";
+    rect(partition.x - 2, partition.y - 2, partition.w + 4, partition.h + 4, COLORS.line);
+    rect(partition.x, partition.y, partition.w, partition.h, fill);
+    const horizontal = partition.w >= partition.h;
+    const slatCount = Math.max(2, Math.floor((horizontal ? partition.w : partition.h) / 14));
+    for (let i = 1; i < slatCount; i += 1) {
+      if (horizontal) rect(partition.x + i * 14, partition.y + 1, 2, partition.h - 2, COLORS.counterEdge);
+      else rect(partition.x + 1, partition.y + i * 14, partition.w - 2, 2, COLORS.counterEdge);
+    }
+    if (type) {
+      const label = type.name.slice(0, 2);
+      text(label, partition.x + partition.w / 2, partition.y - 15, 10, COLORS.dimText, "bold", "center");
+    }
+  });
+}
+
 function render() {
   ctx.clearRect(0, 0, view.width, view.height);
   ui.pageButtons.length = 0;
@@ -6474,6 +6719,7 @@ function render() {
   drawPixelFloor();
   drawCounter();
   drawMahjongTables();
+  drawPartitions();
   layout.pcs.forEach(drawPc);
   drawLegend();
   state.workers.forEach(drawWorker);

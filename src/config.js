@@ -92,11 +92,41 @@ const staffTypes = [
 ];
 
 const equipmentTiers = [
-  { level: 1, name: "1080 + i3", pricePerPc: 0 },
-  { level: 2, name: "2080 + i5", pricePerPc: 3000 },
-  { level: 3, name: "3080 + i7", pricePerPc: 5000 },
-  { level: 4, name: "4080 + i9", pricePerPc: 7000 },
-  { level: 5, name: "5080 + R9", pricePerPc: 10000 }
+  { level: 1, name: "1080 + i3", pricePerPc: 0, hourlyRate: 5 },
+  { level: 2, name: "2080 + i5", pricePerPc: 3000, hourlyRate: 8 },
+  { level: 3, name: "3080 + i7", pricePerPc: 5000, hourlyRate: 12 },
+  { level: 4, name: "4080 + i9", pricePerPc: 7000, hourlyRate: 16 },
+  { level: 5, name: "5080 + R9", pricePerPc: 10000, hourlyRate: 22 }
+];
+
+const partitionTypes = [
+  {
+    id: "plant",
+    name: "\u76c6\u683d\u9694\u65ad",
+    cost: 160,
+    w: 24,
+    h: 24,
+    blockMove: true,
+    desc: "\u4fbf\u5b9c\u7eff\u5316\uff0c\u7528\u6765\u5207\u51fa\u5c0f\u533a\u57df\u3002"
+  },
+  {
+    id: "woodScreen",
+    name: "\u6728\u8d28\u5c4f\u98ce",
+    cost: 360,
+    w: 60,
+    h: 12,
+    blockMove: true,
+    desc: "\u53ef\u6a2a\u5411\u6446\u653e\u7684\u57fa\u7840\u9694\u65ad\u3002"
+  },
+  {
+    id: "soundWall",
+    name: "\u9694\u97f3\u5899",
+    cost: 680,
+    w: 72,
+    h: 14,
+    blockMove: true,
+    desc: "\u66f4\u9ad8\u7aef\u7684\u786c\u9694\u65ad\uff0c\u540e\u7eed\u63a5\u73af\u5883\u52a0\u6210\u3002"
+  }
 ];
 
 const expansionTypes = [
@@ -190,8 +220,8 @@ const guestTypes = [
   },
   {
     id: "roomDuo",
-    name: "\u5305\u95f4\u5ba2",
-    areaPreference: "room",
+    name: "\u7ec4\u961f\u5ba2",
+    areaPreference: "any",
     maxRate: 22,
     minEquipmentLevel: 1,
     spendChance: 0.46,
@@ -199,8 +229,8 @@ const guestTypes = [
   },
   {
     id: "privateRoom",
-    name: "\u79c1\u5bc6\u5305\u95f4\u5ba2",
-    areaPreference: "room",
+    name: "\u9ad8\u6d88\u4f11\u95f2\u5ba2",
+    areaPreference: "any",
     maxRate: 30,
     minEquipmentLevel: 1,
     spendChance: 0.5,
@@ -230,6 +260,7 @@ module.exports = {
   staffTypes,
   equipmentTiers,
   expansionTypes,
+  partitionTypes,
   demandProductIds,
   guestTypes
 };
