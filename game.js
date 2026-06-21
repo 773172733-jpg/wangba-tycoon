@@ -768,7 +768,7 @@ function getPublicFloorCandidate(worldX, worldY) {
   });
 
   state.publicFloors.forEach((host) => {
-    const candidates = getAttachedCandidatesForHost(host, worldX, worldY, size);
+    const candidates = getPublicFloorExtensionCandidates(host, worldX, worldY, size);
     candidates.forEach((candidate) => {
       clampAreaToWorld(candidate.area);
       if (!sharesWall(host, candidate.area)) return;
@@ -788,6 +788,49 @@ function canAttachPublicFloor(floor) {
   const attachedToWall = getStructuralAreas().some((area) => sharesWall(area, floor));
   const attachedToFloor = state.publicFloors.some((item) => sharesWall(item, floor) && isAlignedPublicFloor(item, floor));
   return attachedToWall || attachedToFloor;
+}
+
+function getPublicFloorExtensionCandidates(host, worldX, worldY, size) {
+  const exactX = host.w === size.w;
+  const exactY = host.h === size.h;
+  return [
+    {
+      side: "top",
+      area: {
+        x: exactX ? host.x : snapToGrid(clamp(worldX - size.w / 2, host.x, host.x + host.w - size.w)),
+        y: host.y - size.h,
+        w: size.w,
+        h: size.h
+      }
+    },
+    {
+      side: "bottom",
+      area: {
+        x: exactX ? host.x : snapToGrid(clamp(worldX - size.w / 2, host.x, host.x + host.w - size.w)),
+        y: host.y + host.h,
+        w: size.w,
+        h: size.h
+      }
+    },
+    {
+      side: "left",
+      area: {
+        x: host.x - size.w,
+        y: exactY ? host.y : snapToGrid(clamp(worldY - size.h / 2, host.y, host.y + host.h - size.h)),
+        w: size.w,
+        h: size.h
+      }
+    },
+    {
+      side: "right",
+      area: {
+        x: host.x + host.w,
+        y: exactY ? host.y : snapToGrid(clamp(worldY - size.h / 2, host.y, host.y + host.h - size.h)),
+        w: size.w,
+        h: size.h
+      }
+    }
+  ];
 }
 
 function getAttachedCandidatesForHost(host, worldX, worldY, size) {
