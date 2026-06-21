@@ -2086,10 +2086,9 @@ function getAreaDoorPlacementObstacles(area) {
   const obstacles = [];
   if (!area) return obstacles;
 
-  getStructuralAreas().forEach((other) => {
-    if (other.id === area.id) return;
-    const door = getDoorGeometryBetween(area, other);
-    if (!door) return;
+  getDoorAreaPairs().forEach(([a, b]) => {
+    if (a.id !== area.id && b.id !== area.id) return;
+    const door = getDoorGeometryBetween(a, b);
     obstacles.push({
       x: door.rect.x - 14,
       y: door.rect.y - 14,
@@ -3072,12 +3071,10 @@ function isPcSeatTarget(x, y) {
 }
 
 function isDoorwayPoint(x, y) {
-  const areas = getStructuralAreas();
-  for (let i = 0; i < areas.length; i += 1) {
-    for (let j = i + 1; j < areas.length; j += 1) {
-      const door = getDoorGeometryBetween(areas[i], areas[j]);
-      if (door && isPointInsideRect(x, y, door.rect)) return true;
-    }
+  const pairs = getDoorAreaPairs();
+  for (let index = 0; index < pairs.length; index += 1) {
+    const door = getDoorGeometryBetween(pairs[index][0], pairs[index][1]);
+    if (door && isPointInsideRect(x, y, door.rect)) return true;
   }
   return false;
 }
@@ -3102,7 +3099,7 @@ function isMachineBlockingPoint(x, y) {
 function isTransitionOpen(fromArea, toArea, x, y) {
   if (!fromArea || !toArea || fromArea.id === toArea.id) return true;
   if (!sharesWall(fromArea, toArea)) return false;
-  if (fromArea.typeId === "publicFloor" || toArea.typeId === "publicFloor") return true;
+  if (isFullOpenConnection(fromArea, toArea)) return true;
 
   const door = getDoorGeometryBetween(fromArea, toArea);
   return Boolean(door && isPointInsideRect(x, y, door.rect));
@@ -3115,9 +3112,7 @@ function getDoorPointBetween(fromArea, toArea) {
 
 function getDoorGeometryBetween(fromArea, toArea) {
   if (!fromArea || !toArea || !sharesWall(fromArea, toArea)) return null;
-  const touchesHallNetwork = fromArea.id === 1 || toArea.id === 1 ||
-    fromArea.typeId === "publicFloor" || toArea.typeId === "publicFloor";
-  if (!touchesHallNetwork) return null;
+  if (!shouldUseDoorBetweenAreas(fromArea, toArea)) return null;
 
   const doorW = 42;
   const doorH = 30;
@@ -3150,6 +3145,36 @@ function getDoorGeometryBetween(fromArea, toArea) {
   return null;
 }
 
+function isHallNetworkArea(area) {
+  return area && (area.id === 1 || area.typeId === "publicFloor");
+}
+
+function isFullOpenConnection(a, b) {
+  return isHallNetworkArea(a) && isHallNetworkArea(b);
+}
+
+function shouldUseDoorBetweenAreas(a, b) {
+  if (!a || !b) return false;
+  if (isFullOpenConnection(a, b)) return false;
+  return isHallNetworkArea(a) || isHallNetworkArea(b);
+}
+
+function getDoorAreaPairs() {
+  const pairs = [];
+  const areas = getStructuralAreas();
+  for (let i = 0; i < areas.length; i += 1) {
+    for (let j = i + 1; j < areas.length; j += 1) {
+      if (getDoorGeometryBetween(areas[i], areas[j])) pairs.push([areas[i], areas[j]]);
+    }
+  }
+  areas.forEach((area) => {
+    state.publicFloors.forEach((floor) => {
+      if (getDoorGeometryBetween(area, floor)) pairs.push([area, floor]);
+    });
+  });
+  return pairs;
+}
+
 function getDoorKey(a, b) {
   const ids = [String(a.id), String(b.id)].sort();
   return `${ids[0]}:${ids[1]}`;
@@ -3158,6 +3183,8 @@ function getDoorKey(a, b) {
 function getDoorInwardArea(a, b) {
   if (a.id === 1 && b.id !== 1) return b;
   if (b.id === 1 && a.id !== 1) return a;
+  if (a.typeId === "publicFloor" && b.typeId !== "publicFloor") return b;
+  if (b.typeId === "publicFloor" && a.typeId !== "publicFloor") return a;
   if (a.typeId === "toiletRoom") return a;
   if (b.typeId === "toiletRoom") return b;
   const areaA = a.w * a.h;
@@ -3180,17 +3207,13 @@ function updateDoorTimers(dt) {
   const movers = state.guests.concat(state.workers);
   if (!movers.length) return;
 
-  const areas = getStructuralAreas();
-  for (let i = 0; i < areas.length; i += 1) {
-    for (let j = i + 1; j < areas.length; j += 1) {
-      const door = getDoorGeometryBetween(areas[i], areas[j]);
-      if (!door) continue;
-      const active = movers.some((entity) => Math.hypot(entity.x - door.center.x, entity.y - door.center.y) <= 34);
-      if (active) {
-        state.doorTimers[getDoorKey(areas[i], areas[j])] = 0.85;
-      }
+  getDoorAreaPairs().forEach(([a, b]) => {
+    const door = getDoorGeometryBetween(a, b);
+    const active = movers.some((entity) => Math.hypot(entity.x - door.center.x, entity.y - door.center.y) <= 34);
+    if (active) {
+      state.doorTimers[getDoorKey(a, b)] = 0.85;
     }
-  }
+  });
 }
 
 function getDoorInnerPoint(fromArea, toArea) {
@@ -4405,6 +4428,7 @@ function getPublicFloorWallSegments(floor, side) {
   getAttachableAreas().forEach((other) => {
     if (other.id === floor.id) return;
     if (!touchesSide(floor, other, side)) return;
+    if (!isFullOpenConnection(floor, other)) return;
 
     const overlapStart = horizontal ? Math.max(floor.x, other.x) : Math.max(floor.y, other.y);
     const overlapEnd = horizontal ? Math.min(floor.x + floor.w, other.x + other.w) : Math.min(floor.y + floor.h, other.y + other.h);
@@ -4564,10 +4588,18 @@ function drawWallSegments(area, side) {
   getAttachableAreas().forEach((other) => {
     if (other.id === area.id) return;
     if (!touchesSide(area, other, side)) return;
-    if (area.typeId !== "publicFloor" && other.typeId !== "publicFloor") return;
-    const overlapStart = horizontal ? Math.max(area.x, other.x) : Math.max(area.y, other.y);
-    const overlapEnd = horizontal ? Math.min(area.x + area.w, other.x + other.w) : Math.min(area.y + area.h, other.y + other.h);
-    if (overlapEnd > overlapStart) {
+    let overlapStart = horizontal ? Math.max(area.x, other.x) : Math.max(area.y, other.y);
+    let overlapEnd = horizontal ? Math.min(area.x + area.w, other.x + other.w) : Math.min(area.y + area.h, other.y + other.h);
+
+    if (isFullOpenConnection(area, other)) {
+      covered.push({ start: overlapStart, end: overlapEnd });
+      return;
+    }
+
+    const door = getDoorGeometryBetween(area, other);
+    if (door) {
+      overlapStart = horizontal ? door.rect.x : door.rect.y;
+      overlapEnd = horizontal ? door.rect.x + door.rect.w : door.rect.y + door.rect.h;
       covered.push({ start: overlapStart, end: overlapEnd });
     }
   });
@@ -4666,8 +4698,11 @@ function drawRoomDoorLeaf(door, a, b, open) {
 function drawPublicFloorDoorways() {
   getStructuralAreas().forEach((area) => {
     state.publicFloors.forEach((floor) => {
-      if (sharesWall(area, floor)) {
+      if (!sharesWall(area, floor)) return;
+      if (isFullOpenConnection(area, floor)) {
         drawFloorOpening(area, floor);
+      } else {
+        drawDoorwayBetweenAreas(area, floor);
       }
     });
   });
