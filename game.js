@@ -5387,12 +5387,13 @@ function drawPublicFloorDoorways() {
 }
 
 function drawFloorOpening(area, floor) {
+  const seamPad = 8;
   if (area.y + area.h === floor.y || floor.y + floor.h === area.y) {
     const y = area.y + area.h === floor.y ? floor.y : area.y;
     const overlapStart = Math.max(area.x, floor.x);
     const overlapEnd = Math.min(area.x + area.w, floor.x + floor.w);
     if (overlapEnd - overlapStart < 8) return;
-    drawTiledArea({ x: overlapStart - 1, y: y - 8, w: overlapEnd - overlapStart + 2, h: 16 });
+    drawTiledArea({ x: overlapStart - seamPad, y: y - 8, w: overlapEnd - overlapStart + seamPad * 2, h: 16 });
     return;
   }
 
@@ -5401,7 +5402,7 @@ function drawFloorOpening(area, floor) {
     const overlapStart = Math.max(area.y, floor.y);
     const overlapEnd = Math.min(area.y + area.h, floor.y + floor.h);
     if (overlapEnd - overlapStart < 8) return;
-    drawTiledArea({ x: x - 8, y: overlapStart - 1, w: 16, h: overlapEnd - overlapStart + 2 });
+    drawTiledArea({ x: x - 8, y: overlapStart - seamPad, w: 16, h: overlapEnd - overlapStart + seamPad * 2 });
   }
 }
 
