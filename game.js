@@ -45,6 +45,9 @@ const raf = typeof requestAnimationFrame === "function"
   : (callback) => setTimeout(callback, 16);
 
 const TILE = 12;
+const PUBLIC_FLOOR_SIZE = 60;
+const PUBLIC_FLOOR_HALF = PUBLIC_FLOOR_SIZE / 2;
+const PUBLIC_FLOOR_ATTACH_DISTANCE = 88;
 const SAVE_INTERVAL = 20;
 const GAME_DAY_SECONDS = 120;
 const GAME_MONTH_DAYS = 30;
@@ -222,11 +225,13 @@ const touchState = {
 
 function createLayout() {
   const roomY = HUD_HEIGHT + WORLD_TOP_MARGIN + 18;
+  const roomW = Math.max(360, ceilToMultiple(view.width - 36, PUBLIC_FLOOR_SIZE));
+  const targetRoomH = Math.max(420, Math.min(view.height - roomY - ACTION_BAR_HEIGHT - 48, view.width * 1.28));
   const room = {
     x: WORLD_LEFT_MARGIN + 18,
     y: roomY,
-    w: Math.max(360, view.width - 36),
-    h: Math.max(420, Math.min(view.height - roomY - ACTION_BAR_HEIGHT - 48, view.width * 1.28))
+    w: roomW,
+    h: ceilToMultiple(targetRoomH, PUBLIC_FLOOR_SIZE)
   };
   room.y = Math.max(roomY, room.y);
 
@@ -556,6 +561,20 @@ function snapToGrid(value) {
   return Math.round(value / 24) * 24;
 }
 
+function ceilToMultiple(value, multiple) {
+  return Math.ceil(value / multiple) * multiple;
+}
+
+function snapToHostTile(value, hostStart, min, max, size = PUBLIC_FLOOR_SIZE) {
+  const snapped = hostStart + Math.round((value - hostStart) / size) * size;
+  return clamp(snapped, min, max);
+}
+
+function snapToRoomTile(value, axis) {
+  const origin = axis === "x" ? layout.room.x : layout.room.y;
+  return origin + Math.round((value - origin) / PUBLIC_FLOOR_SIZE) * PUBLIC_FLOOR_SIZE;
+}
+
 function snapPcPosition(value) {
   return Math.round(value / 12) * 12;
 }
@@ -720,8 +739,8 @@ function addPublicFloor(worldX, worldY) {
   const candidate = getPublicFloorCandidate(worldX, worldY);
   if (!candidate || !isPublicFloorPlacementFree(candidate.floor)) {
     state.invalidFloorHint = {
-      x: snapToGrid(worldX - 36),
-      y: snapToGrid(worldY - 36),
+      x: snapToRoomTile(worldX - PUBLIC_FLOOR_HALF, "x"),
+      y: snapToRoomTile(worldY - PUBLIC_FLOOR_HALF, "y"),
       timer: 1.2
     };
     say("\u516c\u533a\u5730\u7816\u5fc5\u987b\u8d34\u5899\u6216\u5bf9\u9f50\u4e0a\u4e00\u5757\u5730\u7816\uff0c\u8fd9\u91cc\u4e0d\u80fd\u94fa\u3002");
@@ -737,30 +756,16 @@ function addPublicFloor(worldX, worldY) {
 }
 
 function getPublicFloorCandidate(worldX, worldY) {
-  const size = { w: 72, h: 72 };
+  const size = { w: PUBLIC_FLOOR_SIZE, h: PUBLIC_FLOOR_SIZE };
   let best = null;
-  const snapped = {
-    x: snapToGrid(worldX - size.w / 2),
-    y: snapToGrid(worldY - size.h / 2),
-    w: size.w,
-    h: size.h
-  };
-  clampAreaToWorld(snapped);
-  if (canAttachPublicFloor(snapped)) {
-    return {
-      floor: snapped,
-      hostType: state.publicFloors.some((floor) => sharesWall(floor, snapped)) ? "floor" : "wall",
-      score: distanceToRectCenter(worldX, worldY, snapped)
-    };
-  }
 
   getStructuralAreas().forEach((host) => {
-    const candidates = getAttachedCandidatesForHost(host, worldX, worldY, size);
+    const candidates = getPublicFloorWallCandidates(host, worldX, worldY, size);
     candidates.forEach((candidate) => {
       clampAreaToWorld(candidate.area);
       if (!sharesWall(host, candidate.area)) return;
       const score = distanceToRectCenter(worldX, worldY, candidate.area);
-      if (score > 95) return;
+      if (score > PUBLIC_FLOOR_ATTACH_DISTANCE) return;
       if (!best || score < best.score) {
         best = { floor: candidate.area, hostType: "wall", score };
       }
@@ -774,7 +779,7 @@ function getPublicFloorCandidate(worldX, worldY) {
       if (!sharesWall(host, candidate.area)) return;
       if (!isAlignedPublicFloor(host, candidate.area)) return;
       const score = distanceToRectCenter(worldX, worldY, candidate.area);
-      if (score > 95) return;
+      if (score > PUBLIC_FLOOR_ATTACH_DISTANCE) return;
       if (!best || score < best.score) {
         best = { floor: candidate.area, hostType: "floor", score };
       }
@@ -788,6 +793,49 @@ function canAttachPublicFloor(floor) {
   const attachedToWall = getStructuralAreas().some((area) => sharesWall(area, floor));
   const attachedToFloor = state.publicFloors.some((item) => sharesWall(item, floor) && isAlignedPublicFloor(item, floor));
   return attachedToWall || attachedToFloor;
+}
+
+function getPublicFloorWallCandidates(host, worldX, worldY, size) {
+  const alignedX = snapToHostTile(worldX - size.w / 2, host.x, host.x, host.x + host.w - size.w, size.w);
+  const alignedY = snapToHostTile(worldY - size.h / 2, host.y, host.y, host.y + host.h - size.h, size.h);
+  return [
+    {
+      side: "top",
+      area: {
+        x: alignedX,
+        y: host.y - size.h,
+        w: size.w,
+        h: size.h
+      }
+    },
+    {
+      side: "bottom",
+      area: {
+        x: alignedX,
+        y: host.y + host.h,
+        w: size.w,
+        h: size.h
+      }
+    },
+    {
+      side: "left",
+      area: {
+        x: host.x - size.w,
+        y: alignedY,
+        w: size.w,
+        h: size.h
+      }
+    },
+    {
+      side: "right",
+      area: {
+        x: host.x + host.w,
+        y: alignedY,
+        w: size.w,
+        h: size.h
+      }
+    }
+  ];
 }
 
 function getPublicFloorExtensionCandidates(host, worldX, worldY, size) {
@@ -1103,6 +1151,20 @@ function getPcPositionInArea(area, index) {
   };
 }
 
+function normalizePublicFloor(floor) {
+  const x = Number.isFinite(floor.x) ? snapToRoomTile(floor.x, "x") : layout.room.x;
+  const y = Number.isFinite(floor.y) ? snapToRoomTile(floor.y, "y") : layout.room.y;
+  return {
+    id: `floor-${x}-${y}`,
+    typeId: "publicFloor",
+    name: "\u516c\u533a\u5730\u7816",
+    x,
+    y,
+    w: PUBLIC_FLOOR_SIZE,
+    h: PUBLIC_FLOOR_SIZE
+  };
+}
+
 function isPcPositionSafeForArea(pc, area) {
   const bounds = getPcVisualBounds(pc);
   return bounds.x >= area.x + 4 &&
@@ -1349,29 +1411,32 @@ function restoreGame() {
   state.employees = Object.assign({}, state.employees, data.employees || {});
   state.nextAreaId = Number.isFinite(data.nextAreaId) ? data.nextAreaId : 2;
   state.rentedAreas = Array.isArray(data.rentedAreas) && data.rentedAreas.length
-    ? data.rentedAreas.map((area) => ({
-      id: area.id,
-      typeId: area.typeId,
-      name: area.name,
-      pcCount: area.pcCount || 0,
-      pcCapacity: Number.isFinite(area.pcCapacity) ? area.pcCapacity : getAreaCapacity(area),
-      hourlyRate: Number.isFinite(area.hourlyRate) ? area.hourlyRate : getDefaultAreaRate(area.typeId),
-      x: Number.isFinite(area.x) ? area.x : layout.room.x,
-      y: Number.isFinite(area.y) ? area.y : layout.room.y,
-      w: Number.isFinite(area.w) ? area.w : layout.room.w,
-      h: Number.isFinite(area.h) ? area.h : layout.room.h
-    }))
+    ? data.rentedAreas.map((area) => {
+      const restored = {
+        id: area.id,
+        typeId: area.typeId,
+        name: area.name,
+        pcCount: area.pcCount || 0,
+        pcCapacity: Number.isFinite(area.pcCapacity) ? area.pcCapacity : getAreaCapacity(area),
+        hourlyRate: Number.isFinite(area.hourlyRate) ? area.hourlyRate : getDefaultAreaRate(area.typeId),
+        x: Number.isFinite(area.x) ? area.x : layout.room.x,
+        y: Number.isFinite(area.y) ? area.y : layout.room.y,
+        w: Number.isFinite(area.w) ? area.w : layout.room.w,
+        h: Number.isFinite(area.h) ? area.h : layout.room.h
+      };
+      if (restored.id === 1) {
+        restored.x = layout.room.x;
+        restored.y = layout.room.y;
+        restored.w = layout.room.w;
+        restored.h = layout.room.h;
+      }
+      return restored;
+    })
     : [{ id: 1, typeId: "livingRoom", name: "\u5ba2\u5385\u533a\u57df", pcCount: 4, pcCapacity: 8, hourlyRate: 5, x: layout.room.x, y: layout.room.y, w: layout.room.w, h: layout.room.h }];
   state.publicFloors = Array.isArray(data.publicFloors)
-    ? data.publicFloors.map((floor) => ({
-      id: floor.id || `floor-${floor.x}-${floor.y}`,
-      typeId: "publicFloor",
-      name: "\u516c\u533a\u5730\u7816",
-      x: Number.isFinite(floor.x) ? floor.x : layout.room.x,
-      y: Number.isFinite(floor.y) ? floor.y : layout.room.y,
-      w: Number.isFinite(floor.w) ? floor.w : 72,
-      h: Number.isFinite(floor.h) ? floor.h : 72
-    }))
+    ? data.publicFloors
+      .map(normalizePublicFloor)
+      .filter((floor, index, floors) => floors.findIndex((item) => item.x === floor.x && item.y === floor.y) === index)
     : [];
   state.mahjongTables = Array.isArray(data.mahjongTables)
     ? data.mahjongTables.map((table, index) => ({
@@ -4413,9 +4478,9 @@ function verticalOverlap(a, b) {
 function drawInvalidFloorHint() {
   const hint = state.invalidFloorHint;
   if (!hint) return;
-  rect(hint.x, hint.y, 72, 72, "rgba(217, 74, 69, 0.22)");
-  strokeRect(hint.x, hint.y, 72, 72, COLORS.red, 3);
-  text("\u65e0\u6cd5\u94fa\u8bbe", hint.x + 36, hint.y + 29, 12, COLORS.text, "bold", "center");
+  rect(hint.x, hint.y, PUBLIC_FLOOR_SIZE, PUBLIC_FLOOR_SIZE, "rgba(217, 74, 69, 0.22)");
+  strokeRect(hint.x, hint.y, PUBLIC_FLOOR_SIZE, PUBLIC_FLOOR_SIZE, COLORS.red, 3);
+  text("\u65e0\u6cd5\u94fa\u8bbe", hint.x + PUBLIC_FLOOR_HALF, hint.y + PUBLIC_FLOOR_HALF - 7, 12, COLORS.text, "bold", "center");
 }
 
 function drawRentedAreaRooms() {
@@ -4723,10 +4788,10 @@ function drawPublicFloorPlacementHint() {
   const worldY = state.camera.y + (view.height - ACTION_BAR_HEIGHT + HUD_HEIGHT) / 2;
   const candidate = getPublicFloorCandidate(worldX, worldY);
   const floor = candidate ? candidate.floor : {
-    x: snapToGrid(worldX - 36),
-    y: snapToGrid(worldY - 36),
-    w: 72,
-    h: 72
+    x: snapToRoomTile(worldX - PUBLIC_FLOOR_HALF, "x"),
+    y: snapToRoomTile(worldY - PUBLIC_FLOOR_HALF, "y"),
+    w: PUBLIC_FLOOR_SIZE,
+    h: PUBLIC_FLOOR_SIZE
   };
   clampAreaToWorld(floor);
   const canPlace = Boolean(candidate) && isPublicFloorPlacementFree(floor);
