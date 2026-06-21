@@ -403,9 +403,9 @@ function getMaxOperationalPcs() {
 
 function getAreaCapacity(area) {
   if (!area) return 0;
-  if (Number.isFinite(area.pcCapacity)) return area.pcCapacity;
-  if (area.typeId === "livingRoom") return Math.max(8, area.pcCount || 0);
+  if (area.typeId === "livingRoom") return Math.max(getMaxOperationalPcs(), area.pcCount || 0);
   const type = getExpansionType(area.typeId);
+  if (Number.isFinite(area.pcCapacity)) return area.pcCapacity;
   const maxOption = type && Array.isArray(type.pcOptions) ? Math.max(...type.pcOptions) : 0;
   return Math.max(area.pcCount || 0, Number.isFinite(maxOption) ? maxOption : 0);
 }
@@ -677,6 +677,15 @@ function rectanglesOverlap(a, b, padding = 0) {
     a.y + a.h + padding > b.y;
 }
 
+function inflateRect(rectValue, padding) {
+  return {
+    x: rectValue.x - padding,
+    y: rectValue.y - padding,
+    w: rectValue.w + padding * 2,
+    h: rectValue.h + padding * 2
+  };
+}
+
 function getAreaById(id) {
   if (id === layout.toilet.id) return layout.toilet;
   return state.rentedAreas.find((area) => area.id === id);
@@ -725,8 +734,15 @@ function createHallExtensionArea(floor) {
     y: floor.y,
     w: floor.w,
     h: floor.h,
+    hostAreaId: 1,
     isPublicFloorExtension: true
   };
+}
+
+function getPersistentAreaForPlacement(area) {
+  if (!area) return null;
+  if (area.isPublicFloorExtension) return getAreaById(area.hostAreaId || 1);
+  return getAreaById(area.id);
 }
 
 function getPcAtPoint(x, y) {
@@ -1245,15 +1261,15 @@ function movePcLayout(worldX, worldY) {
     return;
   }
 
+  const persistentArea = getPersistentAreaForPlacement(area);
   pc.x = nextX;
   pc.y = nextY;
-  if (pc.areaId !== area.id) {
+  if (persistentArea && pc.areaId !== persistentArea.id) {
     const oldArea = getAreaById(pc.areaId);
     if (oldArea) oldArea.pcCount = Math.max(0, (oldArea.pcCount || 0) - 1);
-    const newArea = getAreaById(area.id);
-    if (newArea) newArea.pcCount = (newArea.pcCount || 0) + 1;
-    pc.areaId = area.id;
-    pc.areaName = area.id === 1 ? "\u5ba2\u5385" : area.name;
+    persistentArea.pcCount = (persistentArea.pcCount || 0) + 1;
+    pc.areaId = persistentArea.id;
+    pc.areaName = persistentArea.id === 1 ? "\u5ba2\u5385" : persistentArea.name;
   }
   updatePcSeat(pc);
   state.selectedPcId = null;
@@ -2546,6 +2562,9 @@ function isPcPlacementValid(area, pc) {
 
 function isPcLayoutPositionValid(area, pc, ignorePcId = null) {
   const bounds = getPcVisualBounds(pc);
+  const deskBounds = getPcDeskBounds(pc);
+  const seatBounds = getPcSeatBounds(pc);
+  const coreBounds = unionRects(deskBounds, seatBounds, 0);
   if (area.id === 1) {
     if (!isPcInsideHallNetwork(bounds)) return false;
   } else {
@@ -2563,8 +2582,6 @@ function isPcLayoutPositionValid(area, pc, ignorePcId = null) {
     }
   }
 
-  const deskBounds = getPcDeskBounds(pc);
-  const seatBounds = getPcSeatBounds(pc);
   const overlapsPc = layout.pcs.some((other) => {
     if (other.id === ignorePcId) return false;
     const otherDesk = getPcDeskBounds(other);
@@ -2575,11 +2592,15 @@ function isPcLayoutPositionValid(area, pc, ignorePcId = null) {
     return rectanglesOverlap(seatBounds, otherSeat, -8);
   });
   if (overlapsPc) return false;
-  if (state.partitions.some((partition) => rectanglesOverlap(bounds, partition, 4))) return false;
+  if (state.partitions.some((partition) => (
+    rectanglesOverlap(deskBounds, partition, 1) ||
+    rectanglesOverlap(seatBounds, partition, -2)
+  ))) return false;
 
   const fixedObstacles = area.id === 1 ? getFixedPcPlacementObstacles() : [];
   const doorObstacles = getAreaDoorPlacementObstacles(area);
-  return !fixedObstacles.concat(doorObstacles).some((obstacle) => rectanglesOverlap(bounds, obstacle, 4));
+  return !fixedObstacles.some((obstacle) => rectanglesOverlap(coreBounds, obstacle, 3)) &&
+    !doorObstacles.some((obstacle) => rectanglesOverlap(coreBounds, obstacle, 2));
 }
 
 function isPcInsideHallNetwork(bounds) {
@@ -2605,10 +2626,10 @@ function getAreaDoorPlacementObstacles(area) {
     if (a.id !== area.id && b.id !== area.id) return;
     const door = getDoorGeometryBetween(a, b);
     obstacles.push({
-      x: door.rect.x - 14,
-      y: door.rect.y - 14,
-      w: door.rect.w + 28,
-      h: door.rect.h + 28
+      x: door.rect.x - 8,
+      y: door.rect.y - 8,
+      w: door.rect.w + 16,
+      h: door.rect.h + 16
     });
   });
   return obstacles;
@@ -2654,8 +2675,10 @@ function placePendingPcPurchase(worldX, worldY) {
   }
 
   state.cash -= pending.cost;
-  const owningArea = getAreaById(candidate.pc.areaId);
+  const owningArea = getPersistentAreaForPlacement(candidate.area) || getAreaById(candidate.pc.areaId);
   if (owningArea) owningArea.pcCount += 1;
+  candidate.pc.areaId = owningArea ? owningArea.id : candidate.pc.areaId;
+  candidate.pc.areaName = candidate.pc.areaId === 1 ? "\u5ba2\u5385" : candidate.area.name;
   layout.pcs.push(candidate.pc);
   state.pendingPcPurchase = null;
   updateEquipmentLevel();
@@ -3717,6 +3740,79 @@ function isPointInsideRect(x, y, area, padding = 0) {
     y <= area.y + area.h + padding;
 }
 
+function segmentIntersectsRect(from, to, rectValue, padding = 0) {
+  const rectValuePadded = inflateRect(rectValue, padding);
+  if (isPointInsideRect(from.x, from.y, rectValuePadded) ||
+      isPointInsideRect(to.x, to.y, rectValuePadded)) {
+    return true;
+  }
+
+  const steps = Math.max(4, Math.ceil(distance(from, to) / 10));
+  for (let index = 1; index < steps; index += 1) {
+    const rate = index / steps;
+    const x = from.x + (to.x - from.x) * rate;
+    const y = from.y + (to.y - from.y) * rate;
+    if (isPointInsideRect(x, y, rectValuePadded)) return true;
+  }
+  return false;
+}
+
+function getBlockingPartitionForRoute(from, target) {
+  let best = null;
+  state.partitions.forEach((partition) => {
+    if (!segmentIntersectsRect(from, target, partition, 10)) return;
+    const score = distanceToRectCenter(from.x, from.y, partition);
+    if (!best || score < best.score) {
+      best = { partition, score };
+    }
+  });
+  return best ? best.partition : null;
+}
+
+function getPartitionAvoidancePoint(entity, target) {
+  const partition = getBlockingPartitionForRoute(entity, target);
+  if (!partition) return null;
+
+  const horizontal = partition.w >= partition.h;
+  const gap = 22;
+  const centerX = partition.x + partition.w / 2;
+  const centerY = partition.y + partition.h / 2;
+  const candidates = [];
+
+  if (horizontal) {
+    const currentSideY = entity.y < centerY ? partition.y - gap : partition.y + partition.h + gap;
+    const targetSideY = target.y < centerY ? partition.y - gap : partition.y + partition.h + gap;
+    [partition.x - gap, partition.x + partition.w + gap].forEach((x) => {
+      [currentSideY, targetSideY, entity.y].forEach((y) => candidates.push({ x, y }));
+    });
+  } else {
+    const currentSideX = entity.x < centerX ? partition.x - gap : partition.x + partition.w + gap;
+    const targetSideX = target.x < centerX ? partition.x - gap : partition.x + partition.w + gap;
+    [partition.y - gap, partition.y + partition.h + gap].forEach((y) => {
+      [currentSideX, targetSideX, entity.x].forEach((x) => candidates.push({ x, y }));
+    });
+  }
+
+  const scored = candidates
+    .map((candidate) => {
+      const area = getWalkableAreaAtPoint(candidate.x, candidate.y);
+      if (!area && !isEntranceWalkway(candidate.x, candidate.y) && !isDoorwayPoint(candidate.x, candidate.y)) return null;
+      if (isMachineBlockingPoint(candidate.x, candidate.y)) return null;
+      if (segmentIntersectsRect(entity, candidate, partition, 8)) return null;
+      const currentArea = getWalkableAreaAtPoint(entity.x, entity.y);
+      if (currentArea && area && !isTransitionOpen(currentArea, area, candidate.x, candidate.y)) return null;
+      const stillBlocked = segmentIntersectsRect(candidate, target, partition, 8);
+      return {
+        point: candidate,
+        score: (stillBlocked ? 1000 : 0) + distance(entity, candidate) * 0.45 + distance(candidate, target)
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.score - b.score);
+
+  return scored.length ? scored[0].point : null;
+}
+
 function getWalkableAreaAtPoint(x, y) {
   for (let index = state.publicFloors.length - 1; index >= 0; index -= 1) {
     const floor = state.publicFloors[index];
@@ -3732,10 +3828,11 @@ function getWalkableAreaAtPoint(x, y) {
 }
 
 function isEntranceWalkway(x, y) {
-  return x >= layout.room.x - 76 &&
-    x <= layout.room.x + 34 &&
-    y >= layout.entrance.y - 48 &&
-    y <= layout.entrance.y + 48;
+  const corridor = layout.entranceCorridor;
+  return x >= corridor.x - 6 &&
+    x <= layout.room.x + 42 &&
+    y >= corridor.y - 6 &&
+    y <= corridor.y + corridor.h + 6;
 }
 
 function isPcSeatTarget(x, y) {
@@ -3787,6 +3884,33 @@ function isTransitionOpen(fromArea, toArea, x, y) {
 function getDoorPointBetween(fromArea, toArea) {
   const door = getDoorGeometryBetween(fromArea, toArea);
   return door ? door.center : null;
+}
+
+function getOpenConnectionPointBetween(fromArea, toArea) {
+  if (!fromArea || !toArea || !sharesWall(fromArea, toArea)) return null;
+
+  if (fromArea.y + fromArea.h === toArea.y || toArea.y + toArea.h === fromArea.y) {
+    const boundaryY = fromArea.y + fromArea.h === toArea.y ? toArea.y : fromArea.y;
+    const overlapStart = Math.max(fromArea.x + 12, toArea.x + 12);
+    const overlapEnd = Math.min(fromArea.x + fromArea.w - 12, toArea.x + toArea.w - 12);
+    if (overlapEnd <= overlapStart) return null;
+    return { x: (overlapStart + overlapEnd) / 2, y: boundaryY };
+  }
+
+  if (fromArea.x + fromArea.w === toArea.x || toArea.x + toArea.w === fromArea.x) {
+    const boundaryX = fromArea.x + fromArea.w === toArea.x ? toArea.x : fromArea.x;
+    const overlapStart = Math.max(fromArea.y + 12, toArea.y + 12);
+    const overlapEnd = Math.min(fromArea.y + fromArea.h - 12, toArea.y + toArea.h - 12);
+    if (overlapEnd <= overlapStart) return null;
+    return { x: boundaryX, y: (overlapStart + overlapEnd) / 2 };
+  }
+
+  return null;
+}
+
+function getTransitionPointBetween(fromArea, toArea) {
+  return getDoorPointBetween(fromArea, toArea) ||
+    (isFullOpenConnection(fromArea, toArea) ? getOpenConnectionPointBetween(fromArea, toArea) : null);
 }
 
 function getDoorGeometryBetween(fromArea, toArea) {
@@ -3923,8 +4047,8 @@ function findAreaRoute(fromArea, toArea) {
     areas.forEach((next) => {
       if (visited.has(next.id)) return;
       if (!sharesWall(current, next)) return;
-      const door = getDoorPointBetween(current, next);
-      if (!door) return;
+      const transition = getTransitionPointBetween(current, next);
+      if (!transition) return;
       visited.add(next.id);
       queue.push(route.concat(next));
     });
@@ -3936,18 +4060,24 @@ function findAreaRoute(fromArea, toArea) {
 function getNextRouteTarget(entity, target) {
   const fromArea = getWalkableAreaAtPoint(entity.x, entity.y);
   const toArea = getWalkableAreaAtPoint(target.x, target.y);
-  if (!fromArea || !toArea || fromArea.id === toArea.id) return target;
+  if (!fromArea || !toArea || fromArea.id === toArea.id) {
+    return getPartitionAvoidancePoint(entity, target) || target;
+  }
 
   const route = findAreaRoute(fromArea, toArea);
-  if (route.length < 2) return target;
+  if (route.length < 2) return getPartitionAvoidancePoint(entity, target) || target;
 
-  const door = getDoorPointBetween(route[0], route[1]);
-  if (!door) return target;
-  if (distance(entity, door) > 5) return door;
+  const transition = getTransitionPointBetween(route[0], route[1]);
+  if (!transition) return getPartitionAvoidancePoint(entity, target) || target;
+  if (distance(entity, transition) > 5) {
+    return getPartitionAvoidancePoint(entity, transition) || transition;
+  }
 
   const innerPoint = getDoorInnerPoint(route[0], route[1]);
-  if (innerPoint && distance(entity, innerPoint) > 4) return innerPoint;
-  return target;
+  if (innerPoint && distance(entity, innerPoint) > 4) {
+    return getPartitionAvoidancePoint(entity, innerPoint) || innerPoint;
+  }
+  return getPartitionAvoidancePoint(entity, target) || target;
 }
 
 function canMoveToPoint(entity, x, y) {
@@ -3980,9 +4110,12 @@ function getUnstuckPoint(entity, target) {
   if (currentArea && targetArea && currentArea.id !== targetArea.id) {
     const route = findAreaRoute(currentArea, targetArea);
     if (route.length >= 2) {
-      return getDoorInnerPoint(route[0], route[1]) || getDoorPointBetween(route[0], route[1]);
+      return getDoorInnerPoint(route[0], route[1]) || getTransitionPointBetween(route[0], route[1]);
     }
   }
+
+  const avoidance = getPartitionAvoidancePoint(entity, target);
+  if (avoidance) return avoidance;
 
   if (currentArea) {
     const safe = getAreaSafePoint(currentArea, entity.x, entity.y);
