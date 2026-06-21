@@ -14,11 +14,20 @@ const view = {
   height: systemInfo.windowHeight || 667
 };
 const SAFE_TOP = Math.max(systemInfo.statusBarHeight || 0, 34);
-const HUD_HEIGHT = SAFE_TOP + 62;
-const ACTION_BAR_HEIGHT = 58;
+const HUD_HEIGHT = SAFE_TOP + 126;
+const MESSAGE_BAR_HEIGHT = 58;
+const ACTION_BAR_HEIGHT = 104;
 const STORAGE_KEY = "wangbaTycoonSaveV1";
 const TEST_MODE_KEY = "wangbaTycoonTestMode";
-const MAX_OPERATIONAL_PCS = 12;
+const AUDIO_SETTINGS_KEY = "wangbaTycoonAudioSettings";
+const AUDIO_SOURCES = {
+  bgm: "audio/bgm.wav",
+  click: "audio/click.wav"
+};
+const CODE_DRAWN_VISUALS_ONLY = true;
+const BASE_OPERATIONAL_PCS = 4;
+const MAX_OPERATIONAL_PCS = 96;
+const WORLD_EXPANSION_MARGIN = 620;
 const WORLD_LEFT_MARGIN = 220;
 const WORLD_TOP_MARGIN = 180;
 const WORLD = {
@@ -41,6 +50,9 @@ const GAME_DAY_SECONDS = 120;
 const GAME_MONTH_DAYS = 30;
 const DAMAGE_THRESHOLD_SESSIONS = 30;
 const DAMAGE_CHANCE_AFTER_THRESHOLD = 0.28;
+const NEW_PC_BASE_COST = 1200;
+const MAHJONG_TABLE_COST = 6800;
+const MAHJONG_TABLE_SIZE = { w: 58, h: 46 };
 const {
   COLORS,
   SPRITE_SCALE,
@@ -57,7 +69,7 @@ const assets = {};
 
 const layout = createLayout();
 const state = {
-  cash: 10000,
+  cash: 1000000,
   cafeLevel: 1,
   equipmentLevel: 1,
   cleanliness: 100,
@@ -75,8 +87,11 @@ const state = {
   },
   toilet: {
     dirty: false,
-    useCount: 0
+    useCount: 0,
+    busyGuestId: null,
+    cleanWorkerId: null
   },
+  floorCleaningWorkerId: null,
   procurementOpen: false,
   warehouseOpen: false,
   hiringOpen: false,
@@ -85,6 +100,7 @@ const state = {
   layoutOpen: false,
   pricingOpen: false,
   settingsOpen: false,
+  audio: loadAudioSettings(),
   testMode: loadTestModeSetting(),
   saveTimer: 0,
   saveDirty: false,
@@ -98,7 +114,14 @@ const state = {
     equipmentPc: 0
   },
   pendingExpansion: null,
+  pendingPcPurchase: null,
+  pendingMahjongPurchase: false,
+  pendingEquipmentTierLevel: null,
   confirmDialog: null,
+  pcActionMenu: null,
+  pcUpgradeMenu: null,
+  pcInfoBubble: null,
+  doorTimers: {},
   purchaseQuantities: {},
   layoutToolActive: false,
   layoutMode: "area",
@@ -111,7 +134,7 @@ const state = {
   },
   nextAreaId: 2,
   rentedAreas: [
-    { id: 1, typeId: "livingRoom", name: "\u5ba2\u5385\u533a\u57df", pcCount: 4, hourlyRate: 5, x: 18, y: 0, w: 0, h: 0 }
+    { id: 1, typeId: "livingRoom", name: "\u5ba2\u5385\u533a\u57df", pcCount: 4, pcCapacity: 8, hourlyRate: 5, x: 18, y: 0, w: 0, h: 0 }
   ],
   employees: {
     cashier: 0,
@@ -123,6 +146,7 @@ const state = {
   },
   workerId: 1,
   workers: [],
+  mahjongTables: [],
   publicFloors: [],
   inventory: {},
   message: "客人进门、前台开机、上机读条、下机离场。",
@@ -134,10 +158,10 @@ state.rentedAreas[0].w = layout.room.w;
 state.rentedAreas[0].h = layout.room.h;
 
 const guestPalettes = [
-  { shirt: "#e84855", hair: "#2d1e1a" },
-  { shirt: "#70a1ff", hair: "#2d1e1a" },
-  { shirt: "#5ec27f", hair: "#3d2b22" },
-  { shirt: "#ffd166", hair: "#2d1e1a" }
+  { shirt: "#c85a43", hair: "#3a2418" },
+  { shirt: "#557c8c", hair: "#3a2418" },
+  { shirt: "#6f9b52", hair: "#4a2c1a" },
+  { shirt: "#d9a74c", hair: "#3a2418" }
 ];
 
 const ui = {
@@ -157,11 +181,14 @@ const ui = {
   settingsButton: null,
   closeExpansionButton: null,
   closeLayoutButton: null,
+  cancelMoveButton: null,
   layoutModeButtons: [],
   closeEquipmentButton: null,
   cancelEquipmentSelectionButton: null,
   closeSettingsButton: null,
   toggleTestModeButton: null,
+  toggleMusicButton: null,
+  toggleSfxButton: null,
   saveGameButton: null,
   clearSaveButton: null,
   pricingButton: null,
@@ -173,7 +200,12 @@ const ui = {
   purchaseBatchButtons: [],
   rentAreaButtons: [],
   upgradeEquipmentButtons: [],
+  purchasePcButtons: [],
+  purchaseMahjongButton: null,
   equipmentPcButtons: [],
+  pcActionButtons: [],
+  pcUpgradeButtons: [],
+  pcInfoBubbleButton: null,
   hireButtons: [],
   buyButtons: []
 };
@@ -246,7 +278,7 @@ function createLayout() {
     floor: { x: room.x + 34, y: room.y + room.h - 76 },
     cleaner: { x: room.x + room.w - 34, y: room.y + room.h - 76 },
     repairman: { x: room.x + room.w - 72, y: room.y + room.h - 76 },
-    manager: { x: counter.x + 18, y: counter.y + counter.h - 8 },
+    manager: { x: counter.x + 56, y: counter.y + 22 },
     companion: { x: room.x + room.w - 70, y: room.y + 90 }
   };
 
@@ -254,7 +286,7 @@ function createLayout() {
 }
 
 function createPc(id, x, y, areaId = 1, areaName = "\u5ba2\u5385") {
-  return {
+  const pc = {
     id,
     x,
     y,
@@ -264,16 +296,40 @@ function createPc(id, x, y, areaId = 1, areaName = "\u5ba2\u5385") {
     seatY: getPcSeatY(y),
     areaId,
     areaName,
+    rotation: 0,
     occupiedBy: null,
     equipmentLevel: 1,
     sessionsServed: 0,
     broken: false,
     dirty: false
   };
+  updatePcSeat(pc);
+  return pc;
 }
 
 function getPcSeatY(pcY) {
   return pcY + 58;
+}
+
+function getNormalizedRotation(pc) {
+  return 0;
+}
+
+function updatePcSeat(pc) {
+  const rotation = getNormalizedRotation(pc);
+  if (rotation === 90) {
+    pc.seatX = pc.x - 16;
+    pc.seatY = pc.y + pc.h / 2 + 16;
+  } else if (rotation === 180) {
+    pc.seatX = pc.x + pc.w / 2;
+    pc.seatY = pc.y - 16;
+  } else if (rotation === 270) {
+    pc.seatX = pc.x + pc.w + 16;
+    pc.seatY = pc.y + pc.h / 2 + 16;
+  } else {
+    pc.seatX = pc.x + pc.w / 2;
+    pc.seatY = getPcSeatY(pc.y);
+  }
 }
 
 function getExpansionType(typeId) {
@@ -281,14 +337,68 @@ function getExpansionType(typeId) {
 }
 
 function getAreaRentCost(type, pcCount) {
+  if (type.costByPcCount && Number.isFinite(type.costByPcCount[pcCount])) {
+    return type.costByPcCount[pcCount];
+  }
   return type.baseCost + type.pricePerPc * pcCount;
 }
 
+function getCafeLevelRequirement(level) {
+  return Math.max(1, level) * 10;
+}
+
+function getCafeLevelForServed(served) {
+  let level = 1;
+  let remaining = Math.max(0, Math.floor(served || 0));
+  while (remaining >= getCafeLevelRequirement(level) && level < 99) {
+    remaining -= getCafeLevelRequirement(level);
+    level += 1;
+  }
+  return level;
+}
+
+function getCafeLevelProgress() {
+  let used = 0;
+  for (let level = 1; level < state.cafeLevel; level += 1) {
+    used += getCafeLevelRequirement(level);
+  }
+  const current = Math.max(0, state.served - used);
+  const required = getCafeLevelRequirement(state.cafeLevel);
+  return {
+    current: Math.min(current, required),
+    required
+  };
+}
+
+function getMaxOperationalPcs() {
+  const dynamicLimit = BASE_OPERATIONAL_PCS + state.cafeLevel * (state.cafeLevel - 1);
+  return Math.min(MAX_OPERATIONAL_PCS, dynamicLimit);
+}
+
+function getAreaCapacity(area) {
+  if (!area) return 0;
+  if (Number.isFinite(area.pcCapacity)) return area.pcCapacity;
+  if (area.typeId === "livingRoom") return Math.max(8, area.pcCount || 0);
+  const type = getExpansionType(area.typeId);
+  const maxOption = type && Array.isArray(type.pcOptions) ? Math.max(...type.pcOptions) : 0;
+  return Math.max(area.pcCount || 0, Number.isFinite(maxOption) ? maxOption : 0);
+}
+
+function getNewPcCost(tierLevel = 1) {
+  return equipmentTiers
+    .filter((tier) => tier.level > 1 && tier.level <= tierLevel)
+    .reduce((total, tier) => total + tier.pricePerPc, NEW_PC_BASE_COST);
+}
+
 function getAreaSize(type, pcCount) {
-  if (type.id === "multiRoom") return { w: pcCount >= 8 ? 270 : 220, h: pcCount >= 8 ? 190 : 150 };
-  if (type.id === "doubleRoom") return { w: 160, h: 120 };
-  if (type.id === "singleRoom") return { w: 116, h: 112 };
-  if (type.id === "capsuleRoom") return { w: 132, h: 120 };
+  if (type.id === "multiRoom") {
+    if (pcCount >= 8) return { w: 430, h: 260 };
+    if (pcCount >= 6) return { w: 360, h: 250 };
+    return { w: 300, h: 220 };
+  }
+  if (type.id === "doubleRoom") return { w: 210, h: 160 };
+  if (type.id === "singleRoom") return { w: 150, h: 148 };
+  if (type.id === "capsuleRoom") return { w: 170, h: 156 };
   if (type.id === "showerRoom") return { w: 126, h: 108 };
   if (type.id === "chessRoom") return { w: 170, h: 130 };
   return { w: 140, h: 120 };
@@ -368,17 +478,20 @@ function adjustAreaRate(area, delta) {
 }
 
 function canRentArea(type, pcCount) {
-  if (layout.pcs.length + pcCount > MAX_OPERATIONAL_PCS) return false;
-  return state.cash >= getAreaRentCost(type, pcCount);
+  return state.cafeLevel >= getExpansionUnlockLevel(type) && state.cash >= getAreaRentCost(type, pcCount);
+}
+
+function getExpansionUnlockLevel(type) {
+  return Number.isFinite(type.unlockLevel) ? type.unlockLevel : 1;
 }
 
 function rentArea(type, pcCount) {
   const cost = getAreaRentCost(type, pcCount);
-  if (layout.pcs.length + pcCount > MAX_OPERATIONAL_PCS) {
-    say(`\u5f53\u524d\u6700\u591a\u5148\u8fd0\u8425 ${MAX_OPERATIONAL_PCS} \u53f0\u673a\uff0c\u540e\u7eed\u518d\u5f00\u653e\u697c\u5c42\u7cfb\u7edf\u3002`);
+  const unlockLevel = getExpansionUnlockLevel(type);
+  if (state.cafeLevel < unlockLevel) {
+    say(`${type.name} \u9700\u8981\u7f51\u5427 Lv.${unlockLevel} \u624d\u80fd\u6269\u79df\u3002`);
     return;
   }
-
   if (state.cash < cost) {
     say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u6269\u79df ${type.name} \u9700\u8981 ${cost} \u5143\u3002`);
     return;
@@ -386,11 +499,11 @@ function rentArea(type, pcCount) {
 
   state.pendingExpansion = {
     typeId: type.id,
-    pcCount,
+    pcCapacity: pcCount,
     cost
   };
   state.expansionOpen = false;
-  say(`\u5df2\u9009\u62e9 ${type.name}\uff0c\u62d6\u52a8\u5730\u56fe\u627e\u5899\u8fb9\uff0c\u70b9\u51fb\u8d34\u5899\u653e\u7f6e\u3002`);
+  say(`\u5df2\u9009\u62e9 ${type.name}${pcCount ? ` ${pcCount}\u4eba\u5bb9\u91cf` : ""}\uff0c\u56de\u5230\u5730\u56fe\u70b9\u51fb\u8d34\u5899\u653e\u7f6e\u3002`);
 }
 
 function getPendingExpansionType() {
@@ -402,19 +515,13 @@ function placePendingExpansion(worldX, worldY) {
   const type = getPendingExpansionType();
   if (!pending || !type) return false;
 
-  if (layout.pcs.length + pending.pcCount > MAX_OPERATIONAL_PCS) {
-    say(`\u5f53\u524d\u6700\u591a\u5148\u8fd0\u8425 ${MAX_OPERATIONAL_PCS} \u53f0\u673a\u3002`);
-    state.pendingExpansion = null;
-    return true;
-  }
-
   if (state.cash < pending.cost) {
     say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u6269\u79df ${type.name} \u9700\u8981 ${pending.cost} \u5143\u3002`);
     state.pendingExpansion = null;
     return true;
   }
 
-  const size = getAreaSize(type, pending.pcCount);
+  const size = getAreaSize(type, pending.pcCapacity);
   const candidate = getAttachedAreaCandidate(worldX, worldY, size);
   if (!candidate) {
     say("\u65b0\u533a\u57df\u9700\u8981\u8d34\u7740\u5df2\u6709\u5916\u5899\uff0c\u9760\u8fd1\u5927\u5385\u5899\u8fb9\u518d\u70b9\u3002");
@@ -432,16 +539,16 @@ function placePendingExpansion(worldX, worldY) {
     id: state.nextAreaId - 1,
     typeId: type.id,
     name: type.name,
-    pcCount: pending.pcCount
+    pcCount: 0,
+    pcCapacity: pending.pcCapacity
   });
   area.hourlyRate = getDefaultAreaRate(area.typeId);
   state.rentedAreas.push(area);
-  addAreaPcs(area);
   state.pendingExpansion = null;
   updateEquipmentLevel();
   updateCafeLevel();
   markSaveDirty();
-  say(`\u5df2\u653e\u7f6e ${type.name}${pending.pcCount ? ` ${pending.pcCount} \u53f0\u673a` : ""}\uff0c\u65b0\u533a\u57df\u5f00\u5f20\u3002`);
+  say(`\u5df2\u653e\u7f6e\u7a7a\u7684 ${type.name}${pending.pcCapacity ? `\uff0c\u53ef\u653e ${pending.pcCapacity} \u53f0\u7535\u8111` : ""}\u3002`);
   return true;
 }
 
@@ -449,15 +556,39 @@ function snapToGrid(value) {
   return Math.round(value / 24) * 24;
 }
 
+function snapPcPosition(value) {
+  return Math.round(value / 12) * 12;
+}
+
 function clampAreaToWorld(area) {
-  area.x = Math.max(12, Math.min(WORLD.w - area.w - 12, area.x));
-  area.y = Math.max(HUD_HEIGHT + 12, Math.min(WORLD.h - ACTION_BAR_HEIGHT - area.h - 12, area.y));
+  const bounds = getExpandedWorldBounds();
+  area.x = Math.max(bounds.minX, Math.min(bounds.maxX - area.w, area.x));
+  area.y = Math.max(bounds.minY, Math.min(bounds.maxY - area.h, area.y));
+}
+
+function getWorldBoundItems() {
+  const items = [layout.room, layout.toilet]
+    .concat(state ? state.rentedAreas : [])
+    .concat(state ? state.publicFloors : [])
+    .concat(state ? state.mahjongTables : [])
+    .concat(layout.pcs.map((pc) => getPcVisualBounds(pc)));
+  return items.filter((item) => item && Number.isFinite(item.x) && Number.isFinite(item.y));
+}
+
+function getExpandedWorldBounds() {
+  const items = getWorldBoundItems();
+  const minX = Math.min(0, ...items.map((item) => item.x)) - WORLD_EXPANSION_MARGIN;
+  const minY = Math.min(0, ...items.map((item) => item.y)) - WORLD_EXPANSION_MARGIN;
+  const maxX = Math.max(WORLD.w, ...items.map((item) => item.x + item.w)) + WORLD_EXPANSION_MARGIN;
+  const maxY = Math.max(WORLD.h, ...items.map((item) => item.y + item.h)) + WORLD_EXPANSION_MARGIN;
+  return { minX, minY, maxX, maxY };
 }
 
 function getAttachedAreaCandidate(worldX, worldY, size, ignoreAreaId = null) {
   let best = null;
   getAttachableAreas().forEach((host) => {
     if (host.id === ignoreAreaId) return;
+    if (!canAttachPrivateRoomToHost(host)) return;
     const candidates = getAttachedCandidatesForHost(host, worldX, worldY, size);
     candidates.forEach((candidate) => {
       clampAreaToWorld(candidate.area);
@@ -470,6 +601,10 @@ function getAttachedAreaCandidate(worldX, worldY, size, ignoreAreaId = null) {
     });
   });
   return best;
+}
+
+function canAttachPrivateRoomToHost(host) {
+  return host && (host.id === 1 || host.typeId === "publicFloor");
 }
 
 function clamp(value, min, max) {
@@ -529,26 +664,42 @@ function getAreaAtPoint(x, y) {
 }
 
 function getPcAtPoint(x, y) {
-  return layout.pcs.find((pc) => (
-    x >= pc.x - 8 &&
-    x <= pc.x + pc.w + 8 &&
-    y >= pc.y - 20 &&
-    y <= pc.y + pc.h + 16
-  ));
+  return layout.pcs.find((pc) => isPointInsideRect(x, y, getPcVisualBounds(pc), 2));
 }
 
 function handleLayoutTouch(worldX, worldY) {
+  if (state.layoutMode === "deleteArea") {
+    deleteAreaLayout(worldX, worldY);
+    return true;
+  }
+
   if (state.layoutMode === "floor") {
     addPublicFloor(worldX, worldY);
     return true;
   }
 
   if (state.layoutMode === "pc") {
-    movePcLayout(worldX, worldY);
+    if (state.selectedPcId) {
+      const pc = getSelectedPc();
+      if (pc) {
+        const candidate = getPcMoveCandidate(pc);
+        movePcLayout(candidate.x + pc.w / 2, candidate.y + pc.h / 2);
+      }
+    } else {
+      movePcLayout(worldX, worldY);
+    }
     return true;
   }
 
-  moveAreaLayout(worldX, worldY);
+  if (state.selectedAreaId) {
+    const area = getAreaById(state.selectedAreaId);
+    if (area) {
+      const candidate = getAreaMoveCandidate(area);
+      moveAreaLayout(candidate.x + area.w / 2, candidate.y + area.h / 2);
+    }
+  } else {
+    moveAreaLayout(worldX, worldY);
+  }
   return true;
 }
 
@@ -697,35 +848,72 @@ function movePcLayout(worldX, worldY) {
       say("\u5148\u70b9\u4e00\u53f0\u8981\u79fb\u52a8\u7684\u7535\u8111\u3002");
       return;
     }
+    if (pc.occupiedBy) {
+      say("\u8fd9\u53f0\u673a\u6709\u4eba\u4e0a\u673a\uff0c\u5148\u7b49\u5ba2\u4eba\u4e0b\u673a\u518d\u79fb\u52a8\u3002");
+      return;
+    }
     state.selectedPcId = pc.id + 1;
-    say(`${pc.id + 1} \u53f7\u673a\u5df2\u9009\u4e2d\uff0c\u5728\u5b83\u6240\u5c5e\u533a\u57df\u5185\u70b9\u65b0\u4f4d\u7f6e\u3002`);
+    say(`${pc.id + 1} \u53f7\u673a\u5df2\u9009\u4e2d\uff0c\u62d6\u52a8\u5730\u56fe\u5bf9\u51c6\u9884\u89c8\u6846\uff0c\u70b9\u51fb\u653e\u7f6e\u3002`);
     return;
   }
 
-  const pc = layout.pcs[state.selectedPcId - 1];
+  const pc = layout.pcs.find((item) => item.id + 1 === state.selectedPcId);
   const area = pc && getAreaById(pc.areaId);
   if (!pc || !area) {
     state.selectedPcId = null;
     return;
   }
 
-  const nextX = snapToGrid(worldX - pc.w / 2);
-  const nextY = snapToGrid(worldY - pc.h / 2);
-  const nextSeatY = getPcSeatY(nextY);
-  if (nextX < area.x + 12 || nextX + pc.w > area.x + area.w - 12 ||
-      nextY < area.y + 34 || nextY + pc.h > area.y + area.h - 12 ||
-      nextSeatY > area.y + area.h - 10) {
-    say("\u7535\u8111\u53ea\u80fd\u5728\u6240\u5c5e\u533a\u57df\u5185\u5fae\u8c03\u3002");
+  const nextX = snapPcPosition(worldX - pc.w / 2);
+  const nextY = snapPcPosition(worldY - pc.h / 2);
+  const candidate = Object.assign({}, pc, {
+    x: nextX,
+    y: nextY
+  });
+  updatePcSeat(candidate);
+  if (!isPcLayoutPositionValid(area, candidate, pc.id)) {
+    say("\u7535\u8111\u9700\u8981\u7559\u51fa\u5ea7\u4f4d\u8fc7\u9053\uff0c\u4e0d\u80fd\u548c\u5899\u4f53\u6216\u5176\u4ed6\u8bbe\u5907\u91cd\u53e0\u3002");
     return;
   }
 
   pc.x = nextX;
   pc.y = nextY;
-  pc.seatX = pc.x + pc.w / 2;
-  pc.seatY = getPcSeatY(pc.y);
+  updatePcSeat(pc);
   state.selectedPcId = null;
   markSaveDirty();
   say(`${pc.id + 1} \u53f7\u673a\u4f4d\u7f6e\u5df2\u8c03\u6574\u3002`);
+}
+
+function getSelectedPc() {
+  return layout.pcs.find((item) => item.id + 1 === state.selectedPcId) || null;
+}
+
+function getViewportWorldCenter() {
+  return {
+    x: state.camera.x + view.width / 2,
+    y: state.camera.y + (view.height - ACTION_BAR_HEIGHT + HUD_HEIGHT) / 2
+  };
+}
+
+function getPcMoveCandidate(pc) {
+  const center = getViewportWorldCenter();
+  const candidate = Object.assign({}, pc, {
+    x: snapPcPosition(center.x - pc.w / 2),
+    y: snapPcPosition(center.y - pc.h / 2)
+  });
+  updatePcSeat(candidate);
+  return candidate;
+}
+
+function getAreaMoveCandidate(area) {
+  const center = getViewportWorldCenter();
+  const candidate = getAttachedAreaCandidate(center.x, center.y, { w: area.w, h: area.h }, area.id);
+  return candidate ? candidate.area : {
+    x: snapToGrid(center.x - area.w / 2),
+    y: snapToGrid(center.y - area.h / 2),
+    w: area.w,
+    h: area.h
+  };
 }
 
 function moveAreaLayout(worldX, worldY) {
@@ -758,6 +946,43 @@ function moveAreaLayout(worldX, worldY) {
   say(`${area.name} \u5df2\u91cd\u65b0\u6446\u653e\uff0c\u95e8\u6d1e\u4f1a\u81ea\u52a8\u91cd\u7b97\u3002`);
 }
 
+function deleteAreaLayout(worldX, worldY) {
+  const area = getAreaAtPoint(worldX, worldY);
+  if (!area || area.id === 1 || area.id === layout.toilet.id) {
+    say("\u70b9\u51fb\u60f3\u5220\u9664\u7684\u5df2\u6269\u79df\u5305\u95f4\u3002");
+    return;
+  }
+
+  const pcsInArea = layout.pcs.filter((pc) => pc.areaId === area.id);
+  if (pcsInArea.length) {
+    say("\u8bf7\u5148\u79fb\u8d70\u6216\u51fa\u552e\u8be5\u5305\u95f4\u91cc\u7684\u7535\u8111\u3002");
+    return;
+  }
+
+  const refund = getAreaRefund(area);
+  openConfirmDialog(
+    "\u5220\u9664\u5305\u95f4",
+    `\u786e\u5b9a\u5220\u9664 ${area.name} \u5417\uff1f\u5c06\u8fd4\u8fd8 ${refund} \u5143\u3002`,
+    () => deleteRentedArea(area, refund)
+  );
+}
+
+function getAreaRefund(area) {
+  const type = getExpansionType(area.typeId);
+  if (!type) return 0;
+  return Math.floor(getAreaRentCost(type, area.pcCapacity || area.pcCount || 0) / 2);
+}
+
+function deleteRentedArea(area, refund) {
+  state.rentedAreas = state.rentedAreas.filter((item) => item.id !== area.id);
+  state.cash += refund;
+  state.layoutToolActive = false;
+  state.layoutMode = "off";
+  state.selectedAreaId = null;
+  markSaveDirty();
+  say(`\u5df2\u5220\u9664 ${area.name}\uff0c\u8fd4\u8fd8 ${refund} \u5143\u3002`);
+}
+
 function moveAreaTo(area, nextX, nextY) {
   const dx = nextX - area.x;
   const dy = nextY - area.y;
@@ -777,14 +1002,6 @@ function moveAreaTo(area, nextX, nextY) {
   });
 }
 
-function addAreaPcs(area) {
-  for (let index = 0; index < area.pcCount; index += 1) {
-    const position = getPcPositionInArea(area, index);
-    const pc = createPc(layout.pcs.length, position.x, position.y, area.id, area.name);
-    layout.pcs.push(pc);
-  }
-}
-
 function rebuildPcsFromAreas(savedPcs = []) {
   layout.pcs.length = 0;
   state.rentedAreas.forEach((area) => {
@@ -793,13 +1010,19 @@ function rebuildPcsFromAreas(savedPcs = []) {
       const pc = createPc(layout.pcs.length, position.x, position.y, area.id, area.name);
       const savedPc = savedPcs[layout.pcs.length];
       if (savedPc) {
+        pc.rotation = 0;
         if (Number.isFinite(savedPc.x) && Number.isFinite(savedPc.y)) {
           pc.x = savedPc.x;
           pc.y = savedPc.y;
-          pc.seatX = pc.x + pc.w / 2;
-          pc.seatY = getPcSeatY(pc.y);
+          updatePcSeat(pc);
+          if (!isPcPositionSafeForArea(pc, area)) {
+            pc.x = position.x;
+            pc.y = position.y;
+            updatePcSeat(pc);
+          }
         }
         pc.equipmentLevel = Number.isFinite(savedPc.equipmentLevel) ? savedPc.equipmentLevel : pc.equipmentLevel;
+        updatePcSeat(pc);
         pc.sessionsServed = Number.isFinite(savedPc.sessionsServed) ? savedPc.sessionsServed : 0;
         pc.broken = Boolean(savedPc.broken);
         pc.dirty = Boolean(savedPc.dirty);
@@ -820,15 +1043,29 @@ function getPcPositionInArea(area, index) {
     };
   }
 
-  const cols = area.pcCount <= 2 ? area.pcCount || 1 : Math.ceil(Math.sqrt(area.pcCount));
+  const count = Math.max(1, area.pcCount || 1);
+  const cols = count >= 8 ? 4 : count >= 5 ? 3 : count >= 3 ? 2 : count;
+  const rows = Math.ceil(count / cols);
   const col = index % cols;
   const row = Math.floor(index / cols);
-  const gapX = Math.max(54, (area.w - 62) / Math.max(1, cols - 1));
-  const gapY = 58;
+  const minX = area.x + 30;
+  const maxX = Math.max(minX, area.x + area.w - 72);
+  const minY = area.y + 58;
+  const maxY = Math.max(minY, area.y + area.h - 88);
+  const gapX = cols > 1 ? (maxX - minX) / (cols - 1) : 0;
+  const gapY = rows > 1 ? clamp((maxY - minY) / (rows - 1), 42, 86) : 0;
   return {
-    x: area.x + 18 + col * gapX,
-    y: area.y + 42 + row * gapY
+    x: Math.round(Math.min(maxX, minX + col * gapX)),
+    y: Math.round(Math.min(maxY, minY + row * gapY))
   };
+}
+
+function isPcPositionSafeForArea(pc, area) {
+  const bounds = getPcVisualBounds(pc);
+  return bounds.x >= area.x + 4 &&
+    bounds.x + bounds.w <= area.x + area.w - 4 &&
+    bounds.y >= area.y + 18 &&
+    bounds.y + bounds.h <= area.y + area.h - 4;
 }
 
 function say(text) {
@@ -904,6 +1141,92 @@ function loadTestModeSetting() {
   return readStorage(TEST_MODE_KEY) !== false;
 }
 
+function loadAudioSettings() {
+  const settings = readStorage(AUDIO_SETTINGS_KEY);
+  return {
+    musicEnabled: !settings || settings.musicEnabled !== false,
+    sfxEnabled: !settings || settings.sfxEnabled !== false
+  };
+}
+
+function saveAudioSettings() {
+  writeStorage(AUDIO_SETTINGS_KEY, {
+    musicEnabled: state.audio.musicEnabled,
+    sfxEnabled: state.audio.sfxEnabled
+  });
+}
+
+const audioSystem = {
+  initialized: false,
+  bgm: null,
+  click: null
+};
+
+function createAudio(src, options = {}) {
+  if (!wx.createInnerAudioContext) return null;
+
+  try {
+    const audio = wx.createInnerAudioContext();
+    audio.src = src;
+    audio.loop = Boolean(options.loop);
+    audio.volume = Number.isFinite(options.volume) ? options.volume : 1;
+    audio.obeyMuteSwitch = false;
+    return audio;
+  } catch (error) {
+    return null;
+  }
+}
+
+function initAudioSystem() {
+  if (audioSystem.initialized) return;
+  audioSystem.initialized = true;
+
+  audioSystem.bgm = createAudio(AUDIO_SOURCES.bgm, { loop: true, volume: 0.28 });
+  audioSystem.click = createAudio(AUDIO_SOURCES.click, { loop: false, volume: 0.55 });
+}
+
+function syncMusicPlayback() {
+  initAudioSystem();
+  if (!audioSystem.bgm) return;
+
+  try {
+    if (state.audio.musicEnabled) {
+      audioSystem.bgm.play();
+    } else {
+      audioSystem.bgm.stop();
+    }
+  } catch (error) {
+    // Audio startup can fail before the first user gesture on some runtimes.
+  }
+}
+
+function playClickSound() {
+  if (!state.audio.sfxEnabled) return;
+  initAudioSystem();
+  if (!audioSystem.click) return;
+
+  try {
+    audioSystem.click.stop();
+    audioSystem.click.seek(0);
+    audioSystem.click.play();
+  } catch (error) {
+    // Click feedback should never block game input.
+  }
+}
+
+function toggleMusicEnabled() {
+  state.audio.musicEnabled = !state.audio.musicEnabled;
+  saveAudioSettings();
+  syncMusicPlayback();
+  say(state.audio.musicEnabled ? "\u80cc\u666f\u97f3\u4e50\u5df2\u5f00\u542f\u3002" : "\u80cc\u666f\u97f3\u4e50\u5df2\u5173\u95ed\u3002");
+}
+
+function toggleSfxEnabled() {
+  state.audio.sfxEnabled = !state.audio.sfxEnabled;
+  saveAudioSettings();
+  say(state.audio.sfxEnabled ? "\u6309\u952e\u70b9\u51fb\u58f0\u5df2\u5f00\u542f\u3002" : "\u6309\u952e\u70b9\u51fb\u58f0\u5df2\u5173\u95ed\u3002");
+}
+
 function buildSaveData() {
   return {
     version: 1,
@@ -921,6 +1244,7 @@ function buildSaveData() {
     nextAreaId: state.nextAreaId,
     rentedAreas: state.rentedAreas.map((area) => Object.assign({}, area)),
     publicFloors: state.publicFloors.map((floor) => Object.assign({}, floor)),
+    mahjongTables: state.mahjongTables.map((table) => Object.assign({}, table)),
     toilet: {
       dirty: state.toilet.dirty,
       useCount: state.toilet.useCount,
@@ -932,6 +1256,7 @@ function buildSaveData() {
     pcs: layout.pcs.map((pc) => ({
       x: pc.x,
       y: pc.y,
+      rotation: pc.rotation || 0,
       equipmentLevel: pc.equipmentLevel,
       sessionsServed: pc.sessionsServed,
       broken: pc.broken,
@@ -968,7 +1293,7 @@ function restoreGame() {
     return;
   }
 
-  state.cash = Number.isFinite(data.cash) ? data.cash : state.cash;
+  state.cash = Number.isFinite(data.cash) ? Math.max(data.cash, 1000000) : state.cash;
   state.cafeLevel = Number.isFinite(data.cafeLevel) ? data.cafeLevel : state.cafeLevel;
   state.equipmentLevel = Number.isFinite(data.equipmentLevel) ? data.equipmentLevel : state.equipmentLevel;
   state.cleanliness = Number.isFinite(data.cleanliness) ? data.cleanliness : state.cleanliness;
@@ -986,13 +1311,14 @@ function restoreGame() {
       typeId: area.typeId,
       name: area.name,
       pcCount: area.pcCount || 0,
+      pcCapacity: Number.isFinite(area.pcCapacity) ? area.pcCapacity : getAreaCapacity(area),
       hourlyRate: Number.isFinite(area.hourlyRate) ? area.hourlyRate : getDefaultAreaRate(area.typeId),
       x: Number.isFinite(area.x) ? area.x : layout.room.x,
       y: Number.isFinite(area.y) ? area.y : layout.room.y,
       w: Number.isFinite(area.w) ? area.w : layout.room.w,
       h: Number.isFinite(area.h) ? area.h : layout.room.h
     }))
-    : [{ id: 1, typeId: "livingRoom", name: "\u5ba2\u5385\u533a\u57df", pcCount: 4, hourlyRate: 5, x: layout.room.x, y: layout.room.y, w: layout.room.w, h: layout.room.h }];
+    : [{ id: 1, typeId: "livingRoom", name: "\u5ba2\u5385\u533a\u57df", pcCount: 4, pcCapacity: 8, hourlyRate: 5, x: layout.room.x, y: layout.room.y, w: layout.room.w, h: layout.room.h }];
   state.publicFloors = Array.isArray(data.publicFloors)
     ? data.publicFloors.map((floor) => ({
       id: floor.id || `floor-${floor.x}-${floor.y}`,
@@ -1002,6 +1328,17 @@ function restoreGame() {
       y: Number.isFinite(floor.y) ? floor.y : layout.room.y,
       w: Number.isFinite(floor.w) ? floor.w : 72,
       h: Number.isFinite(floor.h) ? floor.h : 72
+    }))
+    : [];
+  state.mahjongTables = Array.isArray(data.mahjongTables)
+    ? data.mahjongTables.map((table, index) => ({
+      id: table.id || index + 1,
+      areaId: Number.isFinite(table.areaId) ? table.areaId : 1,
+      areaName: table.areaName || "\u68cb\u724c\u5ba4",
+      x: Number.isFinite(table.x) ? table.x : layout.room.x + 80,
+      y: Number.isFinite(table.y) ? table.y : layout.room.y + 120,
+      w: Number.isFinite(table.w) ? table.w : MAHJONG_TABLE_SIZE.w,
+      h: Number.isFinite(table.h) ? table.h : MAHJONG_TABLE_SIZE.h
     }))
     : [];
   state.toilet.dirty = Boolean(data.toilet && data.toilet.dirty);
@@ -1109,8 +1446,20 @@ function getProductById(id) {
   return products.find((product) => product.id === id);
 }
 
-function createDemand() {
-  const id = demandProductIds[Math.floor(Math.random() * demandProductIds.length)];
+function createDemand(guest) {
+  const pc = guest ? layout.pcs[guest.pcId] : null;
+  if (shouldCreateCompanionDemand(guest, pc)) {
+    return {
+      type: "companion",
+      productId: "companionPlay",
+      productName: "\u966a\u73a9",
+      timer: 18,
+      patience: 18,
+      handled: false
+    };
+  }
+
+  const id = pickWeightedDemandProductId(guest, pc);
   const product = getProductById(id);
 
   return {
@@ -1131,7 +1480,7 @@ function tryCreateDemand(guest, dt) {
   guest.demandRollTimer = random(4, 7);
   const demandChance = guest.guestType ? guest.guestType.spendChance : 0.4;
   if (Math.random() < demandChance) {
-    guest.demand = createDemand();
+    guest.demand = createDemand(guest);
     guest.demandDone = true;
     say(`\u987e\u5ba2 ${guest.id} \u60f3\u8981 ${guest.demand.productName}\uff0c\u70b9\u4ed6\u624b\u52a8\u9001\u8d27\u3002`);
   }
@@ -1149,12 +1498,15 @@ function updateDemand(guest, dt) {
 
 function tryStartToiletEvent(guest, dt) {
   if (guest.toiletDone || guest.demand || guest.playTimer > guest.playDuration * 0.68) return;
+  if (state.toilet.busyGuestId && state.toilet.busyGuestId !== guest.id) return;
+  if (state.toilet.cleanWorkerId) return;
 
   guest.toiletRollTimer -= dt;
   if (guest.toiletRollTimer > 0) return;
 
   guest.toiletDone = true;
   if (Math.random() < 0.32) {
+    state.toilet.busyGuestId = guest.id;
     guest.state = "toToilet";
     say(`\u987e\u5ba2 ${guest.id} \u53bb\u4e0a\u5395\u6240\u4e86\u3002`);
   }
@@ -1162,6 +1514,9 @@ function tryStartToiletEvent(guest, dt) {
 
 function serveGuestDemand(guest) {
   if (!guest || !guest.demand) return false;
+  if (isCompanionDemand(guest.demand)) {
+    return serveCompanionDemand(guest, false);
+  }
 
   const product = getProductById(guest.demand.productId);
   if (!product) return false;
@@ -1182,6 +1537,25 @@ function serveGuestDemand(guest) {
   state.cash += product.sellPrice;
   markSaveDirty();
   say(`\u9001\u51fa ${product.name}\uff0c\u989d\u5916\u6536\u5165 ${product.sellPrice} \u5143\u3002`);
+  guest.demand = null;
+  return true;
+}
+
+function getCompanionDemandRevenue(guest) {
+  const pc = guest ? layout.pcs[guest.pcId] : null;
+  return pc && pc.equipmentLevel >= 5 ? 138 : 88;
+}
+
+function serveCompanionDemand(guest, byWorker) {
+  if (state.employees.companion < 1) {
+    say("\u5e97\u91cc\u8fd8\u6ca1\u6709\u966a\u73a9\u5458\uff0c\u8fd9\u5355\u6682\u65f6\u63a5\u4e0d\u4e86\u3002");
+    return true;
+  }
+
+  const revenue = getCompanionDemandRevenue(guest);
+  state.cash += revenue;
+  markSaveDirty();
+  say(`${byWorker ? "\u966a\u73a9\u5458" : "\u5df2"}\u5b8c\u6210\u966a\u73a9\u670d\u52a1\uff0c\u989d\u5916\u6536\u5165 ${revenue} \u5143\u3002`);
   guest.demand = null;
   return true;
 }
@@ -1245,12 +1619,62 @@ function cleanToilet() {
   return true;
 }
 
+function getToiletServicePoint() {
+  return {
+    x: layout.toilet.x + layout.toilet.w / 2,
+    y: layout.toilet.y + layout.toilet.h - 26
+  };
+}
+
+function pickWeightedDemandProductId(guest, pc) {
+  const level = pc ? pc.equipmentLevel : state.equipmentLevel;
+  const premiumBias = level >= 5 ? 3.3 : level >= 4 ? 2.4 : level >= 3 ? 1.45 : 1;
+  const budgetBias = guest && guest.guestType && guest.guestType.id === "budgetHall" ? 1.6 : 1;
+  const weights = {
+    noodle: Math.max(1, 3.1 / premiumBias) * budgetBias,
+    water: Math.max(1, 2.8 / premiumBias) * budgetBias,
+    sausage: Math.max(1, 2.3 / premiumBias),
+    betel: Math.max(0.7, 1.7 / premiumBias),
+    cigarette: Math.max(0.6, 1.4 / premiumBias),
+    snack: level >= 2 ? 1.4 * premiumBias : 0.4,
+    drink: level >= 2 ? 1.5 * premiumBias : 0.5,
+    meal: level >= 3 ? 1.15 * premiumBias : 0.25,
+    milkTea: level >= 4 ? 1.25 * premiumBias : 0.15
+  };
+  const candidates = demandProductIds
+    .map((id) => ({ id, product: getProductById(id), weight: weights[id] || 1 }))
+    .filter((item) => item.product && state.cafeLevel >= item.product.unlockLevel && item.weight > 0);
+  const pool = candidates.length
+    ? candidates
+    : demandProductIds.map((id) => ({ id, product: getProductById(id), weight: 1 })).filter((item) => item.product);
+  const total = pool.reduce((sum, item) => sum + item.weight, 0);
+  let roll = Math.random() * total;
+  for (let index = 0; index < pool.length; index += 1) {
+    roll -= pool[index].weight;
+    if (roll <= 0) return pool[index].id;
+  }
+  return pool[0].id;
+}
+
+function shouldCreateCompanionDemand(guest, pc) {
+  if (!guest || !pc || pc.equipmentLevel < 4 || state.employees.companion < 1) return false;
+  const area = getAreaById(pc.areaId);
+  if (!area || !["singleRoom", "doubleRoom", "capsuleRoom"].includes(area.typeId)) return false;
+  const chance = pc.equipmentLevel >= 5 ? 0.34 : 0.18;
+  const guestBonus = guest.guestType && guest.guestType.id === "highSpec" ? 0.08 : 0;
+  return Math.random() < chance + guestBonus;
+}
+
+function isCompanionDemand(demand) {
+  return demand && demand.type === "companion";
+}
+
 function getRepairCost(pc) {
   return 60 + pc.equipmentLevel * 40;
 }
 
 function hasFreeRepairStaff() {
-  return state.employees.repairman > 0 || state.employees.manager > 0;
+  return state.employees.repairman > 0;
 }
 
 function breakPc(pc) {
@@ -1374,14 +1798,17 @@ function updateEquipmentLevel() {
 }
 
 function openEquipmentPcSelection(tier) {
-  const hasCandidate = layout.pcs.some((pc) => pc.equipmentLevel + 1 === tier.level);
+  const candidates = layout.pcs.filter((pc) => tier.level > pc.equipmentLevel);
+  const hasCandidate = candidates.length > 0;
   if (!hasCandidate) {
     say("\u6ca1\u6709\u53ef\u5347\u7ea7\u5230\u8be5\u6863\u4f4d\u7684\u673a\u5668\u3002");
     return;
   }
 
-  if (state.cash < tier.pricePerPc) {
-    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u5355\u53f0\u5347\u7ea7\u9700\u8981 ${tier.pricePerPc} \u5143\u3002`);
+  const affordable = candidates.some((pc) => state.cash >= getPcUpgradeCost(pc, tier.level));
+  if (!affordable) {
+    const minCost = Math.min(...candidates.map((pc) => getPcUpgradeCost(pc, tier.level)));
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u5347\u7ea7\u5230 ${tier.name} \u81f3\u5c11\u9700\u8981 ${minCost} \u5143\u3002`);
     return;
   }
 
@@ -1400,12 +1827,7 @@ function upgradePcEquipment(pc, tier) {
     return;
   }
 
-  if (tier.level !== pc.equipmentLevel + 1) {
-    say(`${pc.id + 1} \u53f7\u673a\u9700\u8981\u6309\u6863\u9010\u7ea7\u5347\u7ea7\u3002`);
-    return;
-  }
-
-  const cost = tier.pricePerPc;
+  const cost = getPcUpgradeCost(pc, tier.level);
   if (state.cash < cost) {
     say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u5347\u7ea7 ${pc.id + 1} \u53f7\u673a\u9700\u8981 ${cost} \u5143\u3002`);
     return;
@@ -1420,31 +1842,380 @@ function upgradePcEquipment(pc, tier) {
   say(`${pc.id + 1} \u53f7\u673a\u5347\u7ea7\u5230 ${tier.name}\u3002`);
 }
 
-function createWorker(type) {
-  const home = layout.staffHome[type] || layout.staffHome.floor;
+function startPcPurchase(tier) {
+  const level = tier ? tier.level : 1;
+  const cost = getNewPcCost(level);
+  const maxPcs = getMaxOperationalPcs();
+  if (layout.pcs.length >= maxPcs) {
+    say(`\u5f53\u524d Lv.${state.cafeLevel} \u6700\u591a\u8fd0\u8425 ${maxPcs} \u53f0\u673a\uff0c\u63a5\u5f85\u66f4\u591a\u987e\u5ba2\u5347\u7ea7\u540e\u518d\u6269\u673a\u3002`);
+    return;
+  }
+  if (state.cash < cost) {
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u65b0\u8d2d ${getEquipmentTier(level).name} \u9700\u8981 ${cost} \u5143\u3002`);
+    return;
+  }
+  state.pendingPcPurchase = { equipmentLevel: level, cost };
+  state.equipmentOpen = false;
+  state.pendingEquipmentTierLevel = null;
+  say(`\u5df2\u9009\u62e9\u65b0\u8d2d ${getEquipmentTier(level).name}\uff0c\u5728\u6709\u7a7a\u4f4d\u7684\u533a\u57df\u5185\u70b9\u51fb\u653e\u7f6e\u3002`);
+}
+
+function startMahjongPurchase() {
+  if (state.cash < MAHJONG_TABLE_COST) {
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u8d2d\u4e70\u9ebb\u5c06\u684c\u9700\u8981 ${MAHJONG_TABLE_COST} \u5143\u3002`);
+    return;
+  }
+  if (!state.rentedAreas.some((area) => area.typeId === "chessRoom")) {
+    say("\u5148\u6269\u79df\u4e00\u95f4\u68cb\u724c\u5ba4\uff0c\u624d\u80fd\u6446\u653e\u9ebb\u5c06\u684c\u3002");
+    return;
+  }
+  state.pendingMahjongPurchase = true;
+  state.equipmentOpen = false;
+  state.pendingEquipmentTierLevel = null;
+  say(`\u5df2\u9009\u62e9\u9ebb\u5c06\u684c\uff0c\u8bf7\u5c06\u5730\u56fe\u4e2d\u5fc3\u5bf9\u51c6\u68cb\u724c\u5ba4\u5185\u7684\u7eff\u8272\u6846\u540e\u70b9\u51fb\u653e\u7f6e\u3002`);
+}
+
+function getPendingPcPurchaseTier() {
+  return state.pendingPcPurchase && getEquipmentTier(state.pendingPcPurchase.equipmentLevel);
+}
+
+function getPcVisualBounds(pc) {
+  const desk = getPcDeskBounds(pc);
+  const seat = getPcSeatBounds(pc);
+  const bounds = unionRects(desk, seat, 2);
+  bounds.h += 10;
+  return bounds;
+}
+
+function getPcSeatBounds(pc) {
   return {
+    x: pc.seatX - 13,
+    y: pc.seatY - 12,
+    w: 26,
+    h: 38
+  };
+}
+
+function unionRects(a, b, padding = 0) {
+  const x = Math.min(a.x, b.x) - padding;
+  const y = Math.min(a.y, b.y) - padding;
+  const right = Math.max(a.x + a.w, b.x + b.w) + padding;
+  const bottom = Math.max(a.y + a.h, b.y + b.h) + padding;
+  return {
+    x,
+    y,
+    w: right - x,
+    h: bottom - y
+  };
+}
+
+function getPcDefaultVisualBounds(pc) {
+  return {
+    x: pc.x - 10,
+    y: pc.y - 8,
+    w: pc.w + 20,
+    h: pc.h + 76
+  };
+}
+
+function getPcDeskBounds(pc) {
+  return {
+    x: pc.x - 5,
+    y: pc.y - 8,
+    w: pc.w + 10,
+    h: pc.h + 38
+  };
+}
+
+function getFixedPcPlacementObstacles() {
+  const counter = layout.counter;
+  return [
+    { x: counter.x - 14, y: counter.y - 24, w: counter.w + 28, h: counter.h + 48 },
+    { x: layout.entrance.x - 58, y: layout.entrance.y - 46, w: 112, h: 92 }
+  ];
+}
+
+function isPcPlacementValid(area, pc) {
+  if (!area || area.typeId === "toiletRoom" || getAreaCapacity(area) <= area.pcCount) return false;
+  return isPcLayoutPositionValid(area, pc);
+}
+
+function isPcLayoutPositionValid(area, pc, ignorePcId = null) {
+  if (!isPcPositionSafeForArea(pc, area)) return false;
+
+  const bounds = getPcVisualBounds(pc);
+  const safeArea = {
+    x: area.x + 4,
+    y: area.y + 18,
+    w: area.w - 8,
+    h: area.h - 18
+  };
+  if (bounds.x < safeArea.x || bounds.y < safeArea.y ||
+      bounds.x + bounds.w > safeArea.x + safeArea.w ||
+      bounds.y + bounds.h > safeArea.y + safeArea.h) {
+    return false;
+  }
+
+  const deskBounds = getPcDeskBounds(pc);
+  const seatBounds = getPcSeatBounds(pc);
+  const overlapsPc = layout.pcs.some((other) => {
+    if (other.id === ignorePcId) return false;
+    const otherDesk = getPcDeskBounds(other);
+    const otherSeat = getPcSeatBounds(other);
+    if (rectanglesOverlap(deskBounds, otherDesk, 1)) return true;
+    if (rectanglesOverlap(seatBounds, otherDesk, -2)) return true;
+    if (rectanglesOverlap(deskBounds, otherSeat, -2)) return true;
+    return rectanglesOverlap(seatBounds, otherSeat, -8);
+  });
+  if (overlapsPc) return false;
+
+  const fixedObstacles = area.id === 1 ? getFixedPcPlacementObstacles() : [];
+  const doorObstacles = getAreaDoorPlacementObstacles(area);
+  return !fixedObstacles.concat(doorObstacles).some((obstacle) => rectanglesOverlap(bounds, obstacle, 4));
+}
+
+function getAreaDoorPlacementObstacles(area) {
+  const obstacles = [];
+  if (!area) return obstacles;
+
+  getStructuralAreas().forEach((other) => {
+    if (other.id === area.id) return;
+    const door = getDoorGeometryBetween(area, other);
+    if (!door) return;
+    obstacles.push({
+      x: door.rect.x - 14,
+      y: door.rect.y - 14,
+      w: door.rect.w + 28,
+      h: door.rect.h + 28
+    });
+  });
+  return obstacles;
+}
+
+function getPcPurchaseCandidate(worldX, worldY) {
+  const area = getAreaAtPoint(worldX, worldY);
+  if (!area || area.pcCount >= getAreaCapacity(area)) {
+    return { area, pc: null, canPlace: false };
+  }
+
+  const x = snapPcPosition(worldX - 21);
+  const y = snapPcPosition(worldY - 18);
+  const pc = createPc(layout.pcs.length, x, y, area.id, area.name);
+  pc.equipmentLevel = state.pendingPcPurchase ? state.pendingPcPurchase.equipmentLevel : 1;
+  return {
+    area,
+    pc,
+    canPlace: isPcPlacementValid(area, pc)
+  };
+}
+
+function placePendingPcPurchase(worldX, worldY) {
+  const pending = state.pendingPcPurchase;
+  if (!pending) return false;
+
+  const maxPcs = getMaxOperationalPcs();
+  if (layout.pcs.length >= maxPcs) {
+    say(`\u5f53\u524d Lv.${state.cafeLevel} \u6700\u591a\u8fd0\u8425 ${maxPcs} \u53f0\u673a\uff0c\u63a5\u5f85\u66f4\u591a\u987e\u5ba2\u5347\u7ea7\u540e\u518d\u6269\u673a\u3002`);
+    state.pendingPcPurchase = null;
+    return true;
+  }
+  if (state.cash < pending.cost) {
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u65b0\u8d2d\u7535\u8111\u9700\u8981 ${pending.cost} \u5143\u3002`);
+    state.pendingPcPurchase = null;
+    return true;
+  }
+
+  const candidate = getPcPurchaseCandidate(worldX, worldY);
+  if (!candidate.canPlace || !candidate.area || !candidate.pc) {
+    say("\u8fd9\u91cc\u653e\u4e0d\u4e0b\u7535\u8111\uff0c\u9700\u8981\u5728\u6709\u7a7a\u4f4d\u7684\u533a\u57df\u5185\u907f\u5f00\u5899\u4f53\u548c\u5df2\u6709\u8bbe\u5907\u3002");
+    return true;
+  }
+
+  state.cash -= pending.cost;
+  candidate.area.pcCount += 1;
+  layout.pcs.push(candidate.pc);
+  state.pendingPcPurchase = null;
+  updateEquipmentLevel();
+  updateCafeLevel();
+  markSaveDirty();
+  say(`${candidate.area.name} \u5df2\u65b0\u8d2d ${getEquipmentTier(candidate.pc.equipmentLevel).name}\uff0c\u7f16\u53f7 ${candidate.pc.id + 1}\u3002`);
+  return true;
+}
+
+function placePendingPcPurchaseAtPreview() {
+  if (!state.pendingPcPurchase) return false;
+  const center = getViewportWorldCenter();
+  return placePendingPcPurchase(center.x, center.y);
+}
+
+function getMahjongPurchaseCandidate(worldX, worldY) {
+  const area = getAreaAtPoint(worldX, worldY);
+  const table = {
+    id: state.mahjongTables.length + 1,
+    areaId: area ? area.id : null,
+    areaName: area ? area.name : "",
+    x: snapPcPosition(worldX - MAHJONG_TABLE_SIZE.w / 2),
+    y: snapPcPosition(worldY - MAHJONG_TABLE_SIZE.h / 2),
+    w: MAHJONG_TABLE_SIZE.w,
+    h: MAHJONG_TABLE_SIZE.h
+  };
+  return {
+    area,
+    table,
+    canPlace: isMahjongPlacementValid(area, table)
+  };
+}
+
+function isMahjongPlacementValid(area, table) {
+  if (!area || area.typeId !== "chessRoom") return false;
+  const safeArea = {
+    x: area.x + 10,
+    y: area.y + 32,
+    w: area.w - 20,
+    h: area.h - 42
+  };
+  if (table.x < safeArea.x || table.y < safeArea.y ||
+      table.x + table.w > safeArea.x + safeArea.w ||
+      table.y + table.h > safeArea.y + safeArea.h) {
+    return false;
+  }
+  const overlapsPc = layout.pcs.some((pc) => rectanglesOverlap(table, getPcVisualBounds(pc), 2));
+  const overlapsTable = state.mahjongTables.some((other) => rectanglesOverlap(table, other, 4));
+  const blocksDoor = getAreaDoorPlacementObstacles(area).some((obstacle) => rectanglesOverlap(table, obstacle, 4));
+  return !overlapsPc && !overlapsTable && !blocksDoor;
+}
+
+function placePendingMahjongPurchaseAtPreview() {
+  if (!state.pendingMahjongPurchase) return false;
+
+  if (state.cash < MAHJONG_TABLE_COST) {
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u8d2d\u4e70\u9ebb\u5c06\u684c\u9700\u8981 ${MAHJONG_TABLE_COST} \u5143\u3002`);
+    state.pendingMahjongPurchase = false;
+    return true;
+  }
+
+  const center = getViewportWorldCenter();
+  const candidate = getMahjongPurchaseCandidate(center.x, center.y);
+  if (!candidate.canPlace) {
+    say("\u9ebb\u5c06\u684c\u9700\u8981\u653e\u5728\u68cb\u724c\u5ba4\u5185\uff0c\u5e76\u907f\u5f00\u95e8\u6d1e\u548c\u5df2\u6709\u8bbe\u5907\u3002");
+    return true;
+  }
+
+  state.cash -= MAHJONG_TABLE_COST;
+  state.mahjongTables.push(candidate.table);
+  state.pendingMahjongPurchase = false;
+  markSaveDirty();
+  say(`${candidate.area.name} \u5df2\u6446\u653e\u9ebb\u5c06\u684c\u3002`);
+  return true;
+}
+
+function createWorker(type) {
+  const baseHome = layout.staffHome[type] || layout.staffHome.floor;
+  const homeIndex = state.workers.filter((worker) => worker.type === type).length;
+  const worker = {
     id: state.workerId++,
     type,
-    x: home.x,
-    y: home.y,
+    x: baseHome.x,
+    y: baseHome.y,
+    homeIndex,
+    stuckTimer: 0,
+    pathTimer: 0,
     state: "station",
     taskTimer: 0,
     targetPcId: null,
     targetGuestId: null,
     targetProductId: null
   };
+  const home = getWorkerHome(worker);
+  worker.x = home.x;
+  worker.y = home.y;
+  return worker;
+}
+
+function getWorkerHome(worker) {
+  const room = layout.room;
+  const counter = layout.counter;
+  const index = worker.homeIndex || 0;
+  const serviceStations = [
+    { x: counter.x - 34, y: counter.y + 24 },
+    { x: counter.x - 62, y: counter.y + 24 },
+    { x: counter.x - 90, y: counter.y + 24 },
+    { x: counter.x - 34, y: counter.y + 52 },
+    { x: counter.x - 62, y: counter.y + 52 },
+    { x: counter.x - 90, y: counter.y + 52 }
+  ];
+  const floorCorners = [
+    { x: room.x + 46, y: room.y + 112 },
+    { x: room.x + room.w - 46, y: room.y + 112 },
+    { x: room.x + 46, y: room.y + room.h - 48 },
+    { x: room.x + room.w - 46, y: room.y + room.h - 48 }
+  ];
+  const cleanerCorners = [
+    { x: room.x + 70, y: room.y + 132 },
+    { x: room.x + room.w - 70, y: room.y + 132 },
+    { x: room.x + 70, y: room.y + room.h - 72 },
+    { x: room.x + room.w - 70, y: room.y + room.h - 72 }
+  ];
+  const frontDeskOverflow = [
+    { x: counter.x + 18, y: counter.y + counter.h + 28 },
+    { x: counter.x + 48, y: counter.y + counter.h + 28 },
+    { x: counter.x + 78, y: counter.y + counter.h + 28 },
+    { x: counter.x + 108, y: counter.y + counter.h + 28 }
+  ];
+  const floorStandby = index < 4
+    ? floorCorners
+    : index < 6 ? frontDeskOverflow : [getWorkerPatrolPoint(worker, 0)];
+  const cleanerStandby = index < 4
+    ? cleanerCorners
+    : index < 6 ? frontDeskOverflow.map((point) => ({ x: point.x + 14, y: point.y + 18 })) : [getWorkerPatrolPoint(worker, 1)];
+  const stationSets = {
+    cashier: [
+      { x: counter.x + counter.w - 22, y: counter.y + counter.h - 8 },
+      { x: counter.x + counter.w - 48, y: counter.y + counter.h - 8 }
+    ],
+    manager: serviceStations,
+    repairman: serviceStations.slice(1).concat(serviceStations.slice(0, 1)),
+    companion: serviceStations.slice(2).concat(serviceStations.slice(0, 2)),
+    floor: floorStandby,
+    cleaner: cleanerStandby
+  };
+  const stations = stationSets[worker.type] || [layout.staffHome.floor];
+  const safeStations = stations.filter((station) => !isStationTooCloseToToilet(station));
+  const usableStations = safeStations.length > 0 ? safeStations : stations;
+  return usableStations[index % usableStations.length];
+}
+
+function getWorkerPatrolPoint(worker, offset) {
+  const room = layout.room;
+  const patrolPoints = [
+    { x: room.x + room.w * 0.25, y: room.y + room.h * 0.3 },
+    { x: room.x + room.w * 0.7, y: room.y + room.h * 0.32 },
+    { x: room.x + room.w * 0.72, y: room.y + room.h * 0.72 },
+    { x: room.x + room.w * 0.26, y: room.y + room.h * 0.74 },
+    { x: room.x + room.w * 0.5, y: room.y + room.h * 0.54 }
+  ].map((point) => getAreaSafePoint(room, point.x, point.y));
+  const step = Math.floor((state.time || 0) / 4 + (worker.homeIndex || 0) + offset) % patrolPoints.length;
+  return patrolPoints[step] || getAreaSafePoint(room, room.x + room.w / 2, room.y + room.h / 2);
+}
+
+function isStationTooCloseToToilet(point) {
+  const toilet = layout.toilet;
+  return point.x >= toilet.x - 44 &&
+    point.x <= toilet.x + toilet.w + 44 &&
+    point.y >= toilet.y - 44 &&
+    point.y <= toilet.y + toilet.h + 44;
 }
 
 function canWorkerClean(worker) {
-  return worker.type === "floor" || worker.type === "cleaner" || worker.type === "manager";
+  return worker.type === "floor" || worker.type === "cleaner";
 }
 
 function canWorkerRepair(worker) {
-  return worker.type === "repairman" || worker.type === "manager";
+  return worker.type === "repairman";
 }
 
 function canWorkerDeliver(worker) {
-  return worker.type === "cashier" || worker.type === "manager";
+  return worker.type === "cashier" || worker.type === "manager" || worker.type === "companion";
 }
 
 function getWorkerLabel(type) {
@@ -1463,14 +2234,7 @@ function getIdleWorkers() {
 }
 
 function calculateCafeLevel() {
-  const employeeTotal = getEmployeeTotal();
-  const machineCount = layout.pcs.length;
-  const equipmentAverage = getAverageEquipmentLevel();
-
-  if (employeeTotal >= 6 && machineCount >= 10 && equipmentAverage >= 3.5) return 4;
-  if (employeeTotal >= 4 && machineCount >= 8 && equipmentAverage >= 2.6) return 3;
-  if (employeeTotal >= 2 && machineCount >= 6 && equipmentAverage >= 1.6) return 2;
-  return 1;
+  return getCafeLevelForServed(state.served);
 }
 
 function updateCafeLevel() {
@@ -1478,7 +2242,7 @@ function updateCafeLevel() {
   if (nextLevel > state.cafeLevel) {
     say(`\u7f51\u5427\u5347\u5230 Lv.${nextLevel}\uff0c\u65b0\u529f\u80fd\u5c06\u9010\u6b65\u89e3\u9501\u3002`);
   }
-  state.cafeLevel = Math.max(state.cafeLevel, nextLevel);
+  state.cafeLevel = nextLevel;
 }
 
 function getStaffRequirement(staff) {
@@ -1543,6 +2307,10 @@ function closePanels() {
   state.settingsOpen = false;
   state.pendingEquipmentTierLevel = null;
   state.pendingExpansion = null;
+  state.pendingPcPurchase = null;
+  state.pendingMahjongPurchase = false;
+  state.pcActionMenu = null;
+  state.pcUpgradeMenu = null;
   state.confirmDialog = null;
   state.layoutToolActive = false;
   state.selectedAreaId = null;
@@ -1557,6 +2325,7 @@ function clearActionButtons() {
   ui.expansionButton = null;
   ui.layoutButton = null;
   ui.settingsButton = null;
+  ui.purchaseMahjongButton = null;
 }
 
 function screenToWorld(x, y) {
@@ -1567,15 +2336,19 @@ function screenToWorld(x, y) {
 }
 
 function clampCamera() {
-  const maxX = Math.max(0, WORLD.w - view.width);
-  const maxY = Math.max(0, WORLD.h - view.height + ACTION_BAR_HEIGHT);
-  state.camera.x = Math.max(0, Math.min(maxX, state.camera.x));
-  state.camera.y = Math.max(0, Math.min(maxY, state.camera.y));
+  const bounds = getExpandedWorldBounds();
+  const minX = bounds.minX + 40;
+  const minY = bounds.minY + 40;
+  const maxX = Math.max(minX, bounds.maxX - view.width + 120);
+  const maxY = Math.max(minY, bounds.maxY - (view.height - ACTION_BAR_HEIGHT) + HUD_HEIGHT + 120);
+  state.camera.x = Math.max(minX, Math.min(maxX, state.camera.x));
+  state.camera.y = Math.max(minY, Math.min(maxY, state.camera.y));
 }
 
 function isAnyPanelOpen() {
   return state.settingsOpen ||
     state.confirmDialog ||
+    state.pcUpgradeMenu ||
     state.expansionOpen ||
     state.layoutOpen ||
     state.pricingOpen ||
@@ -1587,6 +2360,174 @@ function isAnyPanelOpen() {
 
 function openConfirmDialog(title, body, onConfirm) {
   state.confirmDialog = { title, body, onConfirm };
+}
+
+function getPcPurchaseValue(level) {
+  return getNewPcCost(level);
+}
+
+function getPcUpgradeCost(pc, targetLevel) {
+  if (!pc || targetLevel <= pc.equipmentLevel) return 0;
+  const targetValue = getPcPurchaseValue(targetLevel);
+  const tradeIn = Math.floor(getPcPurchaseValue(pc.equipmentLevel) / 2);
+  return Math.max(0, targetValue - tradeIn);
+}
+
+function getPcSellValue(pc) {
+  return Math.floor(getPcPurchaseValue(pc.equipmentLevel) / 2);
+}
+
+function getPcHourlyRate(pc) {
+  const area = pc && getAreaById(pc.areaId);
+  return area && Number.isFinite(area.hourlyRate) ? area.hourlyRate : getDefaultAreaRate("livingRoom");
+}
+
+function openPcActionMenu(pc, screenX, screenY) {
+  if (!pc) return;
+  state.pcActionMenu = {
+    pcId: pc.id,
+    x: screenX,
+    y: screenY
+  };
+}
+
+function getPcFromActionMenu(menu = state.pcActionMenu) {
+  if (!menu) return null;
+  return layout.pcs.find((pc) => pc.id === menu.pcId) || null;
+}
+
+function handlePcActionMenuButton(button) {
+  const pc = button.pc;
+  if (!pc) {
+    state.pcActionMenu = null;
+    return;
+  }
+
+  if (button.action === "info") {
+    state.pcInfoBubble = { pcId: pc.id, timer: 3 };
+    state.pcActionMenu = null;
+    return;
+  }
+
+  if (button.action === "upgrade") {
+    if (pc.occupiedBy) {
+      say("\u8fd9\u53f0\u673a\u6709\u4eba\u4e0a\u673a\uff0c\u5148\u7b49\u5ba2\u4eba\u4e0b\u673a\u518d\u5347\u7ea7\u3002");
+    } else if (!getUpgradeableTiers(pc).length) {
+      say(`${pc.id + 1} \u53f7\u673a\u5df2\u662f\u5f53\u524d\u6700\u9ad8\u914d\u7f6e\u3002`);
+    } else {
+      state.pcUpgradeMenu = { pcId: pc.id };
+    }
+    state.pcActionMenu = null;
+    return;
+  }
+
+  if (button.action === "move") {
+    if (pc.occupiedBy) {
+      say("\u8fd9\u53f0\u673a\u6709\u4eba\u4e0a\u673a\uff0c\u5148\u7b49\u5ba2\u4eba\u4e0b\u673a\u518d\u79fb\u52a8\u3002");
+    } else {
+      state.layoutToolActive = true;
+      state.layoutMode = "pc";
+      state.selectedPcId = pc.id + 1;
+      say(`${pc.id + 1} \u53f7\u673a\u5df2\u9009\u4e2d\uff0c\u62d6\u52a8\u5730\u56fe\u5bf9\u51c6\u7eff\u8272\u6846\u540e\u70b9\u51fb\u653e\u7f6e\u3002`);
+    }
+    state.pcActionMenu = null;
+    return;
+  }
+
+  if (button.action === "sell") {
+    if (!canSellPc(pc)) {
+      say("\u8fd9\u53f0\u673a\u6b63\u5728\u88ab\u4f7f\u7528\u6216\u6709\u4efb\u52a1\u5360\u7528\uff0c\u6682\u65f6\u4e0d\u80fd\u51fa\u552e\u3002");
+    } else {
+      const value = getPcSellValue(pc);
+      openConfirmDialog(
+        "\u51fa\u552e\u8bbe\u5907",
+        `\u786e\u5b9a\u4ee5 ${value} \u5143\u51fa\u552e ${pc.id + 1} \u53f7\u673a\u5417\uff1f`,
+        () => sellPc(pc)
+      );
+    }
+    state.pcActionMenu = null;
+  }
+}
+
+function confirmPcUpgrade(pc, tier) {
+  if (!pc || !tier) {
+    state.pcUpgradeMenu = null;
+    return;
+  }
+
+  const cost = getPcUpgradeCost(pc, tier.level);
+  state.pcUpgradeMenu = null;
+  if (state.cash < cost) {
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u5347\u7ea7\u9700\u8981 ${cost} \u5143\u3002`);
+    return;
+  }
+  openConfirmDialog(
+    "\u5347\u7ea7\u8bbe\u5907",
+    `\u786e\u5b9a\u82b1\u8d39 ${cost} \u5143\u5c06 ${pc.id + 1} \u53f7\u673a\u5347\u7ea7\u5230 ${tier.name} \u5417\uff1f\u5df2\u6309\u65e7\u8bbe\u5907\u534a\u4ef7\u62b5\u6263\u3002`,
+    () => upgradePcEquipment(pc, tier)
+  );
+}
+
+function cancelLayoutTool() {
+  state.layoutToolActive = false;
+  state.selectedAreaId = null;
+  state.selectedPcId = null;
+  state.layoutMode = "off";
+  say("\u5df2\u9000\u51fa\u5e03\u5c40\u64cd\u4f5c\u3002");
+}
+
+function getUpgradeableTiers(pc) {
+  return equipmentTiers.filter((tier) => tier.level > pc.equipmentLevel);
+}
+
+function canSellPc(pc) {
+  if (!pc || pc.occupiedBy) return false;
+  const hasGuestTarget = state.guests.some((guest) => guest.pcId === pc.id);
+  const hasWorkerTarget = state.workers.some((worker) => worker.targetPcId === pc.id);
+  return !hasGuestTarget && !hasWorkerTarget;
+}
+
+function sellPc(pc) {
+  if (!canSellPc(pc)) {
+    say("\u8fd9\u53f0\u673a\u6b63\u5728\u88ab\u4f7f\u7528\u6216\u6709\u4efb\u52a1\u5360\u7528\uff0c\u6682\u65f6\u4e0d\u80fd\u51fa\u552e\u3002");
+    return;
+  }
+
+  const value = getPcSellValue(pc);
+  const area = getAreaById(pc.areaId);
+  const removedId = pc.id;
+  layout.pcs = layout.pcs.filter((item) => item.id !== pc.id);
+  if (area) {
+    area.pcCount = Math.max(0, (area.pcCount || 0) - 1);
+  }
+  renumberPcs(removedId);
+  state.selectedPcId = null;
+  state.pcInfoBubble = null;
+  state.pcActionMenu = null;
+  state.pcUpgradeMenu = null;
+  state.cash += value;
+  updateEquipmentLevel();
+  updateCafeLevel();
+  markSaveDirty();
+  say(`\u5df2\u51fa\u552e ${removedId + 1} \u53f7\u673a\uff0c\u56de\u6536 ${value} \u5143\u3002`);
+}
+
+function renumberPcs(removedId = null) {
+  const idMap = {};
+  layout.pcs.forEach((pc, index) => {
+    idMap[pc.id] = index;
+    pc.id = index;
+  });
+
+  state.guests.forEach((guest) => {
+    if (guest.pcId === removedId) guest.pcId = null;
+    else if (Object.prototype.hasOwnProperty.call(idMap, guest.pcId)) guest.pcId = idMap[guest.pcId];
+  });
+
+  state.workers.forEach((worker) => {
+    if (worker.targetPcId === removedId) worker.targetPcId = null;
+    else if (Object.prototype.hasOwnProperty.call(idMap, worker.targetPcId)) worker.targetPcId = idMap[worker.targetPcId];
+  });
 }
 
 function getFirstTouch(event) {
@@ -1638,6 +2579,8 @@ function handleTouchEndEvent(event) {
 }
 
 function handleTouch(x, y) {
+  playClickSound();
+
   if (state.confirmDialog) {
     if (isPointInRect(x, y, ui.confirmNoButton)) {
       state.confirmDialog = null;
@@ -1652,6 +2595,31 @@ function handleTouch(x, y) {
       }
       return;
     }
+    return;
+  }
+
+  if (state.pcInfoBubble && isPointInRect(x, y, ui.pcInfoBubbleButton)) {
+    state.pcInfoBubble = null;
+    return;
+  }
+
+  if (state.pcUpgradeMenu) {
+    const upgradeButton = ui.pcUpgradeButtons.find((button) => isPointInRect(x, y, button));
+    if (upgradeButton) {
+      confirmPcUpgrade(upgradeButton.pc, upgradeButton.tier);
+      return;
+    }
+    state.pcUpgradeMenu = null;
+    return;
+  }
+
+  if (state.pcActionMenu) {
+    const pcActionButton = ui.pcActionButtons.find((button) => isPointInRect(x, y, button));
+    if (pcActionButton) {
+      handlePcActionMenuButton(pcActionButton);
+      return;
+    }
+    state.pcActionMenu = null;
     return;
   }
 
@@ -1674,6 +2642,16 @@ function handleTouch(x, y) {
 
     if (isPointInRect(x, y, ui.toggleTestModeButton)) {
       setTestMode(!state.testMode);
+      return;
+    }
+
+    if (isPointInRect(x, y, ui.toggleMusicButton)) {
+      toggleMusicEnabled();
+      return;
+    }
+
+    if (isPointInRect(x, y, ui.toggleSfxButton)) {
+      toggleSfxEnabled();
       return;
     }
 
@@ -1808,7 +2786,7 @@ function handleTouch(x, y) {
 
       const pcButton = ui.equipmentPcButtons.find((button) => isPointInRect(x, y, button));
       if (pcButton) {
-        upgradePcEquipment(pcButton.pc, pendingTier);
+        confirmPcUpgrade(pcButton.pc, pendingTier);
       }
       return;
     }
@@ -1819,9 +2797,20 @@ function handleTouch(x, y) {
       return;
     }
 
+    if (isPointInRect(x, y, ui.purchaseMahjongButton)) {
+      startMahjongPurchase();
+      return;
+    }
+
     const upgradeButton = ui.upgradeEquipmentButtons.find((button) => isPointInRect(x, y, button));
     if (upgradeButton) {
       openEquipmentPcSelection(upgradeButton.tier);
+      return;
+    }
+
+    const purchasePcButton = ui.purchasePcButtons.find((button) => isPointInRect(x, y, button));
+    if (purchasePcButton) {
+      startPcPurchase(purchasePcButton.tier);
     }
     return;
   }
@@ -1879,12 +2868,25 @@ function handleTouch(x, y) {
     return;
   }
 
+  if (state.layoutToolActive && isPointInRect(x, y, ui.cancelMoveButton)) {
+    cancelLayoutTool();
+    return;
+  }
+
   const worldPoint = screenToWorld(x, y);
   if (state.layoutToolActive && handleLayoutTouch(worldPoint.x, worldPoint.y)) {
     return;
   }
 
   if (placePendingExpansion(worldPoint.x, worldPoint.y)) {
+    return;
+  }
+
+  if (placePendingPcPurchaseAtPreview()) {
+    return;
+  }
+
+  if (placePendingMahjongPurchaseAtPreview()) {
     return;
   }
 
@@ -1900,6 +2902,12 @@ function handleTouch(x, y) {
     return;
   }
 
+  const tappedPc = getPcAtPoint(worldPoint.x, worldPoint.y);
+  if (tappedPc) {
+    openPcActionMenu(tappedPc, x, y);
+    return;
+  }
+
   if (isToiletTapped(worldPoint.x, worldPoint.y) && cleanToilet()) {
     return;
   }
@@ -1912,6 +2920,11 @@ function handleTouch(x, y) {
 
 function random(min, max) {
   return Math.random() * (max - min) + min;
+}
+
+function seededUnit(seed) {
+  const value = Math.sin(seed * 12.9898) * 43758.5453;
+  return value - Math.floor(value);
 }
 
 function distance(a, b) {
@@ -1940,23 +2953,41 @@ function getWalkableAreaAtPoint(x, y) {
 }
 
 function isEntranceWalkway(x, y) {
-  return x >= layout.room.x - 58 &&
-    x <= layout.room.x + 22 &&
-    y >= layout.entrance.y - 36 &&
-    y <= layout.entrance.y + 36;
+  return x >= layout.room.x - 76 &&
+    x <= layout.room.x + 34 &&
+    y >= layout.entrance.y - 48 &&
+    y <= layout.entrance.y + 48;
 }
 
 function isPcSeatTarget(x, y) {
   return layout.pcs.some((pc) => Math.hypot(x - pc.seatX, y - pc.seatY) <= 10);
 }
 
+function isDoorwayPoint(x, y) {
+  const areas = getStructuralAreas();
+  for (let i = 0; i < areas.length; i += 1) {
+    for (let j = i + 1; j < areas.length; j += 1) {
+      const door = getDoorGeometryBetween(areas[i], areas[j]);
+      if (door && isPointInsideRect(x, y, door.rect)) return true;
+    }
+  }
+  return false;
+}
+
 function isMachineBlockingPoint(x, y) {
   if (isPcSeatTarget(x, y)) return false;
-  return layout.pcs.some((pc) => (
+  const blockedByPc = layout.pcs.some((pc) => (
     x >= pc.x - 5 &&
     x <= pc.x + pc.w + 5 &&
     y >= pc.y - 5 &&
     y <= pc.y + pc.h - 2
+  ));
+  if (blockedByPc) return true;
+  return state.mahjongTables.some((table) => (
+    x >= table.x - 6 &&
+    x <= table.x + table.w + 6 &&
+    y >= table.y - 6 &&
+    y <= table.y + table.h + 6
   ));
 }
 
@@ -1965,23 +2996,148 @@ function isTransitionOpen(fromArea, toArea, x, y) {
   if (!sharesWall(fromArea, toArea)) return false;
   if (fromArea.typeId === "publicFloor" || toArea.typeId === "publicFloor") return true;
 
+  const door = getDoorGeometryBetween(fromArea, toArea);
+  return Boolean(door && isPointInsideRect(x, y, door.rect));
+}
+
+function getDoorPointBetween(fromArea, toArea) {
+  const door = getDoorGeometryBetween(fromArea, toArea);
+  return door ? door.center : null;
+}
+
+function getDoorGeometryBetween(fromArea, toArea) {
+  if (!fromArea || !toArea || !sharesWall(fromArea, toArea)) return null;
+  const touchesHallNetwork = fromArea.id === 1 || toArea.id === 1 ||
+    fromArea.typeId === "publicFloor" || toArea.typeId === "publicFloor";
+  if (!touchesHallNetwork) return null;
+
+  const doorW = 42;
+  const doorH = 30;
   if (fromArea.y + fromArea.h === toArea.y || toArea.y + toArea.h === fromArea.y) {
+    const boundaryY = fromArea.y + fromArea.h === toArea.y ? toArea.y : fromArea.y;
     const overlapStart = Math.max(fromArea.x + 16, toArea.x + 16);
     const overlapEnd = Math.min(fromArea.x + fromArea.w - 16, toArea.x + toArea.w - 16);
-    if (overlapEnd - overlapStart < 28) return false;
-    const center = (overlapStart + overlapEnd) / 2;
-    return x >= center - 19 && x <= center + 19;
+    if (overlapEnd - overlapStart < 28) return null;
+    const centerX = (overlapStart + overlapEnd) / 2;
+    return {
+      center: { x: centerX, y: boundaryY },
+      rect: { x: centerX - doorW / 2, y: boundaryY - 12, w: doorW, h: 24 },
+      orientation: "horizontal"
+    };
   }
 
   if (fromArea.x + fromArea.w === toArea.x || toArea.x + toArea.w === fromArea.x) {
+    const boundaryX = fromArea.x + fromArea.w === toArea.x ? toArea.x : fromArea.x;
     const overlapStart = Math.max(fromArea.y + 28, toArea.y + 28);
     const overlapEnd = Math.min(fromArea.y + fromArea.h - 16, toArea.y + toArea.h - 16);
-    if (overlapEnd - overlapStart < 28) return false;
-    const center = (overlapStart + overlapEnd) / 2;
-    return y >= center - 11 && y <= center + 11;
+    if (overlapEnd - overlapStart < 28) return null;
+    const centerY = (overlapStart + overlapEnd) / 2;
+    return {
+      center: { x: boundaryX, y: centerY },
+      rect: { x: boundaryX - 12, y: centerY - doorH / 2, w: 24, h: doorH },
+      orientation: "vertical"
+    };
   }
 
-  return false;
+  return null;
+}
+
+function getDoorKey(a, b) {
+  const ids = [String(a.id), String(b.id)].sort();
+  return `${ids[0]}:${ids[1]}`;
+}
+
+function getDoorInwardArea(a, b) {
+  if (a.id === 1 && b.id !== 1) return b;
+  if (b.id === 1 && a.id !== 1) return a;
+  if (a.typeId === "toiletRoom") return a;
+  if (b.typeId === "toiletRoom") return b;
+  const areaA = a.w * a.h;
+  const areaB = b.w * b.h;
+  return areaA <= areaB ? a : b;
+}
+
+function isDoorOpen(a, b) {
+  return (state.doorTimers[getDoorKey(a, b)] || 0) > 0;
+}
+
+function updateDoorTimers(dt) {
+  Object.keys(state.doorTimers).forEach((key) => {
+    state.doorTimers[key] -= dt;
+    if (state.doorTimers[key] <= 0) {
+      delete state.doorTimers[key];
+    }
+  });
+
+  const movers = state.guests.concat(state.workers);
+  if (!movers.length) return;
+
+  const areas = getStructuralAreas();
+  for (let i = 0; i < areas.length; i += 1) {
+    for (let j = i + 1; j < areas.length; j += 1) {
+      const door = getDoorGeometryBetween(areas[i], areas[j]);
+      if (!door) continue;
+      const active = movers.some((entity) => Math.hypot(entity.x - door.center.x, entity.y - door.center.y) <= 34);
+      if (active) {
+        state.doorTimers[getDoorKey(areas[i], areas[j])] = 0.85;
+      }
+    }
+  }
+}
+
+function getDoorInnerPoint(fromArea, toArea) {
+  const door = getDoorGeometryBetween(fromArea, toArea);
+  if (!door) return null;
+  const point = { x: door.center.x, y: door.center.y };
+  if (door.orientation === "horizontal") {
+    point.y += toArea.y > fromArea.y ? 12 : -12;
+  } else {
+    point.x += toArea.x > fromArea.x ? 12 : -12;
+  }
+  return point;
+}
+
+function findAreaRoute(fromArea, toArea) {
+  if (!fromArea || !toArea) return [];
+  if (fromArea.id === toArea.id) return [fromArea];
+
+  const areas = getAttachableAreas();
+  const queue = [[fromArea]];
+  const visited = new Set([fromArea.id]);
+
+  while (queue.length) {
+    const route = queue.shift();
+    const current = route[route.length - 1];
+    if (current.id === toArea.id) return route;
+
+    areas.forEach((next) => {
+      if (visited.has(next.id)) return;
+      if (!sharesWall(current, next)) return;
+      const door = getDoorPointBetween(current, next);
+      if (!door) return;
+      visited.add(next.id);
+      queue.push(route.concat(next));
+    });
+  }
+
+  return [];
+}
+
+function getNextRouteTarget(entity, target) {
+  const fromArea = getWalkableAreaAtPoint(entity.x, entity.y);
+  const toArea = getWalkableAreaAtPoint(target.x, target.y);
+  if (!fromArea || !toArea || fromArea.id === toArea.id) return target;
+
+  const route = findAreaRoute(fromArea, toArea);
+  if (route.length < 2) return target;
+
+  const door = getDoorPointBetween(route[0], route[1]);
+  if (!door) return target;
+  if (distance(entity, door) > 5) return door;
+
+  const innerPoint = getDoorInnerPoint(route[0], route[1]);
+  if (innerPoint && distance(entity, innerPoint) > 4) return innerPoint;
+  return target;
 }
 
 function canMoveToPoint(entity, x, y) {
@@ -1989,20 +3145,66 @@ function canMoveToPoint(entity, x, y) {
 
   const fromArea = getWalkableAreaAtPoint(entity.x, entity.y);
   const toArea = getWalkableAreaAtPoint(x, y);
-  if (!toArea && !isEntranceWalkway(x, y)) return false;
+  if (!toArea && !isEntranceWalkway(x, y) && !isDoorwayPoint(x, y)) return false;
   if (fromArea && toArea && !isTransitionOpen(fromArea, toArea, x, y)) return false;
   return true;
 }
 
+function getAreaSafePoint(area, x, y) {
+  if (!area) return null;
+  return {
+    x: Math.max(area.x + 14, Math.min(area.x + area.w - 14, x)),
+    y: Math.max(area.y + 20, Math.min(area.y + area.h - 18, y))
+  };
+}
+
+function getUnstuckPoint(entity, target) {
+  const currentArea = getWalkableAreaAtPoint(entity.x, entity.y);
+  const targetArea = getWalkableAreaAtPoint(target.x, target.y);
+  if (!currentArea && targetArea) {
+    const entranceDistance = Math.hypot(entity.x - layout.entrance.x, entity.y - layout.entrance.y);
+    if (targetArea.id === 1 || entranceDistance < 160) {
+      return { x: layout.entrance.x + 18, y: layout.entrance.y };
+    }
+  }
+  if (currentArea && targetArea && currentArea.id !== targetArea.id) {
+    const route = findAreaRoute(currentArea, targetArea);
+    if (route.length >= 2) {
+      return getDoorInnerPoint(route[0], route[1]) || getDoorPointBetween(route[0], route[1]);
+    }
+  }
+
+  if (currentArea) {
+    const safe = getAreaSafePoint(currentArea, entity.x, entity.y);
+    if (safe && Math.hypot(safe.x - entity.x, safe.y - entity.y) > 1) return safe;
+    return getAreaSafePoint(currentArea, target.x, target.y);
+  }
+
+  if (targetArea) {
+    return getAreaSafePoint(targetArea, target.x, target.y);
+  }
+
+  if (isEntranceWalkway(target.x, target.y)) {
+    return { x: layout.entrance.x, y: layout.entrance.y };
+  }
+
+  if (isEntranceWalkway(entity.x, entity.y)) {
+    return { x: layout.entrance.x, y: layout.entrance.y };
+  }
+  return null;
+}
+
 function moveToward(entity, target, speed, dt) {
-  const dx = target.x - entity.x;
-  const dy = target.y - entity.y;
+  const routedTarget = getNextRouteTarget(entity, target);
+  const dx = routedTarget.x - entity.x;
+  const dy = routedTarget.y - entity.y;
   const len = Math.hypot(dx, dy);
 
   if (len < 1) {
-    entity.x = target.x;
-    entity.y = target.y;
-    return true;
+    entity.x = routedTarget.x;
+    entity.y = routedTarget.y;
+    entity.stuckTimer = 0;
+    return routedTarget === target;
   }
 
   const step = Math.min(len, speed * dt);
@@ -2018,58 +3220,79 @@ function moveToward(entity, target, speed, dt) {
 
   const next = candidates.find((candidate) => canMoveToPoint(entity, candidate.x, candidate.y));
   if (next) {
+    const nextDistance = Math.hypot(routedTarget.x - next.x, routedTarget.y - next.y);
     entity.x = next.x;
     entity.y = next.y;
+    entity.stuckTimer = nextDistance < len - 0.2 ? 0 : (entity.stuckTimer || 0) + dt;
+  } else {
+    entity.stuckTimer = (entity.stuckTimer || 0) + dt;
   }
-  return len <= step + 0.5;
+
+  if (entity.stuckTimer > 0.25 && len <= 18 && (isDoorwayPoint(routedTarget.x, routedTarget.y) || canMoveToPoint(entity, routedTarget.x, routedTarget.y))) {
+    entity.x = routedTarget.x;
+    entity.y = routedTarget.y;
+    entity.stuckTimer = 0;
+  } else if (entity.stuckTimer > 0.85 && len <= 52 && isDoorwayPoint(routedTarget.x, routedTarget.y)) {
+    entity.x = routedTarget.x;
+    entity.y = routedTarget.y;
+    entity.stuckTimer = 0;
+  } else if (entity.stuckTimer > 0.55) {
+    const recovery = getUnstuckPoint(entity, routedTarget);
+    if (recovery && Math.hypot(recovery.x - entity.x, recovery.y - entity.y) > 1) {
+      if (canMoveToPoint(entity, recovery.x, recovery.y) || isDoorwayPoint(recovery.x, recovery.y) || getWalkableAreaAtPoint(recovery.x, recovery.y)) {
+        entity.x = recovery.x;
+        entity.y = recovery.y;
+        entity.stuckTimer = 0;
+      }
+    }
+  } else if (entity.stuckTimer > 0.35 && !getWalkableAreaAtPoint(entity.x, entity.y) && !isEntranceWalkway(entity.x, entity.y)) {
+    const recovery = getUnstuckPoint(entity, routedTarget);
+    if (recovery) {
+      entity.x = recovery.x;
+      entity.y = recovery.y;
+      entity.stuckTimer = 0;
+    }
+  }
+  return routedTarget === target && len <= step + 0.5;
 }
 
 function getPcAccessPoint(pc) {
   const area = getAreaById(pc.areaId) || layout.room;
-  const side = pc.seatX < area.x + area.w / 2 ? -1 : 1;
-  const point = {
-    x: side < 0 ? pc.x - 18 : pc.x + pc.w + 18,
-    y: pc.seatY
-  };
+  const rotation = getNormalizedRotation(pc);
+  const point = { x: pc.seatX, y: pc.seatY };
+  if (rotation === 90) {
+    point.x -= 18;
+  } else if (rotation === 180) {
+    point.y -= 18;
+  } else if (rotation === 270) {
+    point.x += 18;
+  } else {
+    point.y += 18;
+  }
   return {
     x: Math.max(area.x + 16, Math.min(area.x + area.w - 16, point.x)),
     y: Math.max(area.y + 36, Math.min(area.y + area.h - 16, point.y))
   };
 }
 
-function getPcPathCorridorX(pc) {
-  return getPcAccessPoint(pc).x;
-}
-
 function moveToPcSeat(entity, pc, speed, dt) {
   if (!pc) return false;
   const seat = { x: pc.seatX, y: pc.seatY };
-  if (distance(entity, seat) <= 14) {
+  if (distance(entity, seat) <= 18) {
     entity.x = seat.x;
     entity.y = seat.y;
     return true;
   }
 
   const accessPoint = getPcAccessPoint(pc);
-  const corridorX = getPcPathCorridorX(pc);
-  if (Math.abs(entity.x - corridorX) > 6) {
-    moveToward(entity, { x: corridorX, y: entity.y }, speed, dt);
-    return false;
+  if (distance(entity, accessPoint) <= 12) {
+    entity.x = seat.x;
+    entity.y = seat.y;
+    return true;
   }
 
-  if (Math.abs(entity.y - accessPoint.y) > 6) {
-    moveToward(entity, { x: corridorX, y: accessPoint.y }, speed, dt);
-    return false;
-  }
-
-  if (distance(entity, accessPoint) > 5) {
-    moveToward(entity, accessPoint, speed, dt);
-    return false;
-  }
-
-  entity.x = seat.x;
-  entity.y = seat.y;
-  return true;
+  moveToward(entity, accessPoint, speed, dt);
+  return false;
 }
 
 function findFreePc(guest = null) {
@@ -2097,6 +3320,7 @@ function spawnGuest(guestType) {
     toiletRollTimer: random(8, 15),
     toiletTimer: 0,
     toiletDone: false,
+    stuckTimer: 0,
     guestType,
     speed: random(44, 58),
     palette
@@ -2206,7 +3430,10 @@ function getMaxWaitingGuests() {
 }
 
 function updateFrontDesk(dt) {
-  state.frontDesk.duration = state.employees.cashier > 0 ? 0.72 : 1.15;
+  const cashierCount = state.employees.cashier || 0;
+  state.frontDesk.duration = cashierCount > 0
+    ? Math.max(0.42, 0.84 - (cashierCount - 1) * 0.12)
+    : 1.25;
 
   if (state.frontDesk.busyGuestId) {
     state.frontDesk.timer -= dt;
@@ -2259,9 +3486,13 @@ function finishPlaying(guest, pc) {
 
   state.cash += income;
   state.served += 1;
+  updateCafeLevel();
   pc.sessionsServed += 1;
   pc.occupiedBy = null;
   pc.dirty = true;
+  if (state.toilet.busyGuestId === guest.id) {
+    state.toilet.busyGuestId = null;
+  }
   guest.state = "leaving";
   state.cleanliness = Math.max(0, state.cleanliness - 3);
   markSaveDirty();
@@ -2289,9 +3520,6 @@ function assignWorkerTasks() {
     if (canWorkerRepair(worker) && assignRepairTask(worker)) return;
     if (canWorkerDeliver(worker) && assignDeliveryTask(worker)) return;
     if (canWorkerClean(worker) && assignCleaningTask(worker)) return;
-
-    const home = layout.staffHome[worker.type] || layout.staffHome.floor;
-    moveToward(worker, home, 34, 1 / 60);
   });
 }
 
@@ -2302,6 +3530,7 @@ function assignRepairTask(worker) {
   pc.repairWorkerId = worker.id;
   worker.state = "toRepairPc";
   worker.targetPcId = pc.id;
+  worker.pathTimer = 0;
   return true;
 }
 
@@ -2310,7 +3539,7 @@ function assignDeliveryTask(worker) {
     item.state === "playing" &&
     item.demand &&
     !item.demand.assignedWorkerId &&
-    canServeDemandAutomatically(item)
+    canServeDemandAutomatically(item, worker)
   ));
 
   if (!guest) return false;
@@ -2319,10 +3548,15 @@ function assignDeliveryTask(worker) {
   worker.state = "toDeliver";
   worker.targetGuestId = guest.id;
   worker.targetProductId = guest.demand.productId;
+  worker.pathTimer = 0;
   return true;
 }
 
-function canServeDemandAutomatically(guest) {
+function canServeDemandAutomatically(guest, worker) {
+  if (isCompanionDemand(guest.demand)) {
+    return worker && worker.type === "companion" && state.employees.companion > 0;
+  }
+  if (!worker || (worker.type !== "cashier" && worker.type !== "manager")) return false;
   const product = getProductById(guest.demand.productId);
   return product &&
     state.cafeLevel >= product.unlockLevel &&
@@ -2330,21 +3564,61 @@ function canServeDemandAutomatically(guest) {
 }
 
 function assignCleaningTask(worker) {
-  const pc = layout.pcs.find((item) => item.dirty && !item.cleanWorkerId);
-  if (pc) {
-    pc.cleanWorkerId = worker.id;
-    worker.state = "toCleanPc";
-    worker.targetPcId = pc.id;
-    return true;
+  if (worker.type === "floor") {
+    return assignPcCleaningTask(worker);
   }
 
-  if (state.toilet.dirty && !state.toilet.cleanWorkerId) {
-    state.toilet.cleanWorkerId = worker.id;
-    worker.state = "toCleanToilet";
-    return true;
+  if (worker.type === "cleaner") {
+    return assignToiletCleaningTask(worker) || assignFloorMopTask(worker);
   }
 
   return false;
+}
+
+function assignPcCleaningTask(worker) {
+  const pc = layout.pcs.find((item) => item.dirty && !item.cleanWorkerId);
+  if (!pc) return false;
+
+  pc.cleanWorkerId = worker.id;
+  worker.state = "toCleanPc";
+  worker.targetPcId = pc.id;
+  worker.pathTimer = 0;
+  return true;
+}
+
+function assignToiletCleaningTask(worker) {
+  if (!state.toilet.dirty || state.toilet.cleanWorkerId || state.toilet.busyGuestId) return false;
+
+  state.toilet.cleanWorkerId = worker.id;
+  worker.state = "toCleanToilet";
+  worker.pathTimer = 0;
+  return true;
+}
+
+function assignFloorMopTask(worker) {
+  if (state.cleanliness >= 96 || state.floorCleaningWorkerId) return false;
+
+  state.floorCleaningWorkerId = worker.id;
+  worker.state = "toMopFloor";
+  worker.pathTimer = 0;
+  return true;
+}
+
+function getFloorMopPoint(worker) {
+  const room = layout.room;
+  const candidates = [
+    { x: room.x + room.w * 0.28, y: room.y + room.h * 0.72 },
+    { x: room.x + room.w * 0.72, y: room.y + room.h * 0.72 },
+    { x: room.x + room.w * 0.28, y: room.y + room.h * 0.48 },
+    { x: room.x + room.w * 0.72, y: room.y + room.h * 0.48 },
+    { x: room.x + room.w * 0.5, y: room.y + room.h * 0.8 }
+  ].map((point) => getAreaSafePoint(room, point.x, point.y));
+  const start = worker.homeIndex || 0;
+  for (let offset = 0; offset < candidates.length; offset += 1) {
+    const point = candidates[(start + offset) % candidates.length];
+    if (point && !isMachineBlockingPoint(point.x, point.y)) return point;
+  }
+  return getAreaSafePoint(room, room.x + 44, room.y + room.h - 48);
 }
 
 function updateWorkers(dt) {
@@ -2353,33 +3627,37 @@ function updateWorkers(dt) {
 
   state.workers.forEach((worker) => {
     if (worker.state === "station") {
-      const home = layout.staffHome[worker.type] || layout.staffHome.floor;
+      const home = getWorkerHome(worker);
       moveToward(worker, home, 36, dt);
       return;
     }
 
     if (worker.state === "toCleanPc") {
+      worker.pathTimer = (worker.pathTimer || 0) + dt;
       const pc = layout.pcs[worker.targetPcId];
-      if (!pc || !pc.dirty) {
+      if (!pc || !pc.dirty || worker.pathTimer > 8) {
         resetWorker(worker);
         return;
       }
       if (moveToPcSeat(worker, pc, 58, dt)) {
         worker.state = "cleaningPc";
-        worker.taskTimer = worker.type === "cleaner" ? 1.1 : 1.6;
+        worker.pathTimer = 0;
+        worker.taskTimer = 1.6;
       }
       return;
     }
 
     if (worker.state === "toRepairPc") {
+      worker.pathTimer = (worker.pathTimer || 0) + dt;
       const pc = layout.pcs[worker.targetPcId];
-      if (!pc || !pc.broken) {
+      if (!pc || !pc.broken || worker.pathTimer > 8) {
         resetWorker(worker);
         return;
       }
       if (moveToPcSeat(worker, pc, 58, dt)) {
         worker.state = "repairingPc";
-        worker.taskTimer = worker.type === "manager" ? 1.6 : 1.25;
+        worker.pathTimer = 0;
+        worker.taskTimer = 1.25;
       }
       return;
     }
@@ -2409,13 +3687,15 @@ function updateWorkers(dt) {
     }
 
     if (worker.state === "toCleanToilet") {
-      if (!state.toilet.dirty) {
+      worker.pathTimer = (worker.pathTimer || 0) + dt;
+      if (!state.toilet.dirty || worker.pathTimer > 8) {
         resetWorker(worker);
         return;
       }
-      if (moveToward(worker, { x: layout.toilet.standX, y: layout.toilet.standY }, 58, dt)) {
+      if (moveToward(worker, getToiletServicePoint(), 58, dt)) {
         worker.state = "cleaningToilet";
-        worker.taskTimer = worker.type === "cleaner" ? 1.2 : 1.8;
+        worker.pathTimer = 0;
+        worker.taskTimer = 1.2;
       }
       return;
     }
@@ -2429,14 +3709,39 @@ function updateWorkers(dt) {
       return;
     }
 
+    if (worker.state === "toMopFloor") {
+      worker.pathTimer = (worker.pathTimer || 0) + dt;
+      if (state.cleanliness >= 99 || worker.pathTimer > 8) {
+        resetWorker(worker);
+        return;
+      }
+      if (moveToward(worker, getFloorMopPoint(worker), 52, dt)) {
+        worker.state = "moppingFloor";
+        worker.pathTimer = 0;
+        worker.taskTimer = 1.4;
+      }
+      return;
+    }
+
+    if (worker.state === "moppingFloor") {
+      worker.taskTimer -= dt;
+      if (worker.taskTimer <= 0) {
+        cleanFloorByWorker();
+        resetWorker(worker);
+      }
+      return;
+    }
+
     if (worker.state === "toDeliver") {
+      worker.pathTimer = (worker.pathTimer || 0) + dt;
       const guest = state.guests.find((item) => item.id === worker.targetGuestId);
-      if (!guest || !guest.demand || guest.demand.productId !== worker.targetProductId) {
+      if (!guest || !guest.demand || guest.demand.productId !== worker.targetProductId || worker.pathTimer > 8) {
         resetWorker(worker);
         return;
       }
       if (moveToward(worker, { x: guest.x, y: guest.y + 10 }, 62, dt)) {
         worker.state = "delivering";
+        worker.pathTimer = 0;
         worker.taskTimer = 0.7;
       }
       return;
@@ -2472,7 +3777,18 @@ function cleanToiletByWorker() {
   say("\u5458\u5de5\u5df2\u6e05\u7406\u5395\u6240\u3002");
 }
 
+function cleanFloorByWorker() {
+  state.floorCleaningWorkerId = null;
+  state.cleanliness = Math.min(100, state.cleanliness + 8);
+  markSaveDirty();
+  say("\u4fdd\u6d01\u5df2\u62d6\u5730\uff0c\u4e0a\u7f51\u533a\u66f4\u5e72\u51c0\u4e86\u3002");
+}
+
 function serveGuestDemandByWorker(guest) {
+  if (isCompanionDemand(guest.demand)) {
+    return serveCompanionDemand(guest, true);
+  }
+
   const product = getProductById(guest.demand.productId);
   if (!product || (state.inventory[product.id] || 0) <= 0 || state.cafeLevel < product.unlockLevel) {
     if (guest.demand) guest.demand.assignedWorkerId = null;
@@ -2492,11 +3808,18 @@ function resetWorker(worker) {
   if (pc && pc.cleanWorkerId === worker.id) pc.cleanWorkerId = null;
   if (pc && pc.repairWorkerId === worker.id) pc.repairWorkerId = null;
   if (state.toilet.cleanWorkerId === worker.id) state.toilet.cleanWorkerId = null;
+  if (state.floorCleaningWorkerId === worker.id) state.floorCleaningWorkerId = null;
+  const guest = state.guests.find((item) => item.id === worker.targetGuestId);
+  if (guest && guest.demand && guest.demand.assignedWorkerId === worker.id) {
+    guest.demand.assignedWorkerId = null;
+  }
 
   worker.targetPcId = null;
   worker.targetGuestId = null;
   worker.targetProductId = null;
   worker.taskTimer = 0;
+  worker.pathTimer = 0;
+  worker.stuckTimer = 0;
   worker.state = "station";
 }
 
@@ -2569,10 +3892,18 @@ function updateGuests(dt) {
     }
 
     if (guest.state === "toToilet") {
-      const arrived = moveToward(guest, { x: layout.toilet.standX, y: layout.toilet.standY }, guest.speed, dt);
+      guest.pathTimer = (guest.pathTimer || 0) + dt;
+      const arrived = moveToward(guest, getToiletServicePoint(), guest.speed, dt);
       if (arrived) {
         guest.state = "usingToilet";
+        guest.pathTimer = 0;
         guest.toiletTimer = random(3.2, 5.2);
+      } else if (guest.pathTimer > 8) {
+        if (state.toilet.busyGuestId === guest.id) {
+          state.toilet.busyGuestId = null;
+        }
+        guest.state = "backToPc";
+        guest.pathTimer = 0;
       }
       continue;
     }
@@ -2582,6 +3913,9 @@ function updateGuests(dt) {
       if (guest.toiletTimer <= 0) {
         state.toilet.useCount += 1;
         state.toilet.dirty = state.toilet.useCount >= 2 || Math.random() < 0.35;
+        if (state.toilet.busyGuestId === guest.id) {
+          state.toilet.busyGuestId = null;
+        }
         state.cleanliness = Math.max(0, state.cleanliness - 4);
         guest.state = "backToPc";
         markSaveDirty();
@@ -2591,10 +3925,16 @@ function updateGuests(dt) {
     }
 
     if (guest.state === "backToPc") {
+      guest.pathTimer = (guest.pathTimer || 0) + dt;
       const pc = layout.pcs[guest.pcId];
       const arrived = moveToPcSeat(guest, pc, guest.speed, dt);
-      if (arrived) {
+      if (arrived || guest.pathTimer > 8) {
+        if (pc) {
+          guest.x = pc.seatX;
+          guest.y = pc.seatY;
+        }
         guest.state = "playing";
+        guest.pathTimer = 0;
       }
       continue;
     }
@@ -2617,6 +3957,7 @@ function update(dt) {
   updateFrontDesk(dt);
   updateGuests(dt);
   updateWorkers(dt);
+  updateDoorTimers(dt);
   updateCleanliness(dt);
   updatePayroll();
   updateLayoutHints(dt);
@@ -2624,10 +3965,17 @@ function update(dt) {
 }
 
 function updateLayoutHints(dt) {
-  if (!state.invalidFloorHint) return;
-  state.invalidFloorHint.timer -= dt;
-  if (state.invalidFloorHint.timer <= 0) {
-    state.invalidFloorHint = null;
+  if (state.invalidFloorHint) {
+    state.invalidFloorHint.timer -= dt;
+    if (state.invalidFloorHint.timer <= 0) {
+      state.invalidFloorHint = null;
+    }
+  }
+  if (state.pcInfoBubble) {
+    state.pcInfoBubble.timer -= dt;
+    if (state.pcInfoBubble.timer <= 0) {
+      state.pcInfoBubble = null;
+    }
   }
 }
 
@@ -2697,15 +4045,13 @@ function verticalGradientRect(x, y, w, h, topColor, bottomColor) {
 }
 
 function pixelPanel(x, y, w, h, fill, light = COLORS.counterEdge, dark = COLORS.line) {
-  rect(x + 3, y + 3, w, h, "rgba(26, 15, 11, 0.32)");
+  rect(x + 4, y + 4, w, h, "rgba(38, 23, 17, 0.42)");
   rect(x, y, w, h, dark);
-  rect(x + 3, y + 3, w - 6, h - 6, fill);
-  rect(x + 3, y + 3, w - 6, 3, light);
-  rect(x + 3, y + h - 6, w - 6, 3, "rgba(42, 19, 13, 0.34)");
-  rect(x + 4, y + 4, 7, 7, "rgba(255, 244, 207, 0.18)");
-  rect(x + w - 11, y + 4, 7, 7, "rgba(255, 244, 207, 0.12)");
-  rect(x + 4, y + h - 11, 7, 7, "rgba(42, 19, 13, 0.22)");
-  rect(x + w - 11, y + h - 11, 7, 7, "rgba(42, 19, 13, 0.28)");
+  rect(x + 4, y + 4, w - 8, h - 8, fill);
+  rect(x + 4, y + 4, w - 8, 4, light);
+  rect(x + 4, y + h - 8, w - 8, 4, "rgba(58, 36, 24, 0.42)");
+  rect(x + 8, y + 8, 8, 8, "rgba(255, 242, 208, 0.14)");
+  rect(x + w - 16, y + 8, 8, 8, "rgba(255, 242, 208, 0.1)");
 }
 
 function woodPanel(x, y, w, h, fill = COLORS.counter, light = COLORS.counterEdge) {
@@ -2716,25 +4062,50 @@ function woodPanel(x, y, w, h, fill = COLORS.counter, light = COLORS.counterEdge
 
 function drawWoodPlanks(x, y, w, h, plankH = 18) {
   for (let row = 0; row < h; row += plankH) {
-    const rowY = y + row;
-    rect(x, rowY, w, Math.min(plankH, h - row), row % (plankH * 2) === 0 ? COLORS.floor : COLORS.floorAlt);
-    rect(x, rowY, w, 1, "rgba(123, 78, 43, 0.46)");
-    const offset = row % (plankH * 4) === 0 ? 0 : 42;
-    for (let col = offset; col < w; col += 84) {
-      rect(x + col, rowY + 1, 1, Math.max(4, plankH - 2), "rgba(123, 78, 43, 0.25)");
+    drawWoodPlankRow(x, y + row, w, Math.min(plankH, h - row), row, plankH);
+  }
+  rect(x, y + h - 2, w, 2, "rgba(201, 153, 85, 0.58)");
+}
+
+function drawGlobalWoodPlanks(area) {
+  const plankH = 14;
+  const boardW = 72;
+  const startRow = Math.floor(area.y / plankH) * plankH;
+  const endY = area.y + area.h;
+  for (let rowY = startRow; rowY < endY; rowY += plankH) {
+    drawWoodPlankRow(area.x, rowY, area.w, plankH, rowY, plankH, boardW);
+  }
+  rect(area.x, area.y + area.h - 2, area.w, 2, "rgba(201, 153, 85, 0.38)");
+}
+
+function drawWoodPlankRow(x, y, w, h, rowSeed, plankH, boardW = 96) {
+  const rowIndex = Math.floor(rowSeed / plankH);
+  const fill = rowIndex % 2 === 0 ? "#d8aa62" : "#e0b66d";
+  rect(x, y, w, h, fill);
+  rect(x, y, w, 2, "rgba(126, 82, 41, 0.28)");
+
+  const offset = (rowIndex % 3) * Math.floor(boardW / 3);
+  const startX = Math.floor((x - offset) / boardW) * boardW + offset;
+  for (let col = startX; col < x + w; col += boardW) {
+    const boardX = Math.max(x, col);
+    const boardWClipped = Math.min(col + boardW, x + w) - boardX;
+    const tone = seededUnit(rowIndex * 97 + Math.floor(col / boardW) * 31);
+    const shade = tone < 0.34 ? "rgba(74, 44, 26, 0.10)" : tone > 0.74 ? "rgba(255, 242, 208, 0.08)" : "rgba(0, 0, 0, 0)";
+    rect(boardX, y + 2, boardWClipped, Math.max(2, h - 3), shade);
+    if (col > x) {
+      rect(col, y + 2, 2, Math.max(4, h - 4), "rgba(126, 82, 41, 0.22)");
     }
   }
-  rect(x, y + h - 1, w, 1, "rgba(123, 78, 43, 0.46)");
 }
 
 function drawTinyPlant(x, y, scale = 1) {
   const s = scale;
-  rect(x - 8 * s, y + 7 * s, 16 * s, 11 * s, "#7a4528");
-  rect(x - 5 * s, y + 2 * s, 10 * s, 8 * s, "#9d5c32");
+  rect(x - 8 * s, y + 7 * s, 16 * s, 11 * s, "#7a4a24");
+  rect(x - 5 * s, y + 2 * s, 10 * s, 8 * s, "#b87333");
   rect(x - 4 * s, y - 10 * s, 8 * s, 16 * s, COLORS.plant);
-  rect(x - 12 * s, y - 5 * s, 10 * s, 9 * s, "#3f8730");
-  rect(x + 2 * s, y - 7 * s, 12 * s, 10 * s, "#5cac3f");
-  rect(x - 7 * s, y - 15 * s, 14 * s, 8 * s, "#4e9f38");
+  rect(x - 12 * s, y - 5 * s, 10 * s, 9 * s, "#4d7b31");
+  rect(x + 2 * s, y - 7 * s, 12 * s, 10 * s, "#76a94f");
+  rect(x - 7 * s, y - 15 * s, 14 * s, 8 * s, "#5f8f3b");
 }
 
 function isAssetReady(name) {
@@ -2742,6 +4113,8 @@ function isAssetReady(name) {
 }
 
 function loadAssets() {
+  if (CODE_DRAWN_VISUALS_ONLY) return;
+
   Object.keys(assetSources).forEach((name) => {
     const src = assetSources[name];
     if (!src) return;
@@ -2765,6 +4138,8 @@ function loadAssets() {
 }
 
 function drawAsset(name, x, y, w, h) {
+  if (CODE_DRAWN_VISUALS_ONLY) return false;
+
   const asset = assets[name];
   if (!asset || !asset.ready) return false;
   ctx.drawImage(asset.image, Math.round(x), Math.round(y), Math.round(w), Math.round(h));
@@ -2812,16 +4187,8 @@ function endWorldDraw() {
 
 function drawPixelFloor() {
   const room = layout.room;
-  verticalGradientRect(0, 0, WORLD.w, WORLD.h, "#17110e", "#2a1a14");
-  rect(room.x - 22, room.y - 22, room.w + 44, room.h + 44, "rgba(18, 10, 7, 0.5)");
-  rect(room.x - 16, room.y - 16, room.w + 32, room.h + 32, COLORS.line);
-  rect(room.x - 11, room.y - 11, room.w + 22, room.h + 22, COLORS.wallDark);
-  rect(room.x - 7, room.y - 7, room.w + 14, room.h + 14, COLORS.wall);
-  rect(room.x - 3, room.y - 3, room.w + 6, room.h + 6, COLORS.wallTop);
-  rect(room.x - 15, room.y - 15, 18, 18, COLORS.counterTop);
-  rect(room.x + room.w - 3, room.y - 15, 18, 18, COLORS.counterTop);
-  rect(room.x - 15, room.y + room.h - 3, 18, 18, COLORS.counterTop);
-  rect(room.x + room.w - 3, room.y + room.h - 3, 18, 18, COLORS.counterTop);
+  drawPixelMeadowBackground();
+  rect(room.x - 8, room.y - 8, room.w + 16, room.h + 16, COLORS.wallDark);
   drawTiledArea(room);
 
   drawPublicFloors();
@@ -2829,21 +4196,61 @@ function drawPixelFloor() {
   drawIndoorDetailsModern();
   drawRentedAreaRooms();
   drawToilet();
+  drawSharedStructuralWalls();
   drawAreaDoorways();
   drawInvalidFloorHint();
   drawLayoutSelection();
   drawPlacementHint();
+  drawPcPurchaseHint();
+  drawMahjongPurchaseHint();
+}
+
+function drawPixelMeadowBackground() {
+  const hour = getCurrentHour();
+  const night = hour >= 19 || hour < 6;
+  const bounds = getExpandedWorldBounds();
+  const minX = Math.floor(bounds.minX / 24) * 24;
+  const minY = Math.floor(bounds.minY / 24) * 24;
+  const maxX = Math.ceil(bounds.maxX / 24) * 24;
+  const maxY = Math.ceil(bounds.maxY / 24) * 24;
+  verticalGradientRect(minX, minY, maxX - minX, maxY - minY, night ? "#1c3529" : "#2e4f2e", night ? "#254528" : "#416a32");
+  const step = 24;
+  for (let y = minY; y < maxY; y += step) {
+    for (let x = minX + ((y / step) % 2 ? 8 : 0); x < maxX; x += step) {
+      const tone = night
+        ? ((x + y) % 72 === 0 ? "#365f36" : (x + y) % 48 === 0 ? "#183b2a" : "#2c5530")
+        : ((x + y) % 72 === 0 ? "#5f8f3b" : (x + y) % 48 === 0 ? "#315a2f" : "#477a36");
+      rect(x, y, 6, 6, tone);
+      if ((x + y) % 96 === 0) {
+        rect(x + 8, y + 10, 4, 4, night ? "#9a7d32" : "#f0b94a");
+      }
+    }
+  }
+  if (night) {
+    rect(minX, minY, maxX - minX, maxY - minY, "rgba(19, 22, 38, 0.18)");
+  }
+}
+
+function drawWallPattern(x, y, w, h) {
+  rect(x, y, w, h, COLORS.wall);
+  for (let row = 0; row < h; row += 22) {
+    rect(x, y + row, w, 2, "rgba(213, 180, 111, 0.52)");
+    const offset = row % 44 === 0 ? 0 : 34;
+    for (let col = offset; col < w; col += 68) {
+      rect(x + col, y + row + 2, 2, 20, "rgba(213, 180, 111, 0.32)");
+    }
+  }
 }
 
 function drawTiledArea(area) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(Math.round(area.x), Math.round(area.y), Math.round(area.w), Math.round(area.h));
+  ctx.clip();
   rect(area.x, area.y, area.w, area.h, COLORS.floor);
-  if (isAssetReady("floorTile")) {
-    drawAssetTiled("floorTile", area, 58 * SPRITE_SCALE.floor, 74 * SPRITE_SCALE.floor);
-  } else {
-    drawWoodPlanks(area.x, area.y, area.w, area.h, 18);
-    rect(area.x, area.y, area.w, Math.min(16, area.h), "rgba(255, 244, 207, 0.17)");
-  }
-  strokeRect(area.x, area.y, area.w, area.h, "rgba(42, 19, 13, 0.28)", 1);
+  drawGlobalWoodPlanks(area);
+  rect(area.x, area.y, area.w, Math.min(10, area.h), "rgba(255, 242, 208, 0.1)");
+  ctx.restore();
 }
 
 function drawPublicFloors() {
@@ -2857,15 +4264,15 @@ function drawPublicFloors() {
 }
 
 function drawPublicFloorOuterWalls(floor) {
-  const topSegments = getPublicFloorWallSegments(floor, "top");
-  const bottomSegments = getPublicFloorWallSegments(floor, "bottom");
-  const leftSegments = getPublicFloorWallSegments(floor, "left");
-  const rightSegments = getPublicFloorWallSegments(floor, "right");
+  const topSegments = drawWallSegments(floor, "top");
+  const bottomSegments = drawWallSegments(floor, "bottom");
+  const leftSegments = drawWallSegments(floor, "left");
+  const rightSegments = drawWallSegments(floor, "right");
 
-  topSegments.forEach((segment) => rect(segment.start, floor.y - 6, segment.end - segment.start, 6, COLORS.wallDark));
-  bottomSegments.forEach((segment) => rect(segment.start, floor.y + floor.h, segment.end - segment.start, 6, COLORS.wallDark));
-  leftSegments.forEach((segment) => rect(floor.x - 6, segment.start, 6, segment.end - segment.start, COLORS.wallDark));
-  rightSegments.forEach((segment) => rect(floor.x + floor.w, segment.start, 6, segment.end - segment.start, COLORS.wallDark));
+  topSegments.forEach((segment) => drawHorizontalWall(segment.start, floor.y - 6, segment.end - segment.start));
+  bottomSegments.forEach((segment) => drawHorizontalWall(segment.start, floor.y + floor.h, segment.end - segment.start));
+  leftSegments.forEach((segment) => drawVerticalWall(floor.x - 6, segment.start, segment.end - segment.start));
+  rightSegments.forEach((segment) => drawVerticalWall(floor.x + floor.w, segment.start, segment.end - segment.start));
 
   if (segmentCovers(topSegments, floor.x) && segmentCovers(leftSegments, floor.y)) {
     rect(floor.x - 6, floor.y - 6, 6, 6, COLORS.wallDark);
@@ -2971,24 +4378,129 @@ function drawInvalidFloorHint() {
 function drawRentedAreaRooms() {
   state.rentedAreas.forEach((area) => {
     if (area.id === 1) return;
-    roundedRect(area.x - 6, area.y - 6, area.w + 12, area.h + 12, 7, COLORS.wallDark);
-    roundedRect(area.x, area.y, area.w, area.h, 5, COLORS.wall);
-    roundedRect(area.x + 4, area.y + 4, area.w - 8, 24, 4, COLORS.wallTop);
-    drawTiledArea({ x: area.x + 8, y: area.y + 32, w: area.w - 16, h: area.h - 40 });
-    strokeRoundedRect(area.x, area.y, area.w, area.h, 5, COLORS.line, 2);
-    text(area.name, area.x + area.w / 2, area.y + 6, 12, COLORS.text, "bold", "center");
+    drawTiledArea(area);
+    drawRoomOuterWalls(area);
+    drawRoomNamePlate(area);
     if (area.typeId === "capsuleRoom") {
       rect(area.x + area.w - 38, area.y + area.h - 36, 26, 20, "#4b3027");
       rect(area.x + area.w - 34, area.y + area.h - 32, 18, 12, COLORS.red);
     } else if (area.typeId === "showerRoom") {
       rect(area.x + area.w / 2 - 13, area.y + 48, 26, 34, "#88c7dc");
       rect(area.x + area.w / 2 - 8, area.y + 42, 16, 8, "#dff7ff");
-    } else if (area.typeId === "chessRoom") {
-      rect(area.x + area.w / 2 - 24, area.y + 50, 48, 32, "#7b5a35");
-      rect(area.x + area.w / 2 - 14, area.y + 58, 8, 8, COLORS.text);
-      rect(area.x + area.w / 2 + 6, area.y + 66, 8, 8, COLORS.line);
     }
   });
+}
+
+function drawRoomNamePlate(area) {
+  const w = Math.min(area.w - 20, Math.max(58, area.name.length * 13 + 18));
+  const plate = getRoomNamePlateRect(area, w);
+  const x = plate.x;
+  const y = plate.y;
+  pixelPanel(x, y, w, 24, COLORS.counter, COLORS.counterEdge, COLORS.line);
+  text(area.name, area.x + area.w / 2, y + 5, 11, COLORS.text, "bold", "center");
+}
+
+function getRoomNamePlateRect(area, w) {
+  let y = area.y + 8;
+  if (hasStructuralNeighborOnSide(area, "top") && area.h >= 76) {
+    y = area.y + area.h - 34;
+  }
+  if (hasStructuralNeighborOnSide(area, "bottom") && y > area.y + area.h - 46) {
+    y = area.y + 8;
+  }
+  return {
+    x: area.x + area.w / 2 - w / 2,
+    y
+  };
+}
+
+function drawRoomOuterWalls(area) {
+  if (!hasStructuralNeighborOnSide(area, "top")) {
+    drawWallSegments(area, "top").forEach((segment) => drawHorizontalWall(segment.start, area.y - 6, segment.end - segment.start));
+  }
+  if (!hasStructuralNeighborOnSide(area, "bottom")) {
+    drawWallSegments(area, "bottom").forEach((segment) => drawHorizontalWall(segment.start, area.y + area.h, segment.end - segment.start));
+  }
+  if (!hasStructuralNeighborOnSide(area, "left")) {
+    drawWallSegments(area, "left").forEach((segment) => drawVerticalWall(area.x - 6, segment.start, segment.end - segment.start));
+  }
+  if (!hasStructuralNeighborOnSide(area, "right")) {
+    drawWallSegments(area, "right").forEach((segment) => drawVerticalWall(area.x + area.w, segment.start, segment.end - segment.start));
+  }
+}
+
+function hasStructuralNeighborOnSide(area, side) {
+  return getStructuralAreas().some((other) => (
+    other.id !== area.id &&
+    other.typeId !== "publicFloor" &&
+    touchesSide(area, other, side)
+  ));
+}
+
+function drawHorizontalWall(x, y, w) {
+  if (w <= 0) return;
+  rect(x, y, w, 6, COLORS.wallDark);
+}
+
+function drawVerticalWall(x, y, h) {
+  if (h <= 0) return;
+  rect(x, y, 6, h, COLORS.wallDark);
+}
+
+function drawWallSegments(area, side) {
+  const horizontal = side === "top" || side === "bottom";
+  const start = horizontal ? area.x : area.y;
+  const end = horizontal ? area.x + area.w : area.y + area.h;
+  const covered = [];
+
+  getAttachableAreas().forEach((other) => {
+    if (other.id === area.id) return;
+    if (!touchesSide(area, other, side)) return;
+    if (area.typeId !== "publicFloor" && other.typeId !== "publicFloor") return;
+    const overlapStart = horizontal ? Math.max(area.x, other.x) : Math.max(area.y, other.y);
+    const overlapEnd = horizontal ? Math.min(area.x + area.w, other.x + other.w) : Math.min(area.y + area.h, other.y + other.h);
+    if (overlapEnd > overlapStart) {
+      covered.push({ start: overlapStart, end: overlapEnd });
+    }
+  });
+
+  return subtractSegments(start, end, covered);
+}
+
+function drawSharedStructuralWalls() {
+  const areas = getStructuralAreas();
+  for (let i = 0; i < areas.length; i += 1) {
+    for (let j = i + 1; j < areas.length; j += 1) {
+      const a = areas[i];
+      const b = areas[j];
+      if (!sharesWall(a, b)) continue;
+      drawSharedWallBetweenAreas(a, b);
+    }
+  }
+}
+
+function drawSharedWallBetweenAreas(a, b) {
+  const door = getDoorGeometryBetween(a, b);
+  if (a.y + a.h === b.y || b.y + b.h === a.y) {
+    const y = a.y + a.h === b.y ? b.y : a.y;
+    const start = Math.max(a.x, b.x);
+    const end = Math.min(a.x + a.w, b.x + b.w);
+    const gaps = door ? [{ start: door.rect.x, end: door.rect.x + door.rect.w }] : [];
+    subtractSegments(start, end, gaps).forEach((segment) => {
+      drawHorizontalWall(segment.start, y - 3, segment.end - segment.start);
+    });
+    return;
+  }
+
+  if (a.x + a.w === b.x || b.x + b.w === a.x) {
+    const x = a.x + a.w === b.x ? b.x : a.x;
+    const start = Math.max(a.y, b.y);
+    const end = Math.min(a.y + a.h, b.y + b.h);
+    const gaps = door ? [{ start: door.rect.y, end: door.rect.y + door.rect.h }] : [];
+    subtractSegments(start, end, gaps).forEach((segment) => {
+      drawVerticalWall(x - 3, segment.start, segment.end - segment.start);
+    });
+  }
 }
 
 function drawAreaDoorways() {
@@ -3004,27 +4516,42 @@ function drawAreaDoorways() {
 }
 
 function drawDoorwayBetweenAreas(a, b) {
-  const doorW = 34;
-  const doorH = 18;
-  if (a.y + a.h === b.y || b.y + b.h === a.y) {
-    const y = a.y + a.h === b.y ? b.y : a.y;
-    const overlapStart = Math.max(a.x + 16, b.x + 16);
-    const overlapEnd = Math.min(a.x + a.w - 16, b.x + b.w - 16);
-    if (overlapEnd - overlapStart < 28) return;
-    const x = (overlapStart + overlapEnd) / 2 - doorW / 2;
-    rect(x, y - 5, doorW, 10, COLORS.floor);
-    rect(x, y - 1, doorW, 2, COLORS.floorLine);
+  const door = getDoorGeometryBetween(a, b);
+  if (!door) return;
+
+  drawTiledArea(door.rect);
+  drawRoomDoorLeaf(door, a, b, isDoorOpen(a, b));
+}
+
+function drawRoomDoorLeaf(door, a, b, open) {
+  const inwardArea = getDoorInwardArea(a, b);
+  if (door.orientation === "horizontal") {
+    rect(door.rect.x + 4, door.center.y - 2, door.rect.w - 8, 4, "#d6a862");
+    const opensDown = inwardArea && inwardArea.y > door.center.y;
+    if (open) {
+      const leafY = opensDown ? door.center.y + 2 : door.center.y - 30;
+      rect(door.rect.x + 6, leafY, 8, 28, COLORS.line);
+      rect(door.rect.x + 8, leafY + 2, 4, 24, "#9a642f");
+      rect(door.rect.x + 9, leafY + 5, 2, 14, "#c5833d");
+    } else {
+      rect(door.rect.x + 7, door.center.y - 6, door.rect.w - 14, 12, COLORS.line);
+      rect(door.rect.x + 9, door.center.y - 4, door.rect.w - 18, 8, "#9a642f");
+      rect(door.rect.x + door.rect.w - 15, door.center.y - 1, 3, 3, COLORS.yellow);
+    }
     return;
   }
 
-  if (a.x + a.w === b.x || b.x + b.w === a.x) {
-    const x = a.x + a.w === b.x ? b.x : a.x;
-    const overlapStart = Math.max(a.y + 28, b.y + 28);
-    const overlapEnd = Math.min(a.y + a.h - 16, b.y + b.h - 16);
-    if (overlapEnd - overlapStart < 28) return;
-    const y = (overlapStart + overlapEnd) / 2 - doorH / 2;
-    rect(x - 5, y, 10, doorH, COLORS.floor);
-    rect(x - 1, y, 2, doorH, COLORS.floorLine);
+  rect(door.center.x - 2, door.rect.y + 4, 4, door.rect.h - 8, "#d6a862");
+  const opensRight = inwardArea && inwardArea.x > door.center.x;
+  if (open) {
+    const leafX = opensRight ? door.center.x + 2 : door.center.x - 30;
+    rect(leafX, door.rect.y + 6, 28, 8, COLORS.line);
+    rect(leafX + 2, door.rect.y + 8, 24, 4, "#9a642f");
+    rect(leafX + 6, door.rect.y + 9, 14, 2, "#c5833d");
+  } else {
+    rect(door.center.x - 6, door.rect.y + 7, 12, door.rect.h - 14, COLORS.line);
+    rect(door.center.x - 4, door.rect.y + 9, 8, door.rect.h - 18, "#9a642f");
+    rect(door.center.x - 1, door.rect.y + door.rect.h - 15, 3, 3, COLORS.yellow);
   }
 }
 
@@ -3072,7 +4599,7 @@ function drawPlacementHint() {
   const type = getPendingExpansionType();
   if (!pending || !type) return;
 
-  const size = getAreaSize(type, pending.pcCount);
+  const size = getAreaSize(type, pending.pcCapacity);
   const x = state.camera.x + view.width / 2 - size.w / 2;
   const y = state.camera.y + (view.height - ACTION_BAR_HEIGHT + HUD_HEIGHT) / 2 - size.h / 2;
   const candidate = getAttachedAreaCandidate(x + size.w / 2, y + size.h / 2, size);
@@ -3084,27 +4611,67 @@ function drawPlacementHint() {
   text(free ? "\u70b9\u51fb\u8d34\u5899\u653e\u7f6e" : "\u9700\u8d34\u4f4f\u65e7\u5899", area.x + area.w / 2, area.y + area.h / 2 - 8, 13, COLORS.text, "bold", "center");
 }
 
+function drawPcPurchaseHint() {
+  if (!state.pendingPcPurchase) return;
+
+  const worldX = state.camera.x + view.width / 2;
+  const worldY = state.camera.y + (view.height - ACTION_BAR_HEIGHT + HUD_HEIGHT) / 2;
+  const candidate = getPcPurchaseCandidate(worldX, worldY);
+  const pc = candidate.pc || createPc(-1, snapPcPosition(worldX - 21), snapPcPosition(worldY - 18), 1, "");
+  const bounds = getPcVisualBounds(pc);
+  const canPlace = Boolean(candidate.canPlace);
+  rect(bounds.x, bounds.y, bounds.w, bounds.h, canPlace ? "rgba(105, 185, 109, 0.28)" : "rgba(217, 74, 69, 0.28)");
+  strokeRect(bounds.x, bounds.y, bounds.w, bounds.h, canPlace ? COLORS.green : COLORS.red, 3);
+  text(canPlace ? "\u70b9\u51fb\u653e\u7f6e\u7535\u8111" : "\u65e0\u6cd5\u653e\u7f6e", bounds.x + bounds.w / 2, bounds.y + bounds.h / 2 - 8, 12, COLORS.text, "bold", "center");
+}
+
+function drawMahjongPurchaseHint() {
+  if (!state.pendingMahjongPurchase) return;
+
+  const worldX = state.camera.x + view.width / 2;
+  const worldY = state.camera.y + (view.height - ACTION_BAR_HEIGHT + HUD_HEIGHT) / 2;
+  const candidate = getMahjongPurchaseCandidate(worldX, worldY);
+  const table = candidate.table;
+  const canPlace = Boolean(candidate.canPlace);
+  rect(table.x, table.y, table.w, table.h, canPlace ? "rgba(105, 185, 109, 0.28)" : "rgba(217, 74, 69, 0.28)");
+  strokeRect(table.x, table.y, table.w, table.h, canPlace ? COLORS.green : COLORS.red, 3);
+  text(canPlace ? "\u70b9\u51fb\u6446\u653e" : "\u9700\u68cb\u724c\u5ba4", table.x + table.w / 2, table.y + table.h / 2 - 7, 12, COLORS.text, "bold", "center");
+}
+
 function drawLayoutSelection() {
   if (!state.layoutToolActive) return;
 
   if (state.layoutMode === "area" && state.selectedAreaId) {
     const area = getAreaById(state.selectedAreaId);
     if (area) {
-      strokeRect(area.x - 5, area.y - 5, area.w + 10, area.h + 10, COLORS.yellow, 3);
-      text("\u5df2\u9009\u533a\u57df", area.x + area.w / 2, area.y - 22, 12, COLORS.yellow, "bold", "center");
+      const candidate = getAreaMoveCandidate(area);
+      const free = isAreaPlacementFree(candidate, area.id);
+      rect(candidate.x, candidate.y, candidate.w, candidate.h, free ? "rgba(105, 185, 109, 0.25)" : "rgba(217, 74, 69, 0.28)");
+      strokeRect(candidate.x, candidate.y, candidate.w, candidate.h, free ? COLORS.green : COLORS.red, 3);
+      text(free ? "\u53ef\u91cd\u6446" : "\u4e0d\u53ef\u91cd\u6446", candidate.x + candidate.w / 2, candidate.y + candidate.h / 2 - 8, 12, COLORS.text, "bold", "center");
     }
   }
 
   if (state.layoutMode === "pc" && state.selectedPcId) {
-    const pc = layout.pcs[state.selectedPcId - 1];
+    const pc = getSelectedPc();
     if (pc) {
-      strokeRect(pc.x - 6, pc.y - 6, pc.w + 12, pc.h + 12, COLORS.yellow, 3);
+      const area = getAreaById(pc.areaId);
+      const candidate = getPcMoveCandidate(pc);
+      const canPlace = Boolean(area) && isPcLayoutPositionValid(area, candidate, pc.id);
+      const bounds = getPcVisualBounds(candidate);
+      rect(bounds.x, bounds.y, bounds.w, bounds.h, canPlace ? "rgba(105, 185, 109, 0.25)" : "rgba(217, 74, 69, 0.28)");
+      strokeRect(bounds.x, bounds.y, bounds.w, bounds.h, canPlace ? COLORS.green : COLORS.red, 3);
+      text(canPlace ? "\u53ef\u79fb\u52a8" : "\u4e0d\u53ef\u79fb\u52a8", bounds.x + bounds.w / 2, bounds.y + bounds.h / 2 - 8, 12, COLORS.text, "bold", "center");
     }
   }
 
   if (state.layoutMode === "floor") {
     drawPublicFloorPlacementHint();
     text("\u5e03\u5c40\uff1a\u8d34\u5899\u6216\u5bf9\u9f50\u4e0a\u4e00\u5757\u5730\u7816", state.camera.x + view.width / 2, state.camera.y + HUD_HEIGHT + 8, 12, COLORS.yellow, "bold", "center");
+  }
+
+  if (state.layoutMode === "deleteArea") {
+    text("\u5e03\u5c40\uff1a\u70b9\u51fb\u5305\u95f4\u5220\u9664\uff0c\u8fd4\u8fd8\u4e00\u534a\u6269\u79df\u8d39", state.camera.x + view.width / 2, state.camera.y + HUD_HEIGHT + 8, 12, COLORS.yellow, "bold", "center");
   }
 }
 
@@ -3135,14 +4702,18 @@ function drawWindow(x, y) {
 
 function drawDoor() {
   const room = layout.room;
-  rect(room.x - 14, layout.entrance.y - 34, 22, 68, COLORS.wallDark);
-  rect(room.x - 36, layout.entrance.y - 25, 31, 50, COLORS.line);
-  rect(room.x - 32, layout.entrance.y - 21, 23, 42, "#ead8a8");
-  text("\u5165\u53e3", room.x - 20, layout.entrance.y - 17, 12, COLORS.dimText, "bold", "center");
-  rect(room.x - 25, layout.entrance.y + 3, 13, 5, COLORS.dimText);
-  rect(room.x - 29, layout.entrance.y + 5, 8, 8, COLORS.dimText);
-  rect(room.x - 61, layout.entrance.y - 5, 28, 10, COLORS.red);
-  rect(room.x - 39, layout.entrance.y - 12, 10, 24, COLORS.red);
+  const y = layout.entrance.y;
+  rect(room.x - 10, y - 42, 18, 84, COLORS.floor);
+  rect(room.x - 10, y - 42, 6, 84, COLORS.wallDark);
+  rect(room.x - 10, y - 42, 22, 6, COLORS.wallDark);
+  rect(room.x - 10, y + 36, 22, 6, COLORS.wallDark);
+  rect(room.x - 46, y - 34, 36, 14, COLORS.line);
+  rect(room.x - 42, y - 30, 28, 8, "#9a642f");
+  rect(room.x - 38, y - 28, 18, 4, "#c5833d");
+  rect(room.x - 46, y + 20, 36, 14, COLORS.line);
+  rect(room.x - 42, y + 24, 28, 8, "#9a642f");
+  rect(room.x - 38, y + 26, 18, 4, "#c5833d");
+  rect(room.x - 8, y - 2, 4, 4, COLORS.yellow);
 }
 
 function drawIndoorDetails() {
@@ -3170,29 +4741,21 @@ function drawCounter() {
     return;
   }
 
-  woodPanel(c.x - 40, c.y + 2, 32, c.h + 30, "#513426");
-  rect(c.x - 34, c.y + 11, 20, 9, "#23282a");
-  rect(c.x - 31, c.y + 14, 14, 3, "#66c8ff");
-  rect(c.x - 34, c.y + 28, 20, 6, "#24201d");
-  rect(c.x - 30, c.y + 39, 5, 7, COLORS.red);
-  rect(c.x - 22, c.y + 39, 5, 7, COLORS.yellow);
-  rect(c.x - 30, c.y + 49, 5, 7, COLORS.green);
-  rect(c.x - 22, c.y + 49, 5, 7, COLORS.blue);
+  rect(c.x - 6, c.y + 10, c.w + 12, c.h - 2, COLORS.line);
+  rect(c.x, c.y + 14, c.w, c.h - 10, "#9a642f");
+  rect(c.x + 6, c.y + 18, c.w - 12, 6, COLORS.counterTop);
+  rect(c.x + 10, c.y + c.h - 6, c.w - 20, 8, "#6b3f24");
+  rect(c.x + 18, c.y - 13, 24, 30, COLORS.line);
+  rect(c.x + 21, c.y - 10, 18, 24, "#fff2d0");
+  rect(c.x + 24, c.y - 8, 12, 3, "#c5833d");
+  text("\u5427", c.x + 30, c.y - 5, 10, COLORS.line, "bold", "center");
+  text("\u53f0", c.x + 30, c.y + 5, 10, COLORS.line, "bold", "center");
+  rect(c.x + 22, c.y + 16, 16, 4, COLORS.line);
 
-  woodPanel(c.x - 8, c.y - 5, c.w + 16, c.h + 14, COLORS.counter, COLORS.counterEdge);
-  rect(c.x, c.y, c.w, 12, COLORS.counterTop);
-  rect(c.x + 7, c.y + 5, c.w - 14, 2, "rgba(255, 244, 207, 0.26)");
-  rect(c.x + 17, c.y + c.h - 1, c.w - 34, 10, "#6e3d23");
-  pixelPanel(c.x + c.w / 2 - 29, c.y + 15, 58, 22, "#e8bd73", "#fff1ba", COLORS.line);
-  text("\u524d\u53f0", c.x + c.w / 2, c.y + 20, 16, COLORS.line, "bold", "center");
-
-  rect(c.x + c.w - 39, c.y - 20, 30, 21, COLORS.line);
-  rect(c.x + c.w - 35, c.y - 16, 22, 13, COLORS.pcScreen);
-  rect(c.x + c.w - 32, c.y - 13, 16, 7, COLORS.pcGlow);
-  rect(c.x + c.w - 28, c.y + 1, 8, 4, COLORS.line);
-  rect(c.x + 14, c.y - 17, 18, 13, "#efe1b6");
-  rect(c.x + 17, c.y - 13, 12, 2, COLORS.floorLine);
-  rect(c.x + 17, c.y - 8, 9, 2, COLORS.floorLine);
+  rect(c.x + c.w - 39, c.y - 8, 30, 21, COLORS.line);
+  rect(c.x + c.w - 35, c.y - 4, 22, 13, COLORS.pcScreen);
+  rect(c.x + c.w - 32, c.y - 1, 16, 7, COLORS.pcGlow);
+  rect(c.x + c.w - 28, c.y + 13, 8, 4, COLORS.line);
 
   if (state.frontDesk.busyGuestId) {
     const progress = 1 - state.frontDesk.timer / state.frontDesk.duration;
@@ -3205,7 +4768,7 @@ function drawPc(pc) {
   const assetW = 76 * SPRITE_SCALE.pc;
   const assetH = assetW * 383 / 419;
   if (drawAsset("pcStation", pc.seatX - assetW / 2 + 1, pc.seatY - assetH + 14, assetW, assetH)) {
-    text(`${pc.id + 1}\u53f7 L${pc.equipmentLevel}`, pc.x + pc.w / 2, pc.y - 22, 10, COLORS.dimText, "bold", "center");
+    drawPcDeskNumber(pc);
     if (pc.areaId !== 1) {
       text(pc.areaName, pc.x + pc.w / 2, pc.y - 34, 9, COLORS.yellow, "bold", "center");
     }
@@ -3226,14 +4789,19 @@ function drawPc(pc) {
     return;
   }
 
+  if (getNormalizedRotation(pc) !== 0) {
+    drawOrientedPc(pc);
+    return;
+  }
+
   const vx = pc.x - 5;
   const vy = pc.y - 4;
   const vw = pc.w + 10;
   const vh = pc.h + 8;
-  ellipse(pc.seatX, pc.seatY + 9, 20, 7, "rgba(26, 15, 11, 0.24)");
+  ellipse(pc.seatX, pc.seatY + 9, 20, 7, "rgba(58, 36, 24, 0.22)");
   rect(pc.seatX - 13, pc.seatY - 3, 26, 18, COLORS.line);
-  rect(pc.seatX - 10, pc.seatY, 20, 13, "#2b6a75");
-  rect(pc.seatX - 7, pc.seatY - 7, 14, 8, "#36828c");
+  rect(pc.seatX - 10, pc.seatY, 20, 13, "#557c8c");
+  rect(pc.seatX - 7, pc.seatY - 7, 14, 8, "#6a9aa2");
   rect(pc.seatX - 3, pc.seatY + 14, 6, 12, COLORS.line);
   rect(pc.seatX - 12, pc.seatY + 23, 24, 3, COLORS.line);
   rect(vx - 3, vy + 22, vw + 6, 20, COLORS.line);
@@ -3241,21 +4809,13 @@ function drawPc(pc) {
   rect(vx + 4, vy + 25, vw - 8, 3, COLORS.counterEdge);
   rect(vx + 4, vy + 40, 5, 15, COLORS.line);
   rect(vx + vw - 9, vy + 40, 5, 15, COLORS.line);
-  rect(pc.x + pc.w - 10, pc.y + pc.h + 6, 12, 19, COLORS.line);
-  rect(pc.x + pc.w - 7, pc.y + pc.h + 9, 7, 13, "#182229");
-  rect(pc.x + pc.w - 5, pc.y + pc.h + 18, 3, 3, pc.broken ? COLORS.red : COLORS.pcGlow);
   rect(vx + 5, vy + 34, 28, 6, COLORS.line);
-  rect(vx + 8, vy + 35, 22, 3, "#31383c");
+  rect(vx + 8, vy + 35, 22, 3, "#3f3a31");
   rect(vx + vw - 18, vy + 33, 8, 8, COLORS.line);
-  rect(vx + vw - 16, vy + 35, 4, 4, "#31383c");
-  rect(pc.x + 5, pc.y + 1, pc.w - 10, 4, COLORS.line);
-  rect(pc.x + 12, pc.y + 5, pc.w - 24, 7, COLORS.line);
-  rect(pc.x + 4, pc.y + 4, pc.w - 8, 24, COLORS.line);
-  rect(pc.x + 8, pc.y + 8, pc.w - 16, 16, pc.broken ? "#8b2d2d" : pc.dirty ? "#707a7c" : COLORS.pcGlow);
-  rect(pc.x + 10, pc.y + 10, 7, 3, "#ecfff5");
-  rect(pc.x + 18, pc.y + 29, 8, 7, "#1d272e");
+  rect(vx + vw - 16, vy + 35, 4, 4, "#3f3a31");
+  drawPcBodyByLevel(pc);
 
-  text(`${pc.id + 1}\u53f7 L${pc.equipmentLevel}`, pc.x + pc.w / 2, pc.y - 20, 10, COLORS.dimText, "bold", "center");
+  drawPcDeskNumber(pc);
   if (pc.areaId !== 1) {
     text(pc.areaName, pc.x + pc.w / 2, pc.y - 30, 9, COLORS.yellow, "bold", "center");
   }
@@ -3277,17 +4837,235 @@ function drawPc(pc) {
   }
 }
 
+function getPcScreenColor(pc) {
+  if (pc.broken) return "#8a4a3d";
+  if (pc.dirty) return "#707864";
+  if (pc.equipmentLevel >= 5) return "#8fd7ff";
+  if (pc.equipmentLevel >= 4) return "#b9e3d1";
+  if (pc.equipmentLevel >= 3) return "#72c05a";
+  return COLORS.pcGlow;
+}
+
+function drawPcBodyByLevel(pc) {
+  const level = pc.equipmentLevel || 1;
+  const screen = getPcScreenColor(pc);
+
+  if (level >= 5) {
+    rect(pc.x + 1, pc.y + 5, pc.w - 2, 22, "#cfd6d0");
+    strokeRect(pc.x + 1, pc.y + 5, pc.w - 2, 22, COLORS.line, 2);
+    rect(pc.x + 5, pc.y + 8, pc.w - 10, 15, screen);
+    rect(pc.x + 9, pc.y + 10, 9, 3, "#f4fff1");
+    rect(pc.x + 18, pc.y + 28, 8, 7, "#cfd6d0");
+    rect(pc.x + 11, pc.y + 35, 22, 3, COLORS.line);
+    rect(pc.x + pc.w - 7, pc.y + pc.h + 11, 5, 12, "#dbe0dc");
+    strokeRect(pc.x + pc.w - 9, pc.y + pc.h + 8, 9, 18, COLORS.line, 2);
+    return;
+  }
+
+  if (level >= 4) {
+    rect(pc.x + 3, pc.y + 4, pc.w - 6, 23, "#d8d0bd");
+    strokeRect(pc.x + 3, pc.y + 4, pc.w - 6, 23, COLORS.line, 2);
+    rect(pc.x + 7, pc.y + 8, pc.w - 14, 15, screen);
+    rect(pc.x + 10, pc.y + 10, 8, 3, "#f4fff1");
+    rect(pc.x + 18, pc.y + 28, 8, 7, "#d8d0bd");
+    rect(pc.x + 12, pc.y + 35, 20, 3, COLORS.line);
+    rect(pc.x + pc.w - 9, pc.y + pc.h + 8, 10, 18, COLORS.line);
+    rect(pc.x + pc.w - 6, pc.y + pc.h + 11, 5, 11, "#5f6b66");
+    return;
+  }
+
+  if (level >= 3) {
+    rect(pc.x + pc.w - 10, pc.y + pc.h + 6, 12, 19, COLORS.line);
+    rect(pc.x + pc.w - 7, pc.y + pc.h + 9, 7, 13, "#2d332e");
+    rect(pc.x + pc.w - 5, pc.y + pc.h + 11, 3, 9, "#65c05a");
+    rect(pc.x + 2, pc.y + 1, pc.w - 4, 27, COLORS.line);
+    rect(pc.x + 6, pc.y + 5, pc.w - 12, 19, "#253131");
+    rect(pc.x + 9, pc.y + 8, pc.w - 18, 13, screen);
+    rect(pc.x + 12, pc.y + 10, 9, 3, "#e5f6d7");
+    rect(pc.x + 18, pc.y + 29, 8, 7, "#1d272e");
+    return;
+  }
+
+  rect(pc.x + pc.w - 10, pc.y + pc.h + 6, 12, 19, COLORS.line);
+  rect(pc.x + pc.w - 7, pc.y + pc.h + 9, 7, 13, "#2d332e");
+  rect(pc.x + 5, pc.y + 1, pc.w - 10, 4, COLORS.line);
+  rect(pc.x + 12, pc.y + 5, pc.w - 24, 7, COLORS.line);
+  rect(pc.x + 4, pc.y + 4, pc.w - 8, 24, COLORS.line);
+  rect(pc.x + 8, pc.y + 8, pc.w - 16, 16, screen);
+  rect(pc.x + 10, pc.y + 10, 7, 3, "#e5f6d7");
+  rect(pc.x + 18, pc.y + 29, 8, 7, "#1d272e");
+}
+
+function drawOrientedPc(pc) {
+  const rotation = getNormalizedRotation(pc);
+  ellipse(pc.seatX, pc.seatY + 8, 18, 6, "rgba(58, 36, 24, 0.22)");
+  rect(pc.seatX - 12, pc.seatY - 3, 24, 17, COLORS.line);
+  rect(pc.seatX - 9, pc.seatY, 18, 12, "#557c8c");
+
+  if (rotation === 180) {
+    rect(pc.x - 8, pc.y - 12, pc.w + 16, 18, COLORS.line);
+    rect(pc.x - 5, pc.y - 9, pc.w + 10, 12, COLORS.pcDesk);
+    rect(pc.x + 4, pc.y + 8, pc.w - 8, 24, COLORS.line);
+    rect(pc.x + 8, pc.y + 12, pc.w - 16, 15, pc.broken ? "#8a4a3d" : pc.dirty ? "#707864" : COLORS.pcGlow);
+    rect(pc.x + 18, pc.y + 33, 8, 7, "#1d272e");
+  } else {
+    const leftFacing = rotation === 90;
+    const deskX = leftFacing ? pc.x - 8 : pc.x + pc.w - 10;
+    rect(deskX, pc.y - 4, 20, pc.h + 28, COLORS.line);
+    rect(deskX + 3, pc.y, 14, pc.h + 20, COLORS.pcDesk);
+    rect(leftFacing ? pc.x + 8 : pc.x + 1, pc.y + 4, 28, 24, COLORS.line);
+    rect(leftFacing ? pc.x + 12 : pc.x + 5, pc.y + 8, 20, 15, pc.broken ? "#8a4a3d" : pc.dirty ? "#707864" : COLORS.pcGlow);
+    rect(leftFacing ? pc.x + 37 : pc.x - 5, pc.y + 14, 8, 7, "#1d272e");
+  }
+
+  drawPcDeskNumber(pc);
+  if (pc.areaId !== 1) {
+    text(pc.areaName, pc.x + pc.w / 2, pc.y - 30, 9, COLORS.yellow, "bold", "center");
+  }
+  if (pc.broken) {
+    drawCleanBubble(pc.x + pc.w / 2, pc.y - 40, "\u7ef4\u4fee");
+  } else if (pc.dirty) {
+    drawCleanBubble(pc.x + pc.w / 2, pc.y - 40, "\u6e05\u6d01");
+  }
+  const guest = state.guests.find((item) => item.id === pc.occupiedBy && item.state === "playing");
+  if (guest) {
+    const progress = 1 - guest.playTimer / guest.playDuration;
+    rect(pc.x, pc.y - 12, pc.w, 5, "rgba(20, 31, 37, 0.38)");
+    rect(pc.x, pc.y - 12, Math.round(pc.w * progress), 5, COLORS.yellow);
+  }
+}
+
+function drawPcDeskNumber(pc) {
+  const x = pc.x + 7;
+  const y = pc.y + 8;
+  rect(x, y, 12, 10, COLORS.line);
+  rect(x + 2, y + 2, 8, 6, COLORS.counterEdge);
+  text(String(pc.id + 1), x + 6, y - 1, 9, COLORS.line, "bold", "center");
+}
+
 function drawCleanBubble(x, y, label) {
   const bubbleW = 44;
   rect(x - bubbleW / 2 - 1, y - 1, bubbleW + 2, 26, COLORS.line);
-  rect(x - bubbleW / 2, y, bubbleW, 24, "#fff7dd");
+  rect(x - bubbleW / 2, y, bubbleW, 24, COLORS.text);
   text(label, x, y + 4, 12, COLORS.red, "bold", "center");
-  rect(x - 3, y + 22, 6, 6, "#fff7dd");
+  rect(x - 3, y + 22, 6, 6, COLORS.text);
+}
+
+function drawPcInfoBubble() {
+  ui.pcInfoBubbleButton = null;
+  if (!state.pcInfoBubble) return;
+  const pc = layout.pcs.find((item) => item.id === state.pcInfoBubble.pcId);
+  if (!pc) {
+    state.pcInfoBubble = null;
+    return;
+  }
+
+  const tier = getEquipmentTier(pc.equipmentLevel);
+  const label = `${pc.id + 1}\u53f7 ${getPcAreaLabel(pc)}  ${tier.name}  ${getPcHourlyRate(pc)}\u5143/\u5c0f\u65f6`;
+  const bubbleW = Math.min(view.width - 24, Math.max(180, label.length * 10 + 18));
+  const x = clamp(pc.x + pc.w / 2 - state.camera.x - bubbleW / 2, 12, view.width - bubbleW - 12);
+  const y = clamp(pc.y - state.camera.y - 54, HUD_HEIGHT + 8, view.height - ACTION_BAR_HEIGHT - 42);
+  ui.pcInfoBubbleButton = { x, y, w: bubbleW, h: 34 };
+  rect(x - 1, y - 1, bubbleW + 2, 36, COLORS.line);
+  rect(x, y, bubbleW, 34, "#fff7dd");
+  text(label, x + bubbleW / 2, y + 8, 12, COLORS.line, "bold", "center");
+  rect(x + bubbleW / 2 - 4, y + 32, 8, 8, "#fff7dd");
+}
+
+function drawPcUpgradeMenu() {
+  ui.pcUpgradeButtons.length = 0;
+  if (!state.pcUpgradeMenu) return;
+  const pc = layout.pcs.find((item) => item.id === state.pcUpgradeMenu.pcId);
+  if (!pc) {
+    state.pcUpgradeMenu = null;
+    return;
+  }
+
+  const tiers = getUpgradeableTiers(pc);
+  const panelW = Math.min(view.width - 44, 280);
+  const panelH = 68 + tiers.length * 38;
+  const x = (view.width - panelW) / 2;
+  const y = Math.max(HUD_HEIGHT + 28, view.height / 2 - panelH / 2);
+  rect(0, 0, view.width, view.height, "rgba(20, 18, 16, 0.45)");
+  pixelPanel(x, y, panelW, panelH, "#fff2d0", "#e8c97a", COLORS.line);
+  text(`${pc.id + 1}\u53f7\u673a\u5347\u7ea7\u5230`, x + panelW / 2, y + 14, 15, COLORS.line, "bold", "center");
+  text("\u70b9\u9009\u6863\u4f4d\u540e\u518d\u786e\u8ba4\u6263\u6b3e", x + panelW / 2, y + 36, 11, "#7b5634", "bold", "center");
+
+  tiers.forEach((tier, index) => {
+    const cost = getPcUpgradeCost(pc, tier.level);
+    const button = {
+      x: x + 16,
+      y: y + 58 + index * 36,
+      w: panelW - 32,
+      h: 28,
+      pc,
+      tier
+    };
+    ui.pcUpgradeButtons.push(button);
+    drawWidePanelButton(button, `${tier.name}  ${cost}\u5143`, state.cash >= cost ? "#8b552b" : "#9a6b55");
+  });
+}
+
+function drawLayoutToolControls() {
+  ui.cancelMoveButton = null;
+  if (!state.layoutToolActive) return;
+  const label = state.layoutMode === "pc" ? "\u9000\u51fa\u79fb\u52a8" : state.layoutMode === "deleteArea" ? "\u9000\u51fa\u5220\u9664" : "\u9000\u51fa\u5e03\u5c40";
+  ui.cancelMoveButton = {
+    x: view.width - 112,
+    y: HUD_HEIGHT + 10,
+    w: 96,
+    h: 30
+  };
+  drawWidePanelButton(ui.cancelMoveButton, label, "#7f5635");
+}
+
+function drawPcActionMenu() {
+  ui.pcActionButtons.length = 0;
+  const pc = getPcFromActionMenu();
+  if (!pc) {
+    state.pcActionMenu = null;
+    return;
+  }
+
+  const panelW = 96;
+  const panelH = 142;
+  const sx = pc.x + pc.w + 12 - state.camera.x;
+  const sy = pc.y - 24 - state.camera.y;
+  const panelX = clamp(sx, 8, view.width - panelW - 8);
+  const panelY = clamp(sy, HUD_HEIGHT + 6, view.height - ACTION_BAR_HEIGHT - panelH - 8);
+
+  pixelPanel(panelX, panelY, panelW, panelH, "#fff2d0", "#e8c97a", COLORS.line);
+  text(`${pc.id + 1} \u53f7\u673a`, panelX + panelW / 2, panelY + 10, 12, COLORS.line, "bold", "center");
+
+  const actions = [
+    { action: "info", label: "\u8bbe\u5907\u4fe1\u606f" },
+    { action: "upgrade", label: "\u5347\u7ea7\u8bbe\u5907" },
+    { action: "move", label: "\u79fb\u52a8\u8bbe\u5907" },
+    { action: "sell", label: "\u51fa\u552e\u8bbe\u5907" }
+  ];
+
+  actions.forEach((item, index) => {
+    const button = {
+      x: panelX + 10,
+      y: panelY + 34 + index * 24,
+      w: panelW - 20,
+      h: 22,
+      action: item.action,
+      pc
+    };
+    ui.pcActionButtons.push(button);
+    drawWidePanelButton(button, item.label, item.action === "info" ? "#6b3f24" : "#8b552b");
+  });
 }
 
 function drawGuest(guest) {
   const x = Math.round(guest.x);
   const y = Math.round(guest.y);
+  if (guest.state === "playing") {
+    drawSeatedGuest(guest, x, y);
+    return;
+  }
+
   if (drawAsset("guest", x - 15, y - 50, 31, 50)) {
     if (guest.state === "queueing") {
       text("...", x, y - 62, 11, COLORS.text, "bold", "center");
@@ -3318,6 +5096,18 @@ function drawGuest(guest) {
   }
 }
 
+function drawSeatedGuest(guest, x, y) {
+  ellipse(x, y + 8, 12, 4, "rgba(58, 36, 24, 0.22)");
+  rect(x - 11, y - 3, 22, 14, "#557c8c");
+  rect(x - 8, y - 7, 16, 8, "#6a9aa2");
+  circle(x, y - 17, 8, "#f0c090");
+  roundedRect(x - 9, y - 25, 18, 8, 4, guest.palette.hair);
+  rect(x - 4, y - 12, 8, 4, "#d99a65");
+  if (guest.demand) {
+    drawDemandBubble(guest);
+  }
+}
+
 function drawDemandBubble(guest) {
   const x = Math.round(guest.x);
   const y = Math.round(guest.y) - 48;
@@ -3336,70 +5126,116 @@ function drawDemandBubble(guest) {
 }
 
 function drawHud() {
-  rect(0, 0, view.width, HUD_HEIGHT, "#1a0f0b");
-  woodPanel(6, SAFE_TOP + 1, Math.min(view.width - 108, 284), 58, COLORS.uiDark, COLORS.counterEdge);
-  pixelPanel(14, SAFE_TOP + 6, 116, 26, "#e7bd73", "#fff1ba", COLORS.line);
-  text("\u5c0f\u9ed1\u7f51\u5427", 72, SAFE_TOP + 9, 18, COLORS.line, "bold", "center");
-  rect(16, SAFE_TOP + 36, 102, 18, "#3c2318");
-  circle(28, SAFE_TOP + 45, 8, COLORS.yellow);
-  rect(25, SAFE_TOP + 39, 6, 12, "#d99422");
-  text(`\u73b0\u91d1 ${state.cash}`, 42, SAFE_TOP + 39, 13, COLORS.text, "bold");
-  drawCalendarHud();
-  drawCleanlinessBar();
+  rect(0, 0, view.width, HUD_HEIGHT, "#261711");
+  rect(0, HUD_HEIGHT - 4, view.width, 4, COLORS.counterEdge);
 
-  if (state.messageTimer > 0) {
-    rect(12, view.height - ACTION_BAR_HEIGHT - 40, view.width - 24, 28, "rgba(28, 48, 56, 0.88)");
-    text(state.message, view.width / 2, view.height - ACTION_BAR_HEIGHT - 31, 11, COLORS.text, "normal", "center");
-  }
+  const panel = {
+    x: 18,
+    y: SAFE_TOP + 14,
+    w: Math.min(view.width - 114, 286),
+    h: 78
+  };
+  pixelPanel(panel.x, panel.y, panel.w, panel.h, COLORS.uiDark, COLORS.counterEdge, COLORS.line);
+
+  const titleW = Math.min(118, Math.max(98, panel.w * 0.44));
+  const cleanLabelX = panel.x + titleW + 18;
+  const cleanBarX = cleanLabelX + 56;
+  const cleanBarW = Math.max(20, panel.x + panel.w - cleanBarX - 12);
+  rect(panel.x + 10, panel.y + 10, titleW, 22, "#2f1d14");
+  strokeRect(panel.x + 10, panel.y + 10, titleW, 22, COLORS.text, 2);
+  text("\u5c0f\u9ed1\u7f51\u5427", panel.x + 10 + titleW / 2, panel.y + 13, 15, COLORS.text, "bold", "center");
+
+  text("\u6e05\u6d01\u503c", cleanLabelX, panel.y + 13, 13, COLORS.red, "bold");
+  drawCleanlinessBar(cleanBarX, panel.y + 18, cleanBarW, 9);
+
+  drawCashHud(panel.x + 14, panel.y + 45);
+  const calendarW = Math.min(130, Math.max(82, panel.w * 0.43));
+  drawCalendarHud(panel.x + panel.w - calendarW - 10, panel.y + 45, calendarW);
 }
 
-function drawCalendarHud() {
-  const w = Math.min(126, Math.max(92, view.width - 244));
-  const x = 134;
-  const y = SAFE_TOP + 36;
+function drawCashHud(x, y) {
+  rect(x - 4, y - 4, 28, 28, "#6b3f24");
+  rect(x, y, 20, 20, COLORS.yellow);
+  text("$", x + 10, y + 1, 17, COLORS.line, "bold", "center");
+  text(`${state.cash}`, x + 42, y + 4, 15, COLORS.green, "bold");
+}
+
+function drawCalendarHud(x, y, w) {
   const fullLabel = `${getWeekdayName()}  ${getCurrentMonth()}\u6708${getCurrentDayOfMonth()}\u65e5`;
   const shortLabel = `${getWeekdayName()} ${getCurrentDayOfMonth()}\u65e5`;
   const dayLabel = w < 118 ? shortLabel : fullLabel;
   const iconColor = isLateNight() ? COLORS.blue : COLORS.yellow;
 
-  rect(x, y, w, 18, "#3c2318");
-  strokeRect(x, y, w, 18, COLORS.counterTop, 1);
+  rect(x, y, w, 24, COLORS.text);
+  strokeRect(x, y, w, 24, COLORS.line, 2);
   if (isLateNight()) {
-    circle(x + 12, y + 9, 6, iconColor);
-    rect(x + 13, y + 3, 6, 12, "#3c2318");
+    circle(x + 13, y + 12, 6, iconColor);
+    rect(x + 14, y + 6, 6, 12, COLORS.text);
   } else {
-    circle(x + 12, y + 9, 5, iconColor);
-    rect(x + 11, y + 1, 2, 4, iconColor);
-    rect(x + 11, y + 14, 2, 4, iconColor);
-    rect(x + 4, y + 8, 4, 2, iconColor);
-    rect(x + 17, y + 8, 4, 2, iconColor);
+    circle(x + 13, y + 12, 5, iconColor);
+    rect(x + 12, y + 4, 2, 4, iconColor);
+    rect(x + 12, y + 18, 2, 4, iconColor);
+    rect(x + 5, y + 11, 4, 2, iconColor);
+    rect(x + 18, y + 11, 4, 2, iconColor);
   }
-  text(fitTextToWidth(dayLabel, w - 30, 10, "bold"), x + 25, y + 4, 10, COLORS.text, "bold");
+  text(fitTextToWidth(dayLabel, w - 30, 13, "bold"), x + 26, y + 5, 13, COLORS.red, "bold");
+}
+
+function drawCleanlinessBar(x, y, w, h) {
+  const ratio = Math.max(0, Math.min(1, state.cleanliness / 100));
+  const fillColor = ratio > 0.55 ? COLORS.green : ratio > 0.3 ? COLORS.yellow : COLORS.red;
+  rect(x, y, w, h, COLORS.text);
+  strokeRect(x, y, w, h, COLORS.line, 1);
+  rect(x + 2, y + 2, Math.max(0, (w - 4) * ratio), Math.max(1, h - 4), fillColor);
+}
+
+function drawSystemMessageBar() {
+  const y = view.height - ACTION_BAR_HEIGHT - MESSAGE_BAR_HEIGHT - 10;
+  const x = 20;
+  const w = view.width - 40;
+  rect(0, y - 12, view.width, MESSAGE_BAR_HEIGHT + 22, "#261711");
+  rect(x + 4, y + 4, w, 42, "rgba(58, 36, 24, 0.36)");
+  rect(x, y, w, 42, COLORS.text);
+  strokeRect(x, y, w, 42, COLORS.wallDark, 4);
+  rect(x + 6, y + 6, w - 12, 2, "#fff9df");
+  const label = state.messageTimer > 0 ? state.message : "\u7cfb\u7edf\u63d0\u793a\u6d88\u606f";
+  text(fitTextToWidth(label, w - 24, 15, "bold"), x + w / 2, y + 12, 15, COLORS.red, "bold", "center");
 }
 
 function drawActionBar() {
   const y = view.height - ACTION_BAR_HEIGHT;
   clearActionButtons();
-  rect(0, y, view.width, ACTION_BAR_HEIGHT, "#1a0f0b");
-  woodPanel(6, y + 4, view.width - 12, ACTION_BAR_HEIGHT - 8, COLORS.uiDark, COLORS.counterEdge);
+  rect(0, y, view.width, ACTION_BAR_HEIGHT, "#261711");
+  rect(0, y, view.width, 4, COLORS.counterEdge);
+  rect(20, y + 16, view.width - 40, ACTION_BAR_HEIGHT - 26, "#f6e4b8");
+  strokeRect(20, y + 16, view.width - 40, ACTION_BAR_HEIGHT - 26, COLORS.wallDark, 4);
+  rect(26, y + 22, view.width - 52, 3, COLORS.text);
 
-  text(`\u7f51\u5427 Lv.${state.cafeLevel}`, 18, y + 12, 13, COLORS.yellow, "bold");
-  rect(92, y + 16, 52, 7, COLORS.line);
-  rect(94, y + 18, Math.min(48, state.served % 48), 3, COLORS.green);
+  text(`\u7b49\u7ea7 Lv.${state.cafeLevel}`, 30, y + 28, 15, COLORS.line, "bold");
+  const xp = getCafeLevelProgress();
+  const xpX = 112;
+  const xpY = y + 34;
+  const xpW = 62;
+  rect(xpX, xpY, xpW, 8, COLORS.line);
+  rect(xpX + 2, xpY + 2, xpW - 4, 4, "#ead19a");
+  rect(xpX + 2, xpY + 2, Math.max(0, Math.round((xpW - 4) * xp.current / Math.max(1, xp.required))), 4, COLORS.green);
+  text(`${xp.current}/${xp.required}`, xpX + xpW / 2, y + 44, 9, COLORS.line, "bold", "center");
+  rect(30, y + 58, 138, 26, "#ead19a");
+  strokeRect(30, y + 58, 138, 26, COLORS.line, 2);
 
-  const groupY = y + 31;
-  const groupW = 34;
-  const groupGap = 4;
-  ui.dailyGroupButton = { x: 14, y: groupY, w: groupW, h: 20 };
-  ui.buildGroupButton = { x: 14 + (groupW + groupGap), y: groupY, w: groupW, h: 20 };
-  ui.systemGroupButton = { x: 14 + (groupW + groupGap) * 2, y: groupY, w: groupW, h: 20 };
+  const groupY = y + 59;
+  const groupW = 44;
+  const groupGap = 2;
+  ui.dailyGroupButton = { x: 31, y: groupY, w: groupW, h: 24 };
+  ui.buildGroupButton = { x: 31 + (groupW + groupGap), y: groupY, w: groupW, h: 24 };
+  ui.systemGroupButton = { x: 31 + (groupW + groupGap) * 2, y: groupY, w: groupW, h: 24 };
   drawActionButton(ui.dailyGroupButton, "\u65e5", state.actionGroup === "daily");
   drawActionButton(ui.buildGroupButton, "\u5efa", state.actionGroup === "build");
   drawActionButton(ui.systemGroupButton, "\u7cfb", state.actionGroup === "system");
 
-  const buttonW = view.width < 350 ? 42 : 48;
-  const gap = view.width < 350 ? 5 : 6;
-  const buttonH = 34;
+  const buttonW = view.width < 350 ? 38 : 48;
+  const gap = view.width < 350 ? 6 : 12;
+  const buttonH = 50;
   const actionSets = {
     daily: [
       ["warehouseButton", "\u4ed3\u5e93"],
@@ -3416,17 +5252,17 @@ function drawActionBar() {
     ]
   };
   const actions = actionSets[state.actionGroup] || actionSets.daily;
-  const startX = Math.max(126, view.width - (buttonW + gap) * actions.length - 8);
+  const startX = Math.max(view.width < 350 ? 170 : 184, view.width - 28 - buttonW * actions.length - gap * (actions.length - 1));
 
   actions.forEach((action, index) => {
-    const button = { x: startX + (buttonW + gap) * index, y: y + 12, w: buttonW, h: buttonH };
+    const button = { x: startX + (buttonW + gap) * index, y: y + 30, w: buttonW, h: buttonH };
     ui[action[0]] = button;
     drawActionButton(button, action[1], Boolean(action[2]));
   });
 }
 
 function drawActionButton(button, label, active = false) {
-  pixelPanel(button.x, button.y, button.w, button.h, active ? "#3f8a57" : COLORS.counter, COLORS.counterEdge, COLORS.line);
+  pixelPanel(button.x, button.y, button.w, button.h, active ? "#5f8f3b" : COLORS.counter, active ? "#a7d96a" : COLORS.counterEdge, COLORS.line);
   if (button.h >= 30) {
     drawActionIcon(label, button.x + button.w / 2, button.y + 10, active);
     const size = button.w < 44 ? 10 : 11;
@@ -3510,30 +5346,23 @@ function drawToilet() {
     drawTiledArea({ x: toilet.x + 9, y: toilet.y + 32, w: toilet.w - 18, h: toilet.h - 42 });
   }
   strokeRoundedRect(toilet.x, toilet.y, toilet.w, toilet.h, 5, COLORS.line, 2);
-  text("\u5395\u6240", toilet.x + toilet.w / 2, toilet.y + 6, 13, COLORS.text, "bold", "center");
+  rect(toilet.x + 12, toilet.y + 6, toilet.w - 24, 18, COLORS.line);
+  rect(toilet.x + 14, toilet.y + 8, toilet.w - 28, 14, COLORS.text);
+  text("\u5395\u6240", toilet.x + toilet.w / 2, toilet.y + 8, 12, COLORS.line, "bold", "center");
   roundedRect(toilet.x + toilet.w / 2 - 13, toilet.y + 50, 26, 18, 4, "#d7dfe1");
   roundedRect(toilet.x + toilet.w / 2 - 8, toilet.y + 44, 16, 10, 3, COLORS.glass);
+  if (state.toilet.useCount > 0) {
+    const px = toilet.x + toilet.w / 2 + 4;
+    const py = toilet.y + 55;
+    rect(px - 5, py + 4, 10, 4, "#7b4a22");
+    rect(px - 3, py, 6, 5, "#8b552b");
+    rect(px - 1, py - 3, 4, 4, "#9a642f");
+  }
 
   if (state.toilet.dirty) {
     rect(toilet.x + toilet.w - 15, toilet.y + 30, 8, 8, COLORS.red);
     drawCleanBubble(toilet.x + toilet.w / 2, toilet.y - 38, "\u6e05\u5395\u6240");
   }
-}
-
-function drawCleanlinessBar() {
-  const x = 134;
-  const y = SAFE_TOP + 12;
-  const w = Math.min(116, Math.max(78, view.width - 260));
-  const h = 13;
-  const ratio = Math.max(0, Math.min(1, state.cleanliness / 100));
-  const fillColor = ratio > 0.55 ? COLORS.green : ratio > 0.3 ? COLORS.yellow : COLORS.red;
-
-  text("\u6e05\u6d01", x, y - 1, 11, COLORS.text, "bold");
-  rect(x + 34, y - 2, w, h + 4, COLORS.line);
-  rect(x + 37, y + 1, w - 6, h - 2, "#2d2118");
-  rect(x + 39, y + 3, Math.max(0, Math.floor((w - 10) * ratio)), h - 6, fillColor);
-  rect(x + 39, y + 3, Math.max(0, Math.floor((w - 10) * ratio)), 2, "rgba(255, 244, 207, 0.22)");
-  text(`${Math.round(state.cleanliness)}%`, x + 38 + w, y, 10, COLORS.text, "bold", "right");
 }
 
 function getInventoryTotal() {
@@ -3552,6 +5381,12 @@ function getInventorySummary(limit = 4) {
     .map((item) => `${item.product.name}${item.stock}`)
     .join("  ");
   return stocked.length > limit ? `${summary} ...` : summary;
+}
+
+function getPcAreaLabel(pc) {
+  const area = getAreaById(pc.areaId);
+  if (!area || area.id === 1) return "\u5927\u5385";
+  return `${area.name}#${area.id}`;
 }
 
 function drawProcurementPanel() {
@@ -3784,10 +5619,11 @@ function drawHiringPanel() {
   strokeRect(panel.x, panel.y, panel.w, panel.h, COLORS.wallDark, 4);
   rect(panel.x, panel.y, panel.w, 42, "#8c4f35");
   text("\u5458\u5de5\u62db\u8058", panel.x + 16, panel.y + 11, 18, COLORS.text, "bold");
-  text(`\u5458\u5de5 ${getEmployeeTotal()}  \u7f51\u5427 Lv.${state.cafeLevel}/4`, panel.x + panel.w - 132, panel.y + 14, 12, COLORS.text, "bold");
+  text(`\u5458\u5de5 ${getEmployeeTotal()}  \u7f51\u5427 Lv.${state.cafeLevel}`, panel.x + panel.w - 132, panel.y + 14, 12, COLORS.text, "bold");
 
   rect(panel.x + 10, panel.y + 48, panel.w - 20, 34, "#e3b86f");
-  text(`\u5347\u7ea7\u6761\u4ef6\uff1a\u5458\u5de5 ${getEmployeeTotal()} / \u8bbe\u5907 ${state.equipmentLevel} / \u673a\u5668 ${layout.pcs.length}`, panel.x + 18, panel.y + 56, 12, "#5d4532", "bold");
+  const xp = getCafeLevelProgress();
+  text(`\u5347\u7ea7\u7ecf\u9a8c\uff1a\u63a5\u5f85 ${xp.current}/${xp.required} \u4f4d\u987e\u5ba2\uff0c\u4e0b\u4e00\u7ea7\u89e3\u9501\u66f4\u591a\u673a\u4f4d`, panel.x + 18, panel.y + 56, 12, "#5d4532", "bold");
 
   const startY = panel.y + 88;
   const cardH = 62;
@@ -3841,7 +5677,7 @@ function drawExpansionPanel() {
   strokeRect(panel.x, panel.y, panel.w, panel.h, COLORS.wallDark, 4);
   rect(panel.x, panel.y, panel.w, 42, "#8c4f35");
   text("\u6269\u79df\u533a\u57df", panel.x + 16, panel.y + 11, 18, COLORS.text, "bold");
-  text(`\u673a\u4f4d ${layout.pcs.length}/${MAX_OPERATIONAL_PCS}`, panel.x + panel.w - 98, panel.y + 14, 12, COLORS.text, "bold");
+  text(`\u7a7a\u95f4 ${state.rentedAreas.length}`, panel.x + panel.w - 78, panel.y + 14, 12, COLORS.text, "bold");
 
   rect(panel.x + 10, panel.y + 48, panel.w - 20, 38, "#e3b86f");
   text(`\u5df2\u79df\uff1a${getRentedAreaSummary()}`, panel.x + 18, panel.y + 56, 11, "#5d4532", "bold");
@@ -3860,12 +5696,13 @@ function drawExpansionPanel() {
     if (y + cardH > panel.y + panel.h - 42) return;
 
     const cost = getAreaRentCost(offer.type, offer.pcCount);
-    const overLimit = layout.pcs.length + offer.pcCount > MAX_OPERATIONAL_PCS;
+    const unlockLevel = getExpansionUnlockLevel(offer.type);
     const affordable = state.cash >= cost;
-    const canRent = !overLimit && affordable;
+    const unlocked = state.cafeLevel >= unlockLevel;
+    const canRent = affordable && unlocked;
     const areaCount = getRentedAmenityCount(offer.type.id);
     const title = offer.pcCount
-      ? `${offer.type.name} ${offer.pcCount}\u673a`
+      ? `${offer.type.name} ${offer.pcCount}\u4eba\u5bb9\u91cf`
       : `${offer.type.name} x${areaCount}`;
 
     rect(panel.x + 10, y, panel.w - 20, cardH, canRent ? "#f7dba5" : "#c5a575");
@@ -3873,10 +5710,10 @@ function drawExpansionPanel() {
     drawExpansionIcon(offer.type, panel.x + 30, y + 26, !canRent);
     text(title, panel.x + 58, y + 7, 13, COLORS.line, "bold");
     text(`\u79df\u91d1 ${cost}`, panel.x + 58, y + 24, 10, "#5d4532", "bold");
-    const note = overLimit
-      ? "\u673a\u4f4d\u5df2\u8fbe\u4e0a\u9650"
-      : offer.pcCount ? `\u653e\u7f6e\u540e\u589e\u52a0 ${offer.pcCount} \u4e2a\u673a\u4f4d` : "\u653e\u7f6e\u529f\u80fd\u533a\uff0c\u540e\u7eed\u63a5\u4e8b\u4ef6";
-    text(note, panel.x + 58, y + 38, 9, overLimit ? COLORS.red : "#5d4532");
+    const note = !unlocked
+      ? `Lv.${unlockLevel}\u5f00\u653e`
+      : offer.pcCount ? `\u7a7a\u623f\u95f4\uff0c\u540e\u7eed\u53ef\u653e ${offer.pcCount} \u53f0\u7535\u8111` : "\u653e\u7f6e\u529f\u80fd\u533a\uff0c\u540e\u7eed\u63a5\u4e8b\u4ef6";
+    text(note, panel.x + 58, y + 38, 9, unlocked ? "#5d4532" : COLORS.red);
 
     const button = { x: panel.x + panel.w - 52, y: y + 13, w: 34, h: 26, type: offer.type, pcCount: offer.pcCount };
     ui.rentAreaButtons.push(button);
@@ -3899,7 +5736,11 @@ function getExpansionOffers() {
       offers.push({ type, pcCount });
     });
   });
-  return offers;
+  return offers.sort((a, b) => {
+    const unlockDelta = getExpansionUnlockLevel(a.type) - getExpansionUnlockLevel(b.type);
+    if (unlockDelta !== 0) return unlockDelta;
+    return getAreaRentCost(a.type, a.pcCount) - getAreaRentCost(b.type, b.pcCount);
+  });
 }
 
 function getRentedAreaSummary() {
@@ -3946,7 +5787,7 @@ function drawLayoutPanel() {
     x: 22,
     y: HUD_HEIGHT + 34,
     w: view.width - 44,
-    h: 276
+    h: 316
   };
 
   rect(panel.x, panel.y, panel.w, panel.h, "#f0c98a");
@@ -3959,35 +5800,57 @@ function drawLayoutPanel() {
   text(`\u5f53\u524d\uff1a${activeText}`, panel.x + 22, panel.y + 63, 13, "#5d4532", "bold");
   text("\u9009\u62e9\u6a21\u5f0f\u540e\u5728\u5730\u56fe\u4e0a\u70b9\u51fb\u64cd\u4f5c", panel.x + 22, panel.y + 80, 10, "#5d4532");
 
+  const fullX = panel.x + 18;
+  const fullW = panel.w - 36;
+  const halfW = Math.floor((fullW - 8) / 2);
   const buttons = [
     {
+      x: fullX,
+      y: panel.y + 110,
+      w: halfW,
       mode: "area",
       label: "\u91cd\u6446\u5305\u95f4",
-      message: "\u5e03\u5c40\uff1a\u70b9\u5305\u95f4\u9009\u4e2d\uff0c\u518d\u70b9\u5176\u4ed6\u5899\u8fb9\u91cd\u65b0\u8d34\u653e\u3002"
+      message: "\u5e03\u5c40\uff1a\u70b9\u5305\u95f4\u9009\u4e2d\uff0c\u62d6\u52a8\u5730\u56fe\u5bf9\u51c6\u7eff\u8272\u6846\u540e\u70b9\u51fb\u653e\u7f6e\u3002"
     },
     {
+      x: fullX + halfW + 8,
+      y: panel.y + 110,
+      w: halfW,
+      mode: "deleteArea",
+      label: "\u5220\u9664\u5305\u95f4",
+      message: "\u5e03\u5c40\uff1a\u70b9\u5305\u95f4\u5220\u9664\uff0c\u8fd4\u8fd8\u4e00\u534a\u6269\u79df\u8d39\u3002"
+    },
+    {
+      x: fullX,
+      y: panel.y + 148,
+      w: fullW,
       mode: "pc",
       label: "\u79fb\u52a8\u7535\u8111",
-      message: "\u5e03\u5c40\uff1a\u70b9\u7535\u8111\u9009\u4e2d\uff0c\u518d\u5728\u6240\u5c5e\u533a\u57df\u5185\u70b9\u65b0\u4f4d\u7f6e\u3002"
+      message: "\u5e03\u5c40\uff1a\u70b9\u7535\u8111\u9009\u4e2d\uff0c\u62d6\u52a8\u5730\u56fe\u5bf9\u51c6\u9884\u89c8\u6846\u3002"
     },
     {
+      x: fullX,
+      y: panel.y + 186,
+      w: fullW,
       mode: "floor",
       label: "\u94fa\u516c\u533a\u5730\u7816",
       message: "\u5e03\u5c40\uff1a\u70b9\u5730\u56fe\u94fa\u516c\u533a\u5730\u7816\uff0c\u518d\u70b9\u540c\u4f4d\u7f6e\u53ef\u79fb\u9664\u3002"
     },
     {
+      x: fullX,
+      y: panel.y + 224,
+      w: fullW,
       mode: "off",
       label: "\u9000\u51fa\u5e03\u5c40",
       message: "\u5df2\u9000\u51fa\u5e03\u5c40\u6a21\u5f0f\u3002"
     }
   ];
 
-  buttons.forEach((button, index) => {
-    const y = panel.y + 110 + index * 38;
+  buttons.forEach((button) => {
     const rectButton = {
-      x: panel.x + 18,
-      y,
-      w: panel.w - 36,
+      x: button.x,
+      y: button.y,
+      w: button.w,
       h: 30,
       mode: button.mode,
       message: button.message
@@ -4004,6 +5867,7 @@ function drawLayoutPanel() {
 function getLayoutModeLabel(mode) {
   return {
     area: "\u91cd\u6446\u5305\u95f4",
+    deleteArea: "\u5220\u9664\u5305\u95f4",
     pc: "\u79fb\u52a8\u7535\u8111",
     floor: "\u94fa\u516c\u533a\u5730\u7816"
   }[mode] || "\u672a\u5f00\u542f";
@@ -4013,6 +5877,7 @@ function drawEquipmentPanel() {
   if (!state.equipmentOpen) return;
 
   ui.upgradeEquipmentButtons.length = 0;
+  ui.purchasePcButtons.length = 0;
   rect(0, 0, view.width, view.height, "rgba(20, 18, 16, 0.72)");
 
   const panel = {
@@ -4032,12 +5897,17 @@ function drawEquipmentPanel() {
   text(`\u5e73\u5747 ${averageLevel.toFixed(1)}`, panel.x + panel.w - 92, panel.y + 14, 12, COLORS.text, "bold");
 
   rect(panel.x + 10, panel.y + 50, panel.w - 20, 42, "#e3b86f");
-  text(`\u673a\u5668 ${layout.pcs.length} \u53f0 / \u5747\u6863 ${state.equipmentLevel} / \u6700\u4f4e L${minimumLevel}`, panel.x + 18, panel.y + 58, 12, "#5d4532", "bold");
+  const maxPcs = getMaxOperationalPcs();
+  text(`\u673a\u5668 ${layout.pcs.length}/${maxPcs} / \u5747\u6863 ${state.equipmentLevel} / \u6700\u4f4e L${minimumLevel}`, panel.x + 18, panel.y + 58, 12, "#5d4532", "bold");
   text("\u7f51\u5427\u7b49\u7ea7\u6309\u5e73\u5747\u8bbe\u5907\u8bc4\u4f30\uff0c\u5df2\u89e3\u9501\u4e0d\u56de\u9000", panel.x + 18, panel.y + 74, 11, "#5d4532");
+  ui.purchaseMahjongButton = { x: panel.x + panel.w - 106, y: panel.y + 82, w: 88, h: 24 };
+  rect(ui.purchaseMahjongButton.x, ui.purchaseMahjongButton.y, ui.purchaseMahjongButton.w, ui.purchaseMahjongButton.h, state.cash >= MAHJONG_TABLE_COST ? "#4e8f4f" : "#9a6b55");
+  strokeRect(ui.purchaseMahjongButton.x, ui.purchaseMahjongButton.y, ui.purchaseMahjongButton.w, ui.purchaseMahjongButton.h, COLORS.line, 2);
+  text(`\u9ebb\u5c06\u684c ${MAHJONG_TABLE_COST}`, ui.purchaseMahjongButton.x + ui.purchaseMahjongButton.w / 2, ui.purchaseMahjongButton.y + 5, 10, COLORS.text, "bold", "center");
 
-  const startY = panel.y + 108;
+  const startY = panel.y + 116;
   const cardH = 62;
-  const tierOptions = equipmentTiers.slice(1);
+  const tierOptions = equipmentTiers;
   const pageSize = Math.max(1, Math.floor((panel.y + panel.h - 42 - startY) / (cardH + 8)));
   const pageCount = getPageCount(tierOptions.length, pageSize);
   const page = getPanelPage("equipment", pageCount);
@@ -4047,22 +5917,38 @@ function drawEquipmentPanel() {
     const y = startY + index * (cardH + 8);
     if (y + cardH > panel.y + panel.h - 42) return;
 
-    const hasCandidate = layout.pcs.some((pc) => pc.equipmentLevel + 1 === tier.level);
-    const allUpgraded = layout.pcs.every((pc) => pc.equipmentLevel >= tier.level);
-    const affordable = state.cash >= tier.pricePerPc;
+    const canUpgradeTier = tier.level > 1;
+    const upgradeCandidates = canUpgradeTier ? layout.pcs.filter((pc) => tier.level > pc.equipmentLevel) : [];
+    const hasCandidate = upgradeCandidates.length > 0;
+    const allUpgraded = canUpgradeTier && layout.pcs.length > 0 && layout.pcs.every((pc) => pc.equipmentLevel >= tier.level);
+    const minUpgradeCost = hasCandidate ? Math.min(...upgradeCandidates.map((pc) => getPcUpgradeCost(pc, tier.level))) : 0;
+    const affordableUpgrade = hasCandidate && state.cash >= minUpgradeCost;
+    const purchaseCost = getNewPcCost(tier.level);
+    const affordablePurchase = state.cash >= purchaseCost && layout.pcs.length < maxPcs;
 
-    rect(panel.x + 10, y, panel.w - 20, cardH, hasCandidate ? "#f7dba5" : "#c5a575");
+    rect(panel.x + 10, y, panel.w - 20, cardH, affordablePurchase || hasCandidate ? "#f7dba5" : "#c5a575");
     strokeRect(panel.x + 10, y, panel.w - 20, cardH, "#9a7043", 2);
-    drawEquipmentIcon(panel.x + 30, y + 17, tier.level, allUpgraded);
+    drawEquipmentIcon(panel.x + 30, y + 17, tier.level, canUpgradeTier ? allUpgraded : false);
     text(tier.name, panel.x + 68, y + 8, 15, COLORS.line, "bold");
-    text(`\u5355\u53f0 ${tier.pricePerPc}`, panel.x + 68, y + 30, 11, "#5d4532", "bold");
-    text(hasCandidate ? "\u53ef\u9009\u673a\u5668" : allUpgraded ? "\u5168\u90e8\u5df2\u8fbe\u6210" : "\u9700\u5148\u5347\u4e0a\u4e00\u6863", panel.x + 68, y + 45, 10, hasCandidate ? COLORS.green : "#745a46");
+    text(`\u65b0\u8d2d ${purchaseCost}`, panel.x + 68, y + 28, 11, "#5d4532", "bold");
+    const upgradeDesc = hasCandidate
+      ? `\u5347\u7ea7\u4f4e\u81f3 ${minUpgradeCost} / \u53ef\u9009\u673a\u5668`
+      : allUpgraded ? "\u5168\u90e8\u5df2\u8fbe\u6210" : "\u6ca1\u6709\u53ef\u5347\u7ea7\u673a\u5668";
+    text(canUpgradeTier ? upgradeDesc : "\u57fa\u7840\u65b0\u673a\uff0c\u9700\u5730\u56fe\u653e\u7f6e", panel.x + 68, y + 45, 10, hasCandidate ? COLORS.green : "#745a46");
 
-    const button = { x: panel.x + panel.w - 58, y: y + 16, w: 42, h: 26, tier };
-    ui.upgradeEquipmentButtons.push(button);
-    rect(button.x, button.y, button.w, button.h, hasCandidate && affordable ? "#4e8f4f" : "#9a6b55");
-    strokeRect(button.x, button.y, button.w, button.h, COLORS.line, 2);
-    text(allUpgraded ? "\u5df2" : "\u5347", button.x + button.w / 2, button.y + 5, 13, COLORS.text, "bold", "center");
+    if (canUpgradeTier) {
+      const upgradeButton = { x: panel.x + panel.w - 92, y: y + 16, w: 34, h: 26, tier };
+      ui.upgradeEquipmentButtons.push(upgradeButton);
+      rect(upgradeButton.x, upgradeButton.y, upgradeButton.w, upgradeButton.h, hasCandidate && affordableUpgrade ? "#4e8f4f" : "#9a6b55");
+      strokeRect(upgradeButton.x, upgradeButton.y, upgradeButton.w, upgradeButton.h, COLORS.line, 2);
+      text(allUpgraded ? "\u5df2" : "\u5347", upgradeButton.x + upgradeButton.w / 2, upgradeButton.y + 5, 13, COLORS.text, "bold", "center");
+    }
+
+    const purchaseButton = { x: panel.x + panel.w - 52, y: y + 16, w: 34, h: 26, tier };
+    ui.purchasePcButtons.push(purchaseButton);
+    rect(purchaseButton.x, purchaseButton.y, purchaseButton.w, purchaseButton.h, affordablePurchase ? "#4e8f4f" : "#9a6b55");
+    strokeRect(purchaseButton.x, purchaseButton.y, purchaseButton.w, purchaseButton.h, COLORS.line, 2);
+    text("\u8d2d", purchaseButton.x + purchaseButton.w / 2, purchaseButton.y + 5, 13, COLORS.text, "bold", "center");
   });
 
   if (!getPendingEquipmentTier()) {
@@ -4084,35 +5970,33 @@ function drawEquipmentPcSelection(panel) {
   rect(panel.x + 16, panel.y + 92, panel.w - 32, panel.h - 138, "rgba(77, 52, 35, 0.92)");
   strokeRect(panel.x + 16, panel.y + 92, panel.w - 32, panel.h - 138, COLORS.line, 3);
   text(`\u9009\u62e9\u8981\u5347\u7ea7\u5230 ${tier.name} \u7684\u673a\u5668`, panel.x + panel.w / 2, panel.y + 104, 14, COLORS.text, "bold", "center");
-  text(`\u5355\u53f0\u8d39\u7528 ${tier.pricePerPc}`, panel.x + panel.w / 2, panel.y + 125, 12, COLORS.text, "bold", "center");
+  text("\u8d39\u7528\u5df2\u6309\u65e7\u8bbe\u5907\u534a\u4ef7\u62b5\u6263", panel.x + panel.w / 2, panel.y + 125, 12, COLORS.text, "bold", "center");
 
-  const cols = 2;
-  const cardW = (panel.w - 56) / cols;
+  const cardW = panel.w - 56;
   const startY = panel.y + 152;
-  const rows = Math.max(1, Math.floor((panel.y + panel.h - 92 - startY) / 58));
-  const pageSize = rows * cols;
+  const rowH = 52;
+  const pageSize = Math.max(1, Math.floor((panel.y + panel.h - 92 - startY) / rowH));
   const pageCount = getPageCount(layout.pcs.length, pageSize);
   const page = getPanelPage("equipmentPc", pageCount);
   const visiblePcs = layout.pcs.slice(page * pageSize, page * pageSize + pageSize);
 
   visiblePcs.forEach((pc, index) => {
-    const col = index % cols;
-    const row = Math.floor(index / cols);
-    const x = panel.x + 28 + col * (cardW + 8);
-    const y = startY + row * 58;
+    const x = panel.x + 28;
+    const y = startY + index * rowH;
     const currentTier = getEquipmentTier(pc.equipmentLevel);
-    const canUpgrade = pc.equipmentLevel + 1 === tier.level && state.cash >= tier.pricePerPc;
+    const upgradeCost = getPcUpgradeCost(pc, tier.level);
+    const canUpgrade = tier.level > pc.equipmentLevel && state.cash >= upgradeCost;
 
-    rect(x, y, cardW, 48, canUpgrade ? "#f7dba5" : "#c5a575");
-    strokeRect(x, y, cardW, 48, "#9a7043", 2);
-    text(`${pc.id + 1} \u53f7\u673a`, x + 10, y + 7, 13, COLORS.line, "bold");
-    text(currentTier.name, x + 10, y + 26, 10, "#5d4532", "bold");
+    rect(x, y, cardW, 44, canUpgrade ? "#f7dba5" : "#c5a575");
+    strokeRect(x, y, cardW, 44, "#9a7043", 2);
+    text(`${pc.id + 1} \u53f7\u673a  ${getPcAreaLabel(pc)}`, x + 10, y + 6, 13, COLORS.line, "bold");
+    text(`\u5f53\u524d ${currentTier.name} / \u5347\u7ea7 ${upgradeCost}`, x + 10, y + 25, 10, "#5d4532", "bold");
 
-    const button = { x: x + cardW - 42, y: y + 10, w: 32, h: 26, pc };
+    const button = { x: x + cardW - 50, y: y + 8, w: 40, h: 28, pc };
     ui.equipmentPcButtons.push(button);
     rect(button.x, button.y, button.w, button.h, canUpgrade ? "#4e8f4f" : "#9a6b55");
     strokeRect(button.x, button.y, button.w, button.h, COLORS.line, 2);
-    text("\u5347", button.x + button.w / 2, button.y + 6, 12, COLORS.text, "bold", "center");
+    text("\u5347", button.x + button.w / 2, button.y + 7, 12, COLORS.text, "bold", "center");
   });
 
   drawPanelPager("equipmentPc", { x: panel.x + 16, y: panel.y + 92, w: panel.w - 32, h: panel.h - 138 }, page, pageCount);
@@ -4125,10 +6009,17 @@ function drawEquipmentPcSelection(panel) {
 
 function drawEquipmentIcon(x, y, level, dimmed) {
   const glow = dimmed ? "#7b8c76" : COLORS.pcGlow;
-  rect(x - 13, y - 8, 28, 20, "#17222a");
-  strokeRect(x - 13, y - 8, 28, 20, COLORS.line, 2);
-  rect(x - 9, y - 4, 20, 11, glow);
-  rect(x - 2, y + 12, 8, 7, "#2d2522");
+  const body = level >= 4 ? "#d8d0bd" : "#17222a";
+  const w = level >= 4 ? 32 : 28;
+  const h = level >= 4 ? 18 : 20;
+  rect(x - w / 2, y - 8, w, h, body);
+  strokeRect(x - w / 2, y - 8, w, h, COLORS.line, 2);
+  rect(x - w / 2 + 4, y - 4, w - 8, level >= 4 ? 10 : 11, level >= 5 ? "#8fd7ff" : glow);
+  if (level >= 3 && level < 4) {
+    rect(x + 18, y - 4, 7, 18, COLORS.line);
+    rect(x + 20, y - 1, 3, 11, "#65c05a");
+  }
+  rect(x - 2, y + 12, 8, 7, level >= 4 ? "#d8d0bd" : "#2d2522");
   text(`L${level}`, x + 1, y + 21, 10, COLORS.line, "bold", "center");
 }
 
@@ -4141,7 +6032,7 @@ function drawSettingsPanel() {
     x: 22,
     y: HUD_HEIGHT + 34,
     w: view.width - 44,
-    h: 330
+    h: Math.min(view.height - HUD_HEIGHT - 28, 390)
   };
 
   rect(panel.x, panel.y, panel.w, panel.h, "#f0c98a");
@@ -4159,16 +6050,28 @@ function drawSettingsPanel() {
   text(`\u5f53\u524d\uff1a${modeLabel}`, panel.x + 24, panel.y + 66, 15, COLORS.line, "bold");
   text(modeDesc, panel.x + 24, panel.y + 93, 11, "#5d4532", "bold");
 
-  ui.toggleTestModeButton = { x: panel.x + 18, y: panel.y + 146, w: panel.w - 36, h: 34 };
-  ui.pricingButton = { x: panel.x + 18, y: panel.y + 188, w: panel.w - 36, h: 34 };
-  ui.saveGameButton = { x: panel.x + 18, y: panel.y + 230, w: panel.w - 36, h: 34 };
-  ui.clearSaveButton = { x: panel.x + 18, y: panel.y + 276, w: panel.w - 94, h: 30 };
-  ui.closeSettingsButton = { x: panel.x + panel.w - 66, y: panel.y + 276, w: 48, h: 30 };
+  ui.toggleTestModeButton = { x: panel.x + 18, y: panel.y + 140, w: panel.w - 36, h: 32 };
+  ui.toggleMusicButton = { x: panel.x + 18, y: panel.y + 180, w: panel.w - 36, h: 32 };
+  ui.toggleSfxButton = { x: panel.x + 18, y: panel.y + 220, w: panel.w - 36, h: 32 };
+  ui.pricingButton = { x: panel.x + 18, y: panel.y + 260, w: panel.w - 36, h: 32 };
+  ui.saveGameButton = { x: panel.x + 18, y: panel.y + 300, w: panel.w - 36, h: 32 };
+  ui.clearSaveButton = { x: panel.x + 18, y: panel.y + panel.h - 42, w: panel.w - 94, h: 30 };
+  ui.closeSettingsButton = { x: panel.x + panel.w - 66, y: panel.y + panel.h - 42, w: 48, h: 30 };
 
   drawWidePanelButton(
     ui.toggleTestModeButton,
     state.testMode ? "\u5173\u95ed\u6d4b\u8bd5\u6a21\u5f0f" : "\u5f00\u542f\u6d4b\u8bd5\u6a21\u5f0f",
     state.testMode ? COLORS.green : "#9a6b55"
+  );
+  drawWidePanelButton(
+    ui.toggleMusicButton,
+    state.audio.musicEnabled ? "\u80cc\u666f\u97f3\u4e50\uff1a\u5f00" : "\u80cc\u666f\u97f3\u4e50\uff1a\u5173",
+    state.audio.musicEnabled ? COLORS.green : "#9a6b55"
+  );
+  drawWidePanelButton(
+    ui.toggleSfxButton,
+    state.audio.sfxEnabled ? "\u6309\u952e\u70b9\u51fb\u58f0\uff1a\u5f00" : "\u6309\u952e\u70b9\u51fb\u58f0\uff1a\u5173",
+    state.audio.sfxEnabled ? COLORS.green : "#9a6b55"
   );
   drawWidePanelButton(ui.pricingButton, "\u533a\u57df\u8ba1\u8d39", "#4e8f4f");
   drawWidePanelButton(ui.saveGameButton, "\u624b\u52a8\u4fdd\u5b58", state.testMode ? "#9a6b55" : "#4e8f4f");
@@ -4361,47 +6264,83 @@ function drawWorker(worker) {
 }
 
 function drawLegend() {
+  return;
   text("入口", layout.room.x + 8, layout.entrance.y - 46, 11, COLORS.red, "bold");
-  text(`\u5ba2\u5385\u8d77\u6b65 / \u5df2\u5f00 ${layout.pcs.length} \u53f0\u673a`, layout.room.x + layout.room.w / 2, layout.room.y + layout.room.h - 24, 11, COLORS.dimText, "bold", "center");
 }
 
 function drawIndoorDetailsModern() {
   const room = layout.room;
-  rect(room.x + 8, room.y + 8, room.w - 16, 40, "rgba(255, 244, 207, 0.16)");
-  for (let x = room.x + 18; x < room.x + room.w - 18; x += 42) {
-    rect(x, room.y + 10, 1, 36, "rgba(123, 78, 43, 0.28)");
-  }
+  drawWallPattern(room.x + 8, room.y + 8, room.w - 16, 54);
   pixelPanel(room.x + 22, room.y + 18, 72, 30, COLORS.counter, COLORS.counterEdge, COLORS.line);
   text("\u5c0f\u9ed1\u7f51\u5427", room.x + 58, room.y + 25, 13, COLORS.text, "bold", "center");
-  rect(room.x + room.w - 88, room.y + 18, 52, 38, COLORS.line);
-  rect(room.x + room.w - 85, room.y + 21, 46, 32, "#ead8a8");
-  text("\u4e0a\u7f51", room.x + room.w - 62, room.y + 26, 11, COLORS.dimText, "bold", "center");
-  text("\u5feb\u4e50", room.x + room.w - 62, room.y + 39, 11, COLORS.dimText, "bold", "center");
-  rect(room.x + room.w - 148, room.y + 17, 54, 16, COLORS.line);
-  rect(room.x + room.w - 145, room.y + 20, 48, 10, "#7a4528");
-  drawTinyPlant(room.x + room.w - 121, room.y + 18, 0.75);
-  rect(room.x + room.w - 148, room.y + room.h - 65, 22, 30, COLORS.line);
-  rect(room.x + room.w - 145, room.y + room.h - 62, 16, 24, "#eddcae");
-  rect(room.x + room.w - 142, room.y + room.h - 58, 10, 7, "#7ca46a");
-  rect(room.x + room.w - 142, room.y + room.h - 49, 10, 7, "#d5a14b");
-
+  drawSnackDisplay(room.x + 110, room.y + 20);
+  rect(room.x + room.w - 150, room.y + 18, 52, 38, COLORS.line);
+  rect(room.x + room.w - 147, room.y + 21, 46, 32, COLORS.text);
+  text("\u4e0a\u7f51", room.x + room.w - 124, room.y + 26, 11, COLORS.dimText, "bold", "center");
+  text("\u5feb\u4e50", room.x + room.w - 124, room.y + 39, 11, COLORS.dimText, "bold", "center");
   if (!drawAsset("plant", room.x + room.w - 78, room.y + room.h - 90, 58, 78)) {
     drawTinyPlant(room.x + room.w - 43, room.y + room.h - 56, 1.45);
   }
 }
 
+function drawFloorLamp(x, y) {
+  rect(x - 18, y - 28, 36, 30, "rgba(240, 185, 74, 0.16)");
+  rect(x - 2, y - 8, 4, 24, COLORS.line);
+  rect(x - 10, y + 14, 20, 4, COLORS.line);
+  rect(x - 16, y - 24, 32, 16, COLORS.line);
+  rect(x - 12, y - 20, 24, 10, "#f0c16f");
+  rect(x - 8, y - 18, 16, 4, "#fff2d0");
+  rect(x - 4, y + 16, 8, 5, "#8b552b");
+}
+
+function drawSnackDisplay(x, y) {
+  rect(x - 3, y - 13, 30, 16, COLORS.line);
+  rect(x, y - 10, 24, 10, COLORS.text);
+  text("\u96f6\u98df", x + 12, y - 10, 9, COLORS.line, "bold", "center");
+  rect(x, y, 108, 28, COLORS.line);
+  rect(x + 3, y + 3, 102, 22, "#7b563b");
+  rect(x + 6, y + 6, 96, 3, COLORS.counterEdge);
+  rect(x + 9, y + 12, 14, 8, COLORS.red);
+  rect(x + 27, y + 12, 14, 8, COLORS.yellow);
+  rect(x + 45, y + 12, 14, 8, COLORS.green);
+  rect(x + 63, y + 12, 14, 8, COLORS.blue);
+  rect(x + 81, y + 12, 14, 8, "#d98236");
+}
+
+function drawMahjongTables() {
+  state.mahjongTables.forEach((table) => {
+    ellipse(table.x + table.w / 2, table.y + table.h - 2, table.w / 2, 7, "rgba(58, 36, 24, 0.2)");
+    rect(table.x - 2, table.y + 8, table.w + 4, table.h - 4, COLORS.line);
+    rect(table.x + 2, table.y + 12, table.w - 4, table.h - 12, "#6b3f24");
+    rect(table.x + 8, table.y + 16, table.w - 16, table.h - 20, "#2f6b3f");
+    strokeRect(table.x + 8, table.y + 16, table.w - 16, table.h - 20, "#1e3b28", 2);
+    rect(table.x + 15, table.y + 21, 8, 5, "#fff2d0");
+    rect(table.x + 27, table.y + 21, 8, 5, "#fff2d0");
+    rect(table.x + 39, table.y + 21, 8, 5, "#fff2d0");
+    rect(table.x + 15, table.y + 30, 8, 5, "#fff2d0");
+    rect(table.x + 39, table.y + 30, 8, 5, "#fff2d0");
+    text("\u9ebb", table.x + table.w / 2, table.y + table.h / 2 - 9, 11, "#f8e6a9", "bold", "center");
+  });
+}
+
 function render() {
   ctx.clearRect(0, 0, view.width, view.height);
   ui.pageButtons.length = 0;
+  ui.pcActionButtons.length = 0;
   beginWorldDraw();
   drawPixelFloor();
   drawCounter();
+  drawMahjongTables();
   layout.pcs.forEach(drawPc);
   drawLegend();
   state.workers.forEach(drawWorker);
   state.guests.forEach(drawGuest);
   endWorldDraw();
   drawHud();
+  drawPcInfoBubble();
+  drawPcActionMenu();
+  drawLayoutToolControls();
+  drawSystemMessageBar();
   drawActionBar();
   drawProcurementPanel();
   drawWarehousePanel();
@@ -4411,6 +6350,7 @@ function render() {
   drawEquipmentPanel();
   drawSettingsPanel();
   drawPricingPanel();
+  drawPcUpgradeMenu();
   drawConfirmDialog();
 }
 
@@ -4432,8 +6372,25 @@ function drawFatalError(error) {
 
 loadAssets();
 restoreGame();
+syncMusicPlayback();
 
 try {
+  if (wx.onShow) {
+    wx.onShow(syncMusicPlayback);
+  }
+
+  if (wx.onHide) {
+    wx.onHide(() => {
+      if (audioSystem.bgm) {
+        try {
+          audioSystem.bgm.pause();
+        } catch (error) {
+          // Ignore lifecycle audio errors.
+        }
+      }
+    });
+  }
+
   wx.onTouchStart(handleTouchStartEvent);
   wx.onTouchMove(handleTouchMoveEvent);
   wx.onTouchEnd(handleTouchEndEvent);

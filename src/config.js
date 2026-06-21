@@ -1,28 +1,28 @@
 const COLORS = {
-  wall: "#9b5d31",
-  wallTop: "#d09a55",
-  wallDark: "#3b1e14",
-  floor: "#e9c27b",
-  floorAlt: "#f3d18d",
-  floorLine: "#b9783f",
-  counter: "#8d552c",
-  counterTop: "#c47b38",
-  counterEdge: "#f2bd62",
-  pcDesk: "#9a622f",
-  pcScreen: "#17202a",
-  pcGlow: "#61d436",
-  line: "#2a130d",
-  text: "#fff4cf",
-  dimText: "#805436",
-  red: "#d64b36",
-  green: "#5faa32",
-  yellow: "#f6c84d",
-  blue: "#4b77a8",
-  plant: "#4e9f38",
-  shadow: "#1a0f0b",
-  glass: "#9ec7bf",
-  uiDark: "#4b2718",
-  uiPanel: "#f3d59a"
+  wall: "#f1d89b",
+  wallTop: "#ffe6a8",
+  wallDark: "#6b3f24",
+  floor: "#e7c17a",
+  floorAlt: "#edcc86",
+  floorLine: "#c99955",
+  counter: "#8b552b",
+  counterTop: "#c5833d",
+  counterEdge: "#e8c97a",
+  pcDesk: "#9a642f",
+  pcScreen: "#22313a",
+  pcGlow: "#6faf45",
+  line: "#3a2418",
+  text: "#fff2d0",
+  dimText: "#7b5634",
+  red: "#c85a43",
+  green: "#6faf45",
+  yellow: "#f0b94a",
+  blue: "#557c8c",
+  plant: "#5f8f3b",
+  shadow: "#261711",
+  glass: "#9fb9a5",
+  uiDark: "#3a2418",
+  uiPanel: "#fff2d0"
 };
 
 const SPRITE_SCALE = {
@@ -52,21 +52,21 @@ const staffTypes = [
     name: "\u6536\u94f6\u5458",
     hireCost: 120,
     salary: 80,
-    desc: "\u524d\u53f0\u5f00\u673a\u3001\u6536\u94f6\uff0c\u540e\u7eed\u63a5\u5165\u8f6e\u73ed\u3002"
+    desc: "\u8d1f\u8d23\u5f00\u5361\u548c\u9001\u9910\uff0c\u4eba\u591a\u65f6\u524d\u53f0\u66f4\u5feb\u3002"
   },
   {
     id: "floor",
     name: "\u5916\u573a",
     hireCost: 100,
     salary: 70,
-    desc: "\u9001\u8d27\u3001\u6536\u62fe\u4e0b\u673a\u673a\u4f4d\u3002"
+    desc: "\u53ea\u6536\u62fe\u5ba2\u4eba\u4e0b\u673a\u540e\u7684\u673a\u4f4d\u3002"
   },
   {
     id: "cleaner",
     name: "\u4fdd\u6d01",
     hireCost: 90,
     salary: 65,
-    desc: "\u6e05\u7406\u673a\u4f4d\u3001\u5395\u6240\u548c\u5730\u9762\u536b\u751f\u3002"
+    desc: "\u62d6\u5730\u3001\u626b\u5395\u6240\uff0c\u4e0d\u6e05\u7406\u7535\u8111\u3002"
   },
   {
     id: "repairman",
@@ -80,14 +80,14 @@ const staffTypes = [
     name: "\u5e97\u957f",
     hireCost: 380,
     salary: 220,
-    desc: "\u5168\u80fd\u7ba1\u7406\uff0c\u9700\u6536\u94f6+\u5916\u573a+\u4fdd\u6d01+\u7ef4\u4fee\u5404 1 \u4eba\u3002"
+    desc: "\u4ed3\u5e93\u8865\u8d27\u548c\u9001\u9910\uff0c\u4e0d\u4fee\u673a\u5668\u3002"
   },
   {
     id: "companion",
     name: "\u966a\u73a9",
     hireCost: 260,
     salary: 160,
-    desc: "\u9ad8\u7aef\u7f51\u5496\u670d\u52a1\uff0c\u9700\u5e97\u957f + Lv.3\u3002"
+    desc: "\u9ad8\u7aef\u5305\u95f4\u966a\u73a9\u670d\u52a1\uff0c\u9700\u5e97\u957f + Lv.3\u3002"
   }
 ];
 
@@ -104,48 +104,55 @@ const expansionTypes = [
     id: "multiRoom",
     name: "\u591a\u4eba\u95f4",
     pcOptions: [4, 6, 8],
-    baseCost: 1800,
-    pricePerPc: 650,
+    baseCost: 0,
+    pricePerPc: 0,
+    costByPcCount: { 4: 2200, 6: 1800, 8: 1400 },
+    unlockLevel: 1,
     desc: "\u9002\u5408\u5c0f\u961f\u5f00\u9ed1\uff0c\u53ef\u81ea\u5b9a\u4e49 4-8 \u53f0\u673a\u3002"
   },
   {
     id: "doubleRoom",
     name: "\u53cc\u4eba\u95f4",
     pcOptions: [2],
-    baseCost: 1600,
-    pricePerPc: 700,
+    baseCost: 2600,
+    pricePerPc: 0,
+    unlockLevel: 2,
     desc: "\u53cc\u4eba\u5e76\u6392\uff0c\u540e\u7eed\u53ef\u63a5\u966a\u73a9\u548c\u60c5\u4fa3\u5ba2\u3002"
   },
   {
     id: "singleRoom",
     name: "\u5355\u4eba\u95f4",
     pcOptions: [1],
-    baseCost: 1200,
-    pricePerPc: 900,
+    baseCost: 3200,
+    pricePerPc: 0,
+    unlockLevel: 3,
     desc: "\u5b89\u9759\u79c1\u5bc6\uff0c\u540e\u7eed\u5438\u5f15\u9ad8\u7aef\u73a9\u5bb6\u3002"
   },
   {
     id: "capsuleRoom",
     name: "\u80f6\u56ca\u5355\u95f4",
     pcOptions: [1],
-    baseCost: 2400,
-    pricePerPc: 1100,
+    baseCost: 4600,
+    pricePerPc: 0,
+    unlockLevel: 4,
     desc: "\u5e26\u4f11\u606f\u80f6\u56ca\uff0c\u4e3a\u5305\u591c\u73a9\u6cd5\u94fa\u8def\u3002"
   },
   {
     id: "showerRoom",
     name: "\u6dcb\u6d74\u623f",
     pcOptions: [0],
-    baseCost: 1800,
+    baseCost: 3000,
     pricePerPc: 0,
+    unlockLevel: 3,
     desc: "\u6d17\u6fa1\u914d\u5957\uff0c\u540e\u7eed\u63a5\u5165\u5305\u591c\u548c\u6e05\u6d01\u538b\u529b\u3002"
   },
   {
     id: "chessRoom",
     name: "\u68cb\u724c\u5ba4",
     pcOptions: [0],
-    baseCost: 2200,
+    baseCost: 2800,
     pricePerPc: 0,
+    unlockLevel: 2,
     desc: "\u975e\u4e0a\u673a\u6536\u5165\u533a\uff0c\u540e\u7eed\u63a5\u5165\u968f\u673a\u724c\u5c40\u4e8b\u4ef6\u3002"
   }
 ];
