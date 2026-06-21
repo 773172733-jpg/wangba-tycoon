@@ -120,11 +120,14 @@ const state = {
   },
   pendingExpansion: null,
   pendingPartitionTypeId: null,
+  pendingPartitionOrientation: "horizontal",
   pendingPcPurchase: null,
   pendingMahjongPurchase: false,
   pendingEquipmentTierLevel: null,
   confirmDialog: null,
   pcActionMenu: null,
+  partitionActionMenu: null,
+  propActionMenu: null,
   pcUpgradeMenu: null,
   pcInfoBubble: null,
   doorTimers: {},
@@ -133,6 +136,8 @@ const state = {
   layoutMode: "area",
   selectedAreaId: null,
   selectedPcId: null,
+  selectedPartitionId: null,
+  selectedPropId: null,
   invalidFloorHint: null,
   camera: {
     x: WORLD_LEFT_MARGIN,
@@ -155,6 +160,7 @@ const state = {
   mahjongTables: [],
   publicFloors: [],
   partitions: [],
+  propPositions: {},
   inventory: {},
   message: "客人进门、前台开机、上机读条、下机离场。",
   messageTimer: 5
@@ -211,6 +217,9 @@ const ui = {
   purchaseMahjongButton: null,
   equipmentPcButtons: [],
   pcActionButtons: [],
+  partitionActionButtons: [],
+  propActionButtons: [],
+  rotatePartitionButton: null,
   pcUpgradeButtons: [],
   pcInfoBubbleButton: null,
   hireButtons: [],
@@ -249,6 +258,14 @@ function createLayout() {
   const entrance = {
     x: room.x - 4,
     y: counter.y + 52
+  };
+
+  const entranceCorridor = {
+    id: "entranceCorridor",
+    x: room.x - 96,
+    y: entrance.y - 58,
+    w: 92,
+    h: 116
   };
 
   const queue = [
@@ -291,7 +308,7 @@ function createLayout() {
     companion: { x: room.x + room.w - 70, y: room.y + 90 }
   };
 
-  return { room, counter, entrance, queue, pcs, toilet, staffHome };
+  return { room, counter, entrance, entranceCorridor, queue, pcs, toilet, staffHome };
 }
 
 function createPc(id, x, y, areaId = 1, areaName = "\u5ba2\u5385") {
@@ -595,7 +612,7 @@ function clampAreaToWorld(area) {
 }
 
 function getWorldBoundItems() {
-  const items = [layout.room, layout.toilet]
+  const items = [layout.room, layout.toilet, layout.entranceCorridor]
     .concat(state ? state.rentedAreas : [])
     .concat(state ? state.publicFloors : [])
     .concat(state ? state.partitions : [])
@@ -724,6 +741,113 @@ function getPartitionAtPoint(x, y) {
   return null;
 }
 
+function getMovablePropDefinitions() {
+  const room = layout.room;
+  const counter = layout.counter;
+  return [
+    {
+      id: "counter",
+      name: "\u524d\u53f0",
+      x: counter.x,
+      y: counter.y,
+      w: counter.w,
+      h: counter.h,
+      movable: true,
+      sellable: false
+    },
+    {
+      id: "shopSign",
+      name: "\u5c0f\u9ed1\u7f51\u5427",
+      x: room.x + 22,
+      y: room.y + 18,
+      w: 72,
+      h: 30,
+      movable: true,
+      sellable: false
+    },
+    {
+      id: "snackShelf",
+      name: "\u96f6\u98df\u5c55\u793a\u67dc",
+      x: room.x + 110,
+      y: room.y + 20,
+      w: 108,
+      h: 34,
+      movable: true,
+      sellable: false
+    },
+    {
+      id: "happySign",
+      name: "\u5feb\u4e50\u4e0a\u7f51\u724c",
+      x: room.x + room.w - 150,
+      y: room.y + 18,
+      w: 52,
+      h: 38,
+      movable: true,
+      sellable: false
+    },
+    {
+      id: "starterPlant",
+      name: "\u521d\u59cb\u76c6\u683d",
+      x: room.x + room.w - 78,
+      y: room.y + room.h - 90,
+      w: 58,
+      h: 78,
+      movable: true,
+      sellable: false
+    }
+  ];
+}
+
+function getMovablePropDefinition(propId) {
+  return getMovablePropDefinitions().find((prop) => prop.id === propId) || null;
+}
+
+function getMovablePropRect(propId) {
+  const definition = getMovablePropDefinition(propId);
+  if (!definition) return null;
+  const saved = state.propPositions[propId];
+  if (saved && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+    return Object.assign({}, definition, { x: saved.x, y: saved.y });
+  }
+  return Object.assign({}, definition);
+}
+
+function getMovablePropAtPoint(x, y) {
+  const props = getMovablePropDefinitions();
+  for (let index = props.length - 1; index >= 0; index -= 1) {
+    const prop = getMovablePropRect(props[index].id);
+    if (prop && isPointInsideRect(x, y, getMovablePropHitBounds(prop), 4)) return prop;
+  }
+  return null;
+}
+
+function getMovablePropHitBounds(prop) {
+  if (prop.id === "counter") {
+    return { x: prop.x - 12, y: prop.y - 22, w: prop.w + 24, h: prop.h + 44 };
+  }
+  return prop;
+}
+
+function syncFrontDeskLayoutFromCounter() {
+  const counter = layout.counter;
+  layout.queue = [
+    { x: counter.x - 12, y: counter.y + counter.h + 26 },
+    { x: counter.x - 40, y: counter.y + counter.h + 26 },
+    { x: counter.x - 68, y: counter.y + counter.h + 26 }
+  ];
+  layout.staffHome.cashier = { x: counter.x + counter.w - 22, y: counter.y + counter.h - 8 };
+  layout.staffHome.manager = { x: counter.x + 56, y: counter.y + 22 };
+}
+
+function applyPropPositions() {
+  const counterPosition = state.propPositions.counter;
+  if (counterPosition && Number.isFinite(counterPosition.x) && Number.isFinite(counterPosition.y)) {
+    layout.counter.x = counterPosition.x;
+    layout.counter.y = counterPosition.y;
+    syncFrontDeskLayoutFromCounter();
+  }
+}
+
 function handleLayoutTouch(worldX, worldY) {
   if (state.layoutMode === "deleteArea") {
     deleteAreaLayout(worldX, worldY);
@@ -737,6 +861,16 @@ function handleLayoutTouch(worldX, worldY) {
 
   if (state.layoutMode === "partition") {
     addPartition(worldX, worldY);
+    return true;
+  }
+
+  if (state.layoutMode === "partitionMove") {
+    moveSelectedPartition(worldX, worldY);
+    return true;
+  }
+
+  if (state.layoutMode === "propMove") {
+    moveSelectedProp(worldX, worldY);
     return true;
   }
 
@@ -831,6 +965,19 @@ function addPartition(worldX, worldY) {
   say(`\u5df2\u6446\u653e ${type.name}\uff0c\u82b1\u8d39 ${type.cost} \u5143\u3002`);
 }
 
+function getPartitionDimensions(type, orientation = "horizontal") {
+  const vertical = orientation === "vertical";
+  return {
+    w: vertical ? type.h : type.w,
+    h: vertical ? type.w : type.h
+  };
+}
+
+function togglePendingPartitionOrientation() {
+  state.pendingPartitionOrientation = state.pendingPartitionOrientation === "vertical" ? "horizontal" : "vertical";
+  say(state.pendingPartitionOrientation === "vertical" ? "\u9694\u65ad\u5df2\u5207\u6362\u4e3a\u7ad6\u5411\u6446\u653e\u3002" : "\u9694\u65ad\u5df2\u5207\u6362\u4e3a\u6a2a\u5411\u6446\u653e\u3002");
+}
+
 function getPublicFloorCandidate(worldX, worldY) {
   const size = { w: PUBLIC_FLOOR_SIZE, h: PUBLIC_FLOOR_SIZE };
   let best = null;
@@ -871,35 +1018,46 @@ function canAttachPublicFloor(floor) {
   return attachedToWall || attachedToFloor;
 }
 
-function getPartitionCandidate(type, worldX, worldY) {
-  const vertical = Math.abs(worldY - (state.camera.y + view.height / 2)) > Math.abs(worldX - (state.camera.x + view.width / 2));
-  const w = vertical ? type.h : type.w;
-  const h = vertical ? type.w : type.h;
+function getPartitionCandidate(type, worldX, worldY, orientation = state.pendingPartitionOrientation) {
+  const size = getPartitionDimensions(type, orientation);
   return {
     typeId: type.id,
-    x: snapPcPosition(worldX - w / 2),
-    y: snapPcPosition(worldY - h / 2),
-    w,
-    h,
-    orientation: vertical ? "vertical" : "horizontal"
+    x: snapPcPosition(worldX - size.w / 2),
+    y: snapPcPosition(worldY - size.h / 2),
+    w: size.w,
+    h: size.h,
+    orientation
   };
 }
 
-function isPartitionPlacementValid(partition) {
+function isPartitionPlacementValid(partition, ignorePartitionId = null) {
   if (!partition) return false;
   const center = { x: partition.x + partition.w / 2, y: partition.y + partition.h / 2 };
   const area = getWalkableAreaAtPoint(center.x, center.y);
   if (!area || area.typeId === "toiletRoom") return false;
-  if (!isPointInsideRect(partition.x, partition.y, area, -2) ||
-      !isPointInsideRect(partition.x + partition.w, partition.y + partition.h, area, -2)) {
-    return false;
-  }
+  if (!isRectInsideBuildableFloorNetwork(partition)) return false;
   if (layout.pcs.some((pc) => rectanglesOverlap(partition, getPcVisualBounds(pc), 6))) return false;
   if (state.mahjongTables.some((table) => rectanglesOverlap(partition, table, 6))) return false;
-  if (state.partitions.some((item) => rectanglesOverlap(partition, item, 3))) return false;
+  if (state.partitions.some((item) => item.id !== ignorePartitionId && rectanglesOverlap(partition, item, 3))) return false;
+  if (getMovablePropDefinitions().some((prop) => rectanglesOverlap(partition, getMovablePropHitBounds(getMovablePropRect(prop.id)), 4))) return false;
   return !getDoorAreaPairs().some(([a, b]) => {
     const door = getDoorGeometryBetween(a, b);
     return door && rectanglesOverlap(partition, door.rect, 8);
+  });
+}
+
+function isRectInsideBuildableFloorNetwork(rectValue) {
+  const inset = 3;
+  const points = [
+    { x: rectValue.x + inset, y: rectValue.y + inset },
+    { x: rectValue.x + rectValue.w - inset, y: rectValue.y + inset },
+    { x: rectValue.x + inset, y: rectValue.y + rectValue.h - inset },
+    { x: rectValue.x + rectValue.w - inset, y: rectValue.y + rectValue.h - inset },
+    { x: rectValue.x + rectValue.w / 2, y: rectValue.y + rectValue.h / 2 }
+  ];
+  return points.every((point) => {
+    const pointArea = getWalkableAreaAtPoint(point.x, point.y);
+    return pointArea && pointArea.typeId !== "toiletRoom";
   });
 }
 
@@ -1033,7 +1191,8 @@ function getAttachedCandidatesForHost(host, worldX, worldY, size) {
 function isPublicFloorPlacementFree(floor) {
   const overlapsRoom = getStructuralAreas().some((area) => rectanglesOverlap(floor, area, 0));
   const overlapsFloor = state.publicFloors.some((item) => rectanglesOverlap(floor, item, 0));
-  return !overlapsRoom && !overlapsFloor;
+  const overlapsEntranceCorridor = rectanglesOverlap(floor, layout.entranceCorridor, 0);
+  return !overlapsRoom && !overlapsFloor && !overlapsEntranceCorridor;
 }
 
 function isAlignedPublicFloor(host, floor) {
@@ -1093,6 +1252,157 @@ function movePcLayout(worldX, worldY) {
   state.selectedPcId = null;
   markSaveDirty();
   say(`${pc.id + 1} \u53f7\u673a\u4f4d\u7f6e\u5df2\u8c03\u6574\u3002`);
+}
+
+function moveSelectedPartition(worldX, worldY) {
+  if (!state.selectedPartitionId) {
+    const partition = getPartitionAtPoint(worldX, worldY);
+    if (!partition) {
+      say("\u5148\u70b9\u4e00\u4e2a\u8981\u79fb\u52a8\u7684\u9694\u65ad\u3002");
+      return;
+    }
+    state.selectedPartitionId = partition.id;
+    say("\u9694\u65ad\u5df2\u9009\u4e2d\uff0c\u62d6\u52a8\u5730\u56fe\u5bf9\u51c6\u9884\u89c8\u6846\uff0c\u70b9\u51fb\u653e\u7f6e\u3002");
+    return;
+  }
+
+  const partition = state.partitions.find((item) => item.id === state.selectedPartitionId);
+  const type = partition ? getPartitionType(partition.typeId) : null;
+  if (!partition || !type) {
+    state.selectedPartitionId = null;
+    return;
+  }
+
+  const preview = getSelectedPartitionMoveCandidate();
+  const candidate = preview || getPartitionCandidate(type, worldX, worldY, partition.orientation || "horizontal");
+  candidate.id = partition.id;
+  if (!isPartitionPlacementValid(candidate, partition.id)) {
+    say("\u8fd9\u91cc\u653e\u4e0d\u4e0b\u9694\u65ad\uff0c\u9700\u8981\u7559\u51fa\u8bbe\u5907\u548c\u901a\u9053\u7a7a\u95f4\u3002");
+    return;
+  }
+
+  partition.x = candidate.x;
+  partition.y = candidate.y;
+  partition.w = candidate.w;
+  partition.h = candidate.h;
+  partition.orientation = candidate.orientation;
+  state.selectedPartitionId = null;
+  state.layoutToolActive = false;
+  state.layoutMode = "off";
+  markSaveDirty();
+  say("\u9694\u65ad\u4f4d\u7f6e\u5df2\u8c03\u6574\u3002");
+}
+
+function getSelectedPartitionMoveCandidate() {
+  const partition = state.partitions.find((item) => item.id === state.selectedPartitionId);
+  const type = partition ? getPartitionType(partition.typeId) : null;
+  if (!partition || !type) return null;
+  const worldX = state.camera.x + view.width / 2;
+  const worldY = state.camera.y + (view.height - ACTION_BAR_HEIGHT + HUD_HEIGHT) / 2;
+  const candidate = getPartitionCandidate(type, worldX, worldY, partition.orientation || "horizontal");
+  candidate.id = partition.id;
+  return candidate;
+}
+
+function rotatePartition(partition) {
+  const type = partition ? getPartitionType(partition.typeId) : null;
+  if (!partition || !type) return;
+  const nextOrientation = partition.orientation === "vertical" ? "horizontal" : "vertical";
+  const size = getPartitionDimensions(type, nextOrientation);
+  const centerX = partition.x + partition.w / 2;
+  const centerY = partition.y + partition.h / 2;
+  const candidate = {
+    id: partition.id,
+    typeId: partition.typeId,
+    x: snapPcPosition(centerX - size.w / 2),
+    y: snapPcPosition(centerY - size.h / 2),
+    w: size.w,
+    h: size.h,
+    orientation: nextOrientation
+  };
+  if (!isPartitionPlacementValid(candidate, partition.id)) {
+    say("\u5f53\u524d\u4f4d\u7f6e\u65cb\u8f6c\u540e\u4f1a\u5361\u4f4f\u901a\u9053\u6216\u8bbe\u5907\uff0c\u5148\u79fb\u5f00\u518d\u65cb\u8f6c\u3002");
+    return;
+  }
+  Object.assign(partition, candidate);
+  markSaveDirty();
+  say("\u9694\u65ad\u5df2\u65cb\u8f6c 90 \u5ea6\u3002");
+}
+
+function sellPartition(partition) {
+  const type = partition ? getPartitionType(partition.typeId) : null;
+  if (!partition || !type) return;
+  const value = Math.floor(getPartitionCost(type) / 2);
+  state.partitions = state.partitions.filter((item) => item.id !== partition.id);
+  state.cash += value;
+  state.selectedPartitionId = null;
+  state.partitionActionMenu = null;
+  markSaveDirty();
+  say(`\u5df2\u51fa\u552e ${type.name}\uff0c\u56de\u6536 ${value} \u5143\u3002`);
+}
+
+function moveSelectedProp(worldX, worldY) {
+  if (!state.selectedPropId) {
+    const prop = getMovablePropAtPoint(worldX, worldY);
+    if (!prop) {
+      say("\u5148\u70b9\u4e00\u4e2a\u8981\u79fb\u52a8\u7684\u9053\u5177\u3002");
+      return;
+    }
+    state.selectedPropId = prop.id;
+    say(`${prop.name}\u5df2\u9009\u4e2d\uff0c\u62d6\u52a8\u5730\u56fe\u5bf9\u51c6\u9884\u89c8\u6846\uff0c\u70b9\u51fb\u653e\u7f6e\u3002`);
+    return;
+  }
+
+  const prop = getMovablePropRect(state.selectedPropId);
+  if (!prop) {
+    state.selectedPropId = null;
+    return;
+  }
+  const candidate = getSelectedPropMoveCandidate() || Object.assign({}, prop, {
+    x: snapPcPosition(worldX - prop.w / 2),
+    y: snapPcPosition(worldY - prop.h / 2)
+  });
+  if (!isMovablePropPlacementValid(candidate)) {
+    say("\u8fd9\u91cc\u653e\u4e0d\u4e0b\u8fd9\u4e2a\u9053\u5177\uff0c\u9700\u8981\u653e\u5728\u5df2\u94fa\u7684\u5ba4\u5185\u5730\u9762\u4e0a\u3002");
+    return;
+  }
+
+  state.propPositions[prop.id] = { x: candidate.x, y: candidate.y };
+  if (prop.id === "counter") {
+    layout.counter.x = candidate.x;
+    layout.counter.y = candidate.y;
+    syncFrontDeskLayoutFromCounter();
+  }
+  state.selectedPropId = null;
+  state.layoutToolActive = false;
+  state.layoutMode = "off";
+  markSaveDirty();
+  say(`${prop.name}\u4f4d\u7f6e\u5df2\u8c03\u6574\u3002`);
+}
+
+function getSelectedPropMoveCandidate() {
+  const prop = getMovablePropRect(state.selectedPropId);
+  if (!prop) return null;
+  const worldX = state.camera.x + view.width / 2;
+  const worldY = state.camera.y + (view.height - ACTION_BAR_HEIGHT + HUD_HEIGHT) / 2;
+  return Object.assign({}, prop, {
+    x: snapPcPosition(worldX - prop.w / 2),
+    y: snapPcPosition(worldY - prop.h / 2)
+  });
+}
+
+function isMovablePropPlacementValid(prop) {
+  if (!prop) return false;
+  if (!isRectInsideBuildableFloorNetwork(prop)) return false;
+  if (layout.pcs.some((pc) => rectanglesOverlap(prop, getPcVisualBounds(pc), 4))) return false;
+  if (state.mahjongTables.some((table) => rectanglesOverlap(prop, table, 4))) return false;
+  if (state.partitions.some((partition) => rectanglesOverlap(prop, partition, 4))) return false;
+  if (getMovablePropDefinitions().some((item) => item.id !== prop.id && rectanglesOverlap(prop, getMovablePropHitBounds(getMovablePropRect(item.id)), 3))) return false;
+  if (getDoorAreaPairs().some(([a, b]) => {
+    const door = getDoorGeometryBetween(a, b);
+    return door && rectanglesOverlap(prop, door.rect, 6);
+  })) return false;
+  return !rectanglesOverlap(prop, layout.entranceCorridor, 0);
 }
 
 function getSelectedPc() {
@@ -1496,6 +1806,7 @@ function buildSaveData() {
     rentedAreas: state.rentedAreas.map((area) => Object.assign({}, area)),
     publicFloors: state.publicFloors.map((floor) => Object.assign({}, floor)),
     partitions: state.partitions.map((partition) => Object.assign({}, partition)),
+    propPositions: Object.assign({}, state.propPositions),
     mahjongTables: state.mahjongTables.map((table) => Object.assign({}, table)),
     toilet: {
       dirty: state.toilet.dirty,
@@ -1588,6 +1899,16 @@ function restoreGame() {
   state.partitions = Array.isArray(data.partitions)
     ? data.partitions.map(normalizePartition).filter(Boolean)
     : [];
+  state.propPositions = data.propPositions && typeof data.propPositions === "object"
+    ? Object.keys(data.propPositions).reduce((positions, key) => {
+      const value = data.propPositions[key];
+      if (value && Number.isFinite(value.x) && Number.isFinite(value.y)) {
+        positions[key] = { x: value.x, y: value.y };
+      }
+      return positions;
+    }, {})
+    : {};
+  applyPropPositions();
   state.mahjongTables = Array.isArray(data.mahjongTables)
     ? data.mahjongTables.map((table, index) => ({
       id: table.id || index + 1,
@@ -2187,7 +2508,8 @@ function getFixedPcPlacementObstacles() {
   const counter = layout.counter;
   return [
     { x: counter.x - 14, y: counter.y - 24, w: counter.w + 28, h: counter.h + 48 },
-    { x: layout.entrance.x - 58, y: layout.entrance.y - 46, w: 112, h: 92 }
+    { x: layout.entrance.x - 58, y: layout.entrance.y - 46, w: 112, h: 92 },
+    layout.entranceCorridor
   ];
 }
 
@@ -2587,11 +2909,15 @@ function closePanels() {
   state.pendingPcPurchase = null;
   state.pendingMahjongPurchase = false;
   state.pcActionMenu = null;
+  state.partitionActionMenu = null;
+  state.propActionMenu = null;
   state.pcUpgradeMenu = null;
   state.confirmDialog = null;
   state.layoutToolActive = false;
   state.selectedAreaId = null;
   state.selectedPcId = null;
+  state.selectedPartitionId = null;
+  state.selectedPropId = null;
   state.layoutMode = "off";
 }
 
@@ -2604,6 +2930,7 @@ function clearActionButtons() {
   ui.layoutButton = null;
   ui.settingsButton = null;
   ui.purchaseMahjongButton = null;
+  ui.rotatePartitionButton = null;
 }
 
 function screenToWorld(x, y) {
@@ -2661,8 +2988,32 @@ function getPcHourlyRate(pc) {
 
 function openPcActionMenu(pc, screenX, screenY) {
   if (!pc) return;
+  state.partitionActionMenu = null;
+  state.propActionMenu = null;
   state.pcActionMenu = {
     pcId: pc.id,
+    x: screenX,
+    y: screenY
+  };
+}
+
+function openPartitionActionMenu(partition, screenX, screenY) {
+  if (!partition) return;
+  state.pcActionMenu = null;
+  state.propActionMenu = null;
+  state.partitionActionMenu = {
+    partitionId: partition.id,
+    x: screenX,
+    y: screenY
+  };
+}
+
+function openPropActionMenu(prop, screenX, screenY) {
+  if (!prop) return;
+  state.pcActionMenu = null;
+  state.partitionActionMenu = null;
+  state.propActionMenu = {
+    propId: prop.id,
     x: screenX,
     y: screenY
   };
@@ -2671,6 +3022,16 @@ function openPcActionMenu(pc, screenX, screenY) {
 function getPcFromActionMenu(menu = state.pcActionMenu) {
   if (!menu) return null;
   return layout.pcs.find((pc) => pc.id === menu.pcId) || null;
+}
+
+function getPartitionFromActionMenu(menu = state.partitionActionMenu) {
+  if (!menu) return null;
+  return state.partitions.find((partition) => partition.id === menu.partitionId) || null;
+}
+
+function getPropFromActionMenu(menu = state.propActionMenu) {
+  if (!menu) return null;
+  return getMovablePropRect(menu.propId);
 }
 
 function handlePcActionMenuButton(button) {
@@ -2726,6 +3087,56 @@ function handlePcActionMenuButton(button) {
   }
 }
 
+function handlePartitionActionMenuButton(button) {
+  const partition = button.partition;
+  if (!partition) {
+    state.partitionActionMenu = null;
+    return;
+  }
+
+  if (button.action === "move") {
+    state.layoutToolActive = true;
+    state.layoutMode = "partitionMove";
+    state.selectedPartitionId = partition.id;
+    state.partitionActionMenu = null;
+    say("\u9694\u65ad\u5df2\u9009\u4e2d\uff0c\u62d6\u52a8\u5730\u56fe\u5bf9\u51c6\u7eff\u8272\u6846\u540e\u70b9\u51fb\u653e\u7f6e\u3002");
+    return;
+  }
+
+  if (button.action === "rotate") {
+    rotatePartition(partition);
+    state.partitionActionMenu = null;
+    return;
+  }
+
+  if (button.action === "sell") {
+    const type = getPartitionType(partition.typeId);
+    const value = Math.floor(getPartitionCost(type) / 2);
+    openConfirmDialog(
+      "\u51fa\u552e\u9694\u65ad",
+      `\u786e\u5b9a\u4ee5 ${value} \u5143\u51fa\u552e ${type.name} \u5417\uff1f`,
+      () => sellPartition(partition)
+    );
+    state.partitionActionMenu = null;
+  }
+}
+
+function handlePropActionMenuButton(button) {
+  const prop = button.prop;
+  if (!prop) {
+    state.propActionMenu = null;
+    return;
+  }
+
+  if (button.action === "move") {
+    state.layoutToolActive = true;
+    state.layoutMode = "propMove";
+    state.selectedPropId = prop.id;
+    state.propActionMenu = null;
+    say(`${prop.name}\u5df2\u9009\u4e2d\uff0c\u62d6\u52a8\u5730\u56fe\u5bf9\u51c6\u7eff\u8272\u6846\u540e\u70b9\u51fb\u653e\u7f6e\u3002`);
+  }
+}
+
 function confirmPcUpgrade(pc, tier) {
   if (!pc || !tier) {
     state.pcUpgradeMenu = null;
@@ -2749,6 +3160,8 @@ function cancelLayoutTool() {
   state.layoutToolActive = false;
   state.selectedAreaId = null;
   state.selectedPcId = null;
+  state.selectedPartitionId = null;
+  state.selectedPropId = null;
   state.layoutMode = "off";
   say("\u5df2\u9000\u51fa\u5e03\u5c40\u64cd\u4f5c\u3002");
 }
@@ -2805,9 +3218,10 @@ function handleBuildOffer(offer) {
     const type = getPartitionType(offer.typeId);
     if (!type) return;
     state.pendingPartitionTypeId = type.id;
+    state.pendingPartitionOrientation = "horizontal";
     state.layoutToolActive = true;
     state.layoutMode = "partition";
-    say(`\u5df2\u9009\u62e9 ${type.name}\uff0c\u5bf9\u51c6\u5730\u56fe\u4e2d\u5fc3\u540e\u70b9\u51fb\u6446\u653e\uff0c\u82b1\u8d39 ${type.cost} \u5143\u3002`);
+    say(`\u5df2\u9009\u62e9 ${type.name}\uff0c\u53ef\u70b9\u51fb\u65cb\u8f6c 90\u00b0 \u5207\u6362\u6a2a\u7ad6\uff0c\u5bf9\u51c6\u540e\u70b9\u51fb\u6446\u653e\u3002`);
   }
 }
 
@@ -2922,6 +3336,26 @@ function handleTouch(x, y) {
     return;
   }
 
+  if (state.partitionActionMenu) {
+    const partitionActionButton = ui.partitionActionButtons.find((button) => isPointInRect(x, y, button));
+    if (partitionActionButton) {
+      handlePartitionActionMenuButton(partitionActionButton);
+      return;
+    }
+    state.partitionActionMenu = null;
+    return;
+  }
+
+  if (state.propActionMenu) {
+    const propActionButton = ui.propActionButtons.find((button) => isPointInRect(x, y, button));
+    if (propActionButton) {
+      handlePropActionMenuButton(propActionButton);
+      return;
+    }
+    state.propActionMenu = null;
+    return;
+  }
+
   const pageButton = ui.pageButtons.find((button) => isPointInRect(x, y, button));
   if (pageButton && handlePageButton(pageButton)) {
     return;
@@ -3004,6 +3438,8 @@ function handleTouch(x, y) {
       state.layoutToolActive = modeButton.mode !== "off";
       state.selectedAreaId = null;
       state.selectedPcId = null;
+      state.selectedPartitionId = null;
+      state.selectedPropId = null;
       if (modeButton.mode !== "partition") state.pendingPartitionTypeId = null;
       state.layoutOpen = false;
       say(modeButton.message);
@@ -3173,6 +3609,11 @@ function handleTouch(x, y) {
     return;
   }
 
+  if (state.layoutToolActive && isPointInRect(x, y, ui.rotatePartitionButton)) {
+    togglePendingPartitionOrientation();
+    return;
+  }
+
   const worldPoint = screenToWorld(x, y);
   if (state.layoutToolActive && handleLayoutTouch(worldPoint.x, worldPoint.y)) {
     return;
@@ -3205,6 +3646,18 @@ function handleTouch(x, y) {
   const tappedPc = getPcAtPoint(worldPoint.x, worldPoint.y);
   if (tappedPc) {
     openPcActionMenu(tappedPc, x, y);
+    return;
+  }
+
+  const tappedPartition = getPartitionAtPoint(worldPoint.x, worldPoint.y);
+  if (tappedPartition) {
+    openPartitionActionMenu(tappedPartition, x, y);
+    return;
+  }
+
+  const tappedProp = getMovablePropAtPoint(worldPoint.x, worldPoint.y);
+  if (tappedProp) {
+    openPropActionMenu(tappedProp, x, y);
     return;
   }
 
@@ -4519,6 +4972,7 @@ function endWorldDraw() {
 function drawPixelFloor() {
   const room = layout.room;
   drawPixelMeadowBackground();
+  drawEntranceCorridor();
   rect(room.x - 8, room.y - 8, room.w + 16, room.h + 16, COLORS.wallDark);
   drawTiledArea(room);
 
@@ -4705,6 +5159,20 @@ function drawInvalidFloorHint() {
   rect(hint.x, hint.y, PUBLIC_FLOOR_SIZE, PUBLIC_FLOOR_SIZE, "rgba(217, 74, 69, 0.22)");
   strokeRect(hint.x, hint.y, PUBLIC_FLOOR_SIZE, PUBLIC_FLOOR_SIZE, COLORS.red, 3);
   text("\u65e0\u6cd5\u94fa\u8bbe", hint.x + PUBLIC_FLOOR_HALF, hint.y + PUBLIC_FLOOR_HALF - 7, 12, COLORS.text, "bold", "center");
+}
+
+function drawEntranceCorridor() {
+  const corridor = layout.entranceCorridor;
+  rect(corridor.x - 6, corridor.y - 6, corridor.w + 10, corridor.h + 12, "#221a18");
+  rect(corridor.x, corridor.y, corridor.w, corridor.h, "#182126");
+  for (let y = corridor.y + 8; y < corridor.y + corridor.h; y += 18) {
+    rect(corridor.x + 8, y, corridor.w - 16, 2, "rgba(82, 74, 64, 0.32)");
+  }
+  rect(corridor.x + corridor.w - 6, corridor.y, 6, corridor.h, COLORS.wallDark);
+  rect(corridor.x + 10, corridor.y + 10, corridor.w - 24, 24, "#2f2621");
+  text("\u5165\u53e3", corridor.x + 22, corridor.y + 15, 13, COLORS.text, "bold");
+  rect(corridor.x + 12, corridor.y + corridor.h - 32, corridor.w - 28, 12, "#2f2621");
+  rect(corridor.x + 18, corridor.y + corridor.h - 28, corridor.w - 40, 4, "#48382d");
 }
 
 function drawRentedAreaRooms() {
@@ -5016,7 +5484,29 @@ function drawLayoutSelection() {
   if (state.layoutMode === "partition") {
     drawPartitionPlacementHint();
     const type = getPartitionType(state.pendingPartitionTypeId);
-    text(`\u5efa\u8bbe\uff1a${type ? type.name : "\u9694\u65ad"}\uff0c\u70b9\u51fb\u653e\u7f6e`, state.camera.x + view.width / 2, state.camera.y + HUD_HEIGHT + 8, 12, COLORS.yellow, "bold", "center");
+    const direction = state.pendingPartitionOrientation === "vertical" ? "\u7ad6\u5411" : "\u6a2a\u5411";
+    text(`\u5efa\u8bbe\uff1a${type ? type.name : "\u9694\u65ad"} ${direction}\uff0c\u70b9\u51fb\u653e\u7f6e`, state.camera.x + view.width / 2, state.camera.y + HUD_HEIGHT + 8, 12, COLORS.yellow, "bold", "center");
+  }
+
+  if (state.layoutMode === "partitionMove" && state.selectedPartitionId) {
+    const candidate = getSelectedPartitionMoveCandidate();
+    if (candidate) {
+      const canPlace = isPartitionPlacementValid(candidate, candidate.id);
+      rect(candidate.x, candidate.y, candidate.w, candidate.h, canPlace ? "rgba(105, 185, 109, 0.25)" : "rgba(217, 74, 69, 0.28)");
+      strokeRect(candidate.x, candidate.y, candidate.w, candidate.h, canPlace ? COLORS.green : COLORS.red, 3);
+      text(canPlace ? "\u53ef\u79fb\u52a8" : "\u4e0d\u53ef\u79fb\u52a8", candidate.x + candidate.w / 2, candidate.y - 17, 12, COLORS.text, "bold", "center");
+    }
+  }
+
+  if (state.layoutMode === "propMove" && state.selectedPropId) {
+    const candidate = getSelectedPropMoveCandidate();
+    if (candidate) {
+      const canPlace = isMovablePropPlacementValid(candidate);
+      const bounds = getMovablePropHitBounds(candidate);
+      rect(bounds.x, bounds.y, bounds.w, bounds.h, canPlace ? "rgba(105, 185, 109, 0.2)" : "rgba(217, 74, 69, 0.24)");
+      strokeRect(bounds.x, bounds.y, bounds.w, bounds.h, canPlace ? COLORS.green : COLORS.red, 3);
+      text(canPlace ? "\u53ef\u79fb\u52a8" : "\u4e0d\u53ef\u79fb\u52a8", bounds.x + bounds.w / 2, bounds.y - 17, 12, COLORS.text, "bold", "center");
+    }
   }
 
   if (state.layoutMode === "deleteArea") {
@@ -5369,6 +5859,7 @@ function drawPcUpgradeMenu() {
 
 function drawLayoutToolControls() {
   ui.cancelMoveButton = null;
+  ui.rotatePartitionButton = null;
   if (!state.layoutToolActive) return;
   const label = state.layoutMode === "pc" ? "\u9000\u51fa\u79fb\u52a8" : state.layoutMode === "deleteArea" ? "\u9000\u51fa\u5220\u9664" : "\u9000\u51fa\u5e03\u5c40";
   ui.cancelMoveButton = {
@@ -5378,6 +5869,16 @@ function drawLayoutToolControls() {
     h: 30
   };
   drawWidePanelButton(ui.cancelMoveButton, label, "#7f5635");
+
+  if (state.layoutMode === "partition") {
+    ui.rotatePartitionButton = {
+      x: view.width - 112,
+      y: HUD_HEIGHT + 46,
+      w: 96,
+      h: 30
+    };
+    drawWidePanelButton(ui.rotatePartitionButton, "\u65cb\u8f6c 90\u00b0", "#8b552b");
+  }
 }
 
 function drawPcActionMenu() {
@@ -5417,6 +5918,74 @@ function drawPcActionMenu() {
     ui.pcActionButtons.push(button);
     drawWidePanelButton(button, item.label, item.action === "info" ? "#6b3f24" : "#8b552b");
   });
+}
+
+function drawPartitionActionMenu() {
+  ui.partitionActionButtons.length = 0;
+  const partition = getPartitionFromActionMenu();
+  if (!partition) {
+    state.partitionActionMenu = null;
+    return;
+  }
+
+  const type = getPartitionType(partition.typeId);
+  const panelW = 96;
+  const panelH = 118;
+  const sx = partition.x + partition.w + 10 - state.camera.x;
+  const sy = partition.y - 18 - state.camera.y;
+  const panelX = clamp(sx, 8, view.width - panelW - 8);
+  const panelY = clamp(sy, HUD_HEIGHT + 6, view.height - ACTION_BAR_HEIGHT - panelH - 8);
+
+  pixelPanel(panelX, panelY, panelW, panelH, "#fff2d0", "#e8c97a", COLORS.line);
+  text(type ? type.name : "\u9694\u65ad", panelX + panelW / 2, panelY + 10, 12, COLORS.line, "bold", "center");
+
+  [
+    { action: "move", label: "\u79fb\u52a8" },
+    { action: "rotate", label: "\u65cb\u8f6c" },
+    { action: "sell", label: "\u51fa\u552e" }
+  ].forEach((item, index) => {
+    const button = {
+      x: panelX + 10,
+      y: panelY + 34 + index * 24,
+      w: panelW - 20,
+      h: 22,
+      action: item.action,
+      partition
+    };
+    ui.partitionActionButtons.push(button);
+    drawWidePanelButton(button, item.label, item.action === "sell" ? "#9a553a" : "#8b552b");
+  });
+}
+
+function drawPropActionMenu() {
+  ui.propActionButtons.length = 0;
+  const prop = getPropFromActionMenu();
+  if (!prop) {
+    state.propActionMenu = null;
+    return;
+  }
+
+  const bounds = getMovablePropHitBounds(prop);
+  const panelW = 104;
+  const panelH = 72;
+  const sx = bounds.x + bounds.w + 10 - state.camera.x;
+  const sy = bounds.y - 14 - state.camera.y;
+  const panelX = clamp(sx, 8, view.width - panelW - 8);
+  const panelY = clamp(sy, HUD_HEIGHT + 6, view.height - ACTION_BAR_HEIGHT - panelH - 8);
+
+  pixelPanel(panelX, panelY, panelW, panelH, "#fff2d0", "#e8c97a", COLORS.line);
+  text(prop.name, panelX + panelW / 2, panelY + 10, 12, COLORS.line, "bold", "center");
+
+  const button = {
+    x: panelX + 12,
+    y: panelY + 38,
+    w: panelW - 24,
+    h: 22,
+    action: "move",
+    prop
+  };
+  ui.propActionButtons.push(button);
+  drawWidePanelButton(button, "\u79fb\u52a8", "#8b552b");
 }
 
 function drawGuest(guest) {
@@ -6249,7 +6818,9 @@ function getLayoutModeLabel(mode) {
     deleteArea: "\u5220\u9664\u88c5\u4fee",
     pc: "\u79fb\u52a8\u7535\u8111",
     floor: "\u94fa\u516c\u533a\u5730\u7816",
-    partition: "\u6446\u653e\u9694\u65ad"
+    partition: "\u6446\u653e\u9694\u65ad",
+    partitionMove: "\u79fb\u52a8\u9694\u65ad",
+    propMove: "\u79fb\u52a8\u9053\u5177"
   }[mode] || "\u672a\u5f00\u542f";
 }
 
@@ -6635,15 +7206,22 @@ function drawLegend() {
 function drawIndoorDetailsModern() {
   const room = layout.room;
   drawWallPattern(room.x + 8, room.y + 8, room.w - 16, 54);
-  pixelPanel(room.x + 22, room.y + 18, 72, 30, COLORS.counter, COLORS.counterEdge, COLORS.line);
-  text("\u5c0f\u9ed1\u7f51\u5427", room.x + 58, room.y + 25, 13, COLORS.text, "bold", "center");
-  drawSnackDisplay(room.x + 110, room.y + 20);
-  rect(room.x + room.w - 150, room.y + 18, 52, 38, COLORS.line);
-  rect(room.x + room.w - 147, room.y + 21, 46, 32, COLORS.text);
-  text("\u4e0a\u7f51", room.x + room.w - 124, room.y + 26, 11, COLORS.dimText, "bold", "center");
-  text("\u5feb\u4e50", room.x + room.w - 124, room.y + 39, 11, COLORS.dimText, "bold", "center");
-  if (!drawAsset("plant", room.x + room.w - 78, room.y + room.h - 90, 58, 78)) {
-    drawTinyPlant(room.x + room.w - 43, room.y + room.h - 56, 1.45);
+  const shopSign = getMovablePropRect("shopSign");
+  pixelPanel(shopSign.x, shopSign.y, shopSign.w, shopSign.h, COLORS.counter, COLORS.counterEdge, COLORS.line);
+  text("\u5c0f\u9ed1\u7f51\u5427", shopSign.x + shopSign.w / 2, shopSign.y + 7, 13, COLORS.text, "bold", "center");
+
+  const snackShelf = getMovablePropRect("snackShelf");
+  drawSnackDisplay(snackShelf.x, snackShelf.y);
+
+  const happySign = getMovablePropRect("happySign");
+  rect(happySign.x, happySign.y, happySign.w, happySign.h, COLORS.line);
+  rect(happySign.x + 3, happySign.y + 3, happySign.w - 6, happySign.h - 6, COLORS.text);
+  text("\u4e0a\u7f51", happySign.x + happySign.w / 2, happySign.y + 8, 11, COLORS.dimText, "bold", "center");
+  text("\u5feb\u4e50", happySign.x + happySign.w / 2, happySign.y + 21, 11, COLORS.dimText, "bold", "center");
+
+  const starterPlant = getMovablePropRect("starterPlant");
+  if (!drawAsset("plant", starterPlant.x, starterPlant.y, starterPlant.w, starterPlant.h)) {
+    drawTinyPlant(starterPlant.x + starterPlant.w / 2 + 6, starterPlant.y + starterPlant.h - 34, 1.45);
   }
 }
 
@@ -6715,6 +7293,8 @@ function render() {
   ctx.clearRect(0, 0, view.width, view.height);
   ui.pageButtons.length = 0;
   ui.pcActionButtons.length = 0;
+  ui.partitionActionButtons.length = 0;
+  ui.propActionButtons.length = 0;
   beginWorldDraw();
   drawPixelFloor();
   drawCounter();
@@ -6728,6 +7308,8 @@ function render() {
   drawHud();
   drawPcInfoBubble();
   drawPcActionMenu();
+  drawPartitionActionMenu();
+  drawPropActionMenu();
   drawLayoutToolControls();
   drawSystemMessageBar();
   drawActionBar();
