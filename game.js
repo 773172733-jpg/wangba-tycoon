@@ -763,7 +763,8 @@ function getMovablePropDefinitions() {
       w: 72,
       h: 30,
       movable: true,
-      sellable: false
+      sellable: false,
+      placement: "free"
     },
     {
       id: "snackShelf",
@@ -773,7 +774,8 @@ function getMovablePropDefinitions() {
       w: 108,
       h: 34,
       movable: true,
-      sellable: false
+      sellable: false,
+      placement: "free"
     },
     {
       id: "happySign",
@@ -783,7 +785,8 @@ function getMovablePropDefinitions() {
       w: 52,
       h: 38,
       movable: true,
-      sellable: false
+      sellable: false,
+      placement: "free"
     },
     {
       id: "starterPlant",
@@ -1367,7 +1370,9 @@ function moveSelectedProp(worldX, worldY) {
     y: snapPcPosition(worldY - prop.h / 2)
   });
   if (!isMovablePropPlacementValid(candidate, prop.id)) {
-    say("\u8fd9\u91cc\u653e\u4e0d\u4e0b\u8fd9\u4e2a\u9053\u5177\uff0c\u9700\u8981\u653e\u5728\u5df2\u94fa\u7684\u5ba4\u5185\u5730\u9762\u4e0a\u3002");
+    say(isFreeMoveProp(prop)
+      ? "\u8fd9\u91cc\u653e\u4e0d\u4e0b\u8fd9\u4e2a\u6302\u4ef6\uff0c\u8bf7\u907f\u5f00\u5165\u53e3\u697c\u9053\u6216\u8fb9\u754c\u3002"
+      : "\u8fd9\u91cc\u653e\u4e0d\u4e0b\u8fd9\u4e2a\u9053\u5177\uff0c\u9700\u8981\u653e\u5728\u5df2\u94fa\u7684\u5ba4\u5185\u5730\u9762\u4e0a\u3002");
     return;
   }
 
@@ -1397,6 +1402,10 @@ function getSelectedPropMoveCandidate() {
 
 function isMovablePropPlacementValid(prop, ignorePropId = null) {
   if (!prop) return false;
+  if (isFreeMoveProp(prop)) {
+    if (rectanglesOverlap(prop, layout.entranceCorridor, 0)) return false;
+    return isPropInsideWorldBounds(prop);
+  }
   if (!isRectInsideBuildableFloorNetwork(prop)) return false;
   if (layout.pcs.some((pc) => rectanglesOverlap(prop, getPcVisualBounds(pc), 4))) return false;
   if (state.mahjongTables.some((table) => rectanglesOverlap(prop, table, 4))) return false;
@@ -1407,6 +1416,19 @@ function isMovablePropPlacementValid(prop, ignorePropId = null) {
     return door && rectanglesOverlap(prop, door.rect, 6);
   })) return false;
   return !rectanglesOverlap(prop, layout.entranceCorridor, 0);
+}
+
+function isFreeMoveProp(prop) {
+  const definition = prop ? getMovablePropDefinition(prop.id) : null;
+  return definition && definition.placement === "free";
+}
+
+function isPropInsideWorldBounds(prop) {
+  const bounds = getExpandedWorldBounds();
+  return prop.x + prop.w / 2 >= bounds.minX &&
+    prop.x + prop.w / 2 <= bounds.maxX &&
+    prop.y + prop.h / 2 >= bounds.minY &&
+    prop.y + prop.h / 2 <= bounds.maxY;
 }
 
 function getSelectedPc() {
