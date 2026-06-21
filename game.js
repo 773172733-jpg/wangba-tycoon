@@ -848,6 +848,10 @@ function applyPropPositions() {
   }
 }
 
+function isMovingProp(propId) {
+  return state.layoutToolActive && state.layoutMode === "propMove" && state.selectedPropId === propId;
+}
+
 function handleLayoutTouch(worldX, worldY) {
   if (state.layoutMode === "deleteArea") {
     deleteAreaLayout(worldX, worldY);
@@ -1362,7 +1366,7 @@ function moveSelectedProp(worldX, worldY) {
     x: snapPcPosition(worldX - prop.w / 2),
     y: snapPcPosition(worldY - prop.h / 2)
   });
-  if (!isMovablePropPlacementValid(candidate)) {
+  if (!isMovablePropPlacementValid(candidate, prop.id)) {
     say("\u8fd9\u91cc\u653e\u4e0d\u4e0b\u8fd9\u4e2a\u9053\u5177\uff0c\u9700\u8981\u653e\u5728\u5df2\u94fa\u7684\u5ba4\u5185\u5730\u9762\u4e0a\u3002");
     return;
   }
@@ -1391,13 +1395,13 @@ function getSelectedPropMoveCandidate() {
   });
 }
 
-function isMovablePropPlacementValid(prop) {
+function isMovablePropPlacementValid(prop, ignorePropId = null) {
   if (!prop) return false;
   if (!isRectInsideBuildableFloorNetwork(prop)) return false;
   if (layout.pcs.some((pc) => rectanglesOverlap(prop, getPcVisualBounds(pc), 4))) return false;
   if (state.mahjongTables.some((table) => rectanglesOverlap(prop, table, 4))) return false;
   if (state.partitions.some((partition) => rectanglesOverlap(prop, partition, 4))) return false;
-  if (getMovablePropDefinitions().some((item) => item.id !== prop.id && rectanglesOverlap(prop, getMovablePropHitBounds(getMovablePropRect(item.id)), 3))) return false;
+  if (getMovablePropDefinitions().some((item) => item.id !== ignorePropId && rectanglesOverlap(prop, getMovablePropHitBounds(getMovablePropRect(item.id)), 3))) return false;
   if (getDoorAreaPairs().some(([a, b]) => {
     const door = getDoorGeometryBetween(a, b);
     return door && rectanglesOverlap(prop, door.rect, 6);
@@ -5471,7 +5475,7 @@ function drawLayoutSelection() {
   if (state.layoutMode === "propMove" && state.selectedPropId) {
     const candidate = getSelectedPropMoveCandidate();
     if (candidate) {
-      const canPlace = isMovablePropPlacementValid(candidate);
+      const canPlace = isMovablePropPlacementValid(candidate, state.selectedPropId);
       const bounds = getMovablePropHitBounds(candidate);
       rect(bounds.x, bounds.y, bounds.w, bounds.h, canPlace ? "rgba(105, 185, 109, 0.2)" : "rgba(217, 74, 69, 0.24)");
       strokeRect(bounds.x, bounds.y, bounds.w, bounds.h, canPlace ? COLORS.green : COLORS.red, 3);
@@ -5550,6 +5554,7 @@ function drawIndoorDetails() {
 }
 
 function drawCounter() {
+  if (isMovingProp("counter")) return;
   const c = layout.counter;
   const assetW = (c.w + 92) * SPRITE_SCALE.counter;
   const assetH = assetW * 424 / 541;
@@ -7177,20 +7182,24 @@ function drawIndoorDetailsModern() {
   const room = layout.room;
   drawWallPattern(room.x + 8, room.y + 8, room.w - 16, 54);
   const shopSign = getMovablePropRect("shopSign");
-  pixelPanel(shopSign.x, shopSign.y, shopSign.w, shopSign.h, COLORS.counter, COLORS.counterEdge, COLORS.line);
-  text("\u5c0f\u9ed1\u7f51\u5427", shopSign.x + shopSign.w / 2, shopSign.y + 7, 13, COLORS.text, "bold", "center");
+  if (!isMovingProp("shopSign")) {
+    pixelPanel(shopSign.x, shopSign.y, shopSign.w, shopSign.h, COLORS.counter, COLORS.counterEdge, COLORS.line);
+    text("\u5c0f\u9ed1\u7f51\u5427", shopSign.x + shopSign.w / 2, shopSign.y + 7, 13, COLORS.text, "bold", "center");
+  }
 
   const snackShelf = getMovablePropRect("snackShelf");
-  drawSnackDisplay(snackShelf.x, snackShelf.y);
+  if (!isMovingProp("snackShelf")) drawSnackDisplay(snackShelf.x, snackShelf.y);
 
   const happySign = getMovablePropRect("happySign");
-  rect(happySign.x, happySign.y, happySign.w, happySign.h, COLORS.line);
-  rect(happySign.x + 3, happySign.y + 3, happySign.w - 6, happySign.h - 6, COLORS.text);
-  text("\u4e0a\u7f51", happySign.x + happySign.w / 2, happySign.y + 8, 11, COLORS.dimText, "bold", "center");
-  text("\u5feb\u4e50", happySign.x + happySign.w / 2, happySign.y + 21, 11, COLORS.dimText, "bold", "center");
+  if (!isMovingProp("happySign")) {
+    rect(happySign.x, happySign.y, happySign.w, happySign.h, COLORS.line);
+    rect(happySign.x + 3, happySign.y + 3, happySign.w - 6, happySign.h - 6, COLORS.text);
+    text("\u4e0a\u7f51", happySign.x + happySign.w / 2, happySign.y + 8, 11, COLORS.dimText, "bold", "center");
+    text("\u5feb\u4e50", happySign.x + happySign.w / 2, happySign.y + 21, 11, COLORS.dimText, "bold", "center");
+  }
 
   const starterPlant = getMovablePropRect("starterPlant");
-  if (!drawAsset("plant", starterPlant.x, starterPlant.y, starterPlant.w, starterPlant.h)) {
+  if (!isMovingProp("starterPlant") && !drawAsset("plant", starterPlant.x, starterPlant.y, starterPlant.w, starterPlant.h)) {
     drawTinyPlant(starterPlant.x + starterPlant.w / 2 + 6, starterPlant.y + starterPlant.h - 34, 1.45);
   }
 }
