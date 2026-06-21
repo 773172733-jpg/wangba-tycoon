@@ -5367,43 +5367,12 @@ function drawPublicFloorDoorways() {
   getStructuralAreas().forEach((area) => {
     state.publicFloors.forEach((floor) => {
       if (!sharesWall(area, floor)) return;
-      if (isFullOpenConnection(area, floor)) {
-        drawFloorOpening(area, floor);
-      } else {
-        drawDoorwayBetweenAreas(area, floor);
-      }
+      if (!isFullOpenConnection(area, floor)) drawDoorwayBetweenAreas(area, floor);
     });
   });
 
-  for (let i = 0; i < state.publicFloors.length; i += 1) {
-    for (let j = i + 1; j < state.publicFloors.length; j += 1) {
-      const a = state.publicFloors[i];
-      const b = state.publicFloors[j];
-      if (sharesWall(a, b)) {
-        drawFloorOpening(a, b);
-      }
-    }
-  }
-}
-
-function drawFloorOpening(area, floor) {
-  const seamPad = 8;
-  if (area.y + area.h === floor.y || floor.y + floor.h === area.y) {
-    const y = area.y + area.h === floor.y ? floor.y : area.y;
-    const overlapStart = Math.max(area.x, floor.x);
-    const overlapEnd = Math.min(area.x + area.w, floor.x + floor.w);
-    if (overlapEnd - overlapStart < 8) return;
-    drawTiledArea({ x: overlapStart - seamPad, y: y - 8, w: overlapEnd - overlapStart + seamPad * 2, h: 16 });
-    return;
-  }
-
-  if (area.x + area.w === floor.x || floor.x + floor.w === area.x) {
-    const x = area.x + area.w === floor.x ? floor.x : area.x;
-    const overlapStart = Math.max(area.y, floor.y);
-    const overlapEnd = Math.min(area.y + area.h, floor.y + floor.h);
-    if (overlapEnd - overlapStart < 8) return;
-    drawTiledArea({ x: x - 8, y: overlapStart - seamPad, w: 16, h: overlapEnd - overlapStart + seamPad * 2 });
-  }
+  // Public floor tiles are rendered as one open hall network, so no doorway
+  // overlay is needed between them.
 }
 
 function drawPlacementHint() {
