@@ -25,6 +25,16 @@ const AUDIO_SOURCES = {
   click: "audio/click.wav"
 };
 const CODE_DRAWN_VISUALS_ONLY = true;
+const SEAT_LAYOUT_VERSION = {
+  stage: "Bate",
+  modifiedAt: "2026-06-22 22:26",
+  code: "06222226"
+};
+const PLAY_PROGRESS_COLOR = "#e83f3f";
+const STUCK_REROUTE_SECONDS = 3;
+const PERSON_PATH_MIN_WIDTH = 24;
+const PC_AUTO_ALIGN_DISTANCE = 18;
+const MANUAL_CHECKIN_DURATION = 1.25;
 const BASE_OPERATIONAL_PCS = 4;
 const MAX_OPERATIONAL_PCS = 96;
 const WORLD_EXPANSION_MARGIN = 620;
@@ -50,7 +60,7 @@ const PUBLIC_FLOOR_HALF = PUBLIC_FLOOR_SIZE / 2;
 const PUBLIC_FLOOR_ATTACH_DISTANCE = 88;
 const PUBLIC_FLOOR_COST = 120;
 const SAVE_INTERVAL = 20;
-const GAME_DAY_SECONDS = 120;
+const GAME_DAY_SECONDS = 360;
 const GAME_MONTH_DAYS = 30;
 const DAMAGE_THRESHOLD_SESSIONS = 30;
 const DAMAGE_CHANCE_AFTER_THRESHOLD = 0.28;
@@ -88,7 +98,9 @@ const state = {
   frontDesk: {
     busyGuestId: null,
     timer: 0,
-    duration: 1.15
+    duration: 1.15,
+    manual: false,
+    reservedPcId: null
   },
   toilet: {
     dirty: false,
@@ -103,6 +115,7 @@ const state = {
   equipmentOpen: false,
   expansionOpen: false,
   layoutOpen: false,
+  ledgerOpen: false,
   pricingOpen: false,
   settingsOpen: false,
   audio: loadAudioSettings(),
@@ -162,7 +175,14 @@ const state = {
   partitions: [],
   propPositions: {},
   inventory: {},
-  message: "客人进门、前台开机、上机读条、下机离场。",
+  dailyLedger: {
+    dayIndex: 0,
+    internet: 0,
+    companion: 0,
+    products: {},
+    total: 0
+  },
+  message: "客人进门、前台开机、上机读条、下机结账。",
   messageTimer: 5
 };
 state.rentedAreas[0].x = layout.room.x;
@@ -171,10 +191,14 @@ state.rentedAreas[0].w = layout.room.w;
 state.rentedAreas[0].h = layout.room.h;
 
 const guestPalettes = [
-  { shirt: "#c85a43", hair: "#3a2418" },
-  { shirt: "#557c8c", hair: "#3a2418" },
-  { shirt: "#6f9b52", hair: "#4a2c1a" },
-  { shirt: "#d9a74c", hair: "#3a2418" }
+  { shirt: "#e84f4a", accent: "#ffd166", pants: "#24445c", hair: "#1f1511", skin: "#f3c596" },
+  { shirt: "#2f9ed8", accent: "#fff2d0", pants: "#25364f", hair: "#231711", skin: "#f1bf91" },
+  { shirt: "#52b94f", accent: "#dff7a8", pants: "#2d4056", hair: "#2d1b12", skin: "#eeb98b" },
+  { shirt: "#ef8b2d", accent: "#fff2d0", pants: "#2a3750", hair: "#1f1511", skin: "#f0c090" },
+  { shirt: "#b85be8", accent: "#ffd7f1", pants: "#29304d", hair: "#25151f", skin: "#f4c49c" },
+  { shirt: "#29b8a7", accent: "#fff2d0", pants: "#24384a", hair: "#1b1b16", skin: "#eab88c" },
+  { shirt: "#f0b94a", accent: "#c85a43", pants: "#2f4156", hair: "#302017", skin: "#f1bd8d" },
+  { shirt: "#e66b9a", accent: "#fff2d0", pants: "#2b4054", hair: "#442316", skin: "#f0c49a" }
 ];
 
 const ui = {
@@ -192,6 +216,7 @@ const ui = {
   expansionButton: null,
   layoutButton: null,
   settingsButton: null,
+  closeLedgerButton: null,
   closeExpansionButton: null,
   closeLayoutButton: null,
   cancelMoveButton: null,
@@ -304,7 +329,7 @@ function createLayout() {
     floor: { x: room.x + 34, y: room.y + room.h - 76 },
     cleaner: { x: room.x + room.w - 34, y: room.y + room.h - 76 },
     repairman: { x: room.x + room.w - 72, y: room.y + room.h - 76 },
-    manager: { x: counter.x + 56, y: counter.y + 22 },
+    manager: { x: counter.x + counter.w * 0.56, y: counter.y + 24 },
     companion: { x: room.x + room.w - 70, y: room.y + 90 }
   };
 
@@ -677,13 +702,73 @@ function rectanglesOverlap(a, b, padding = 0) {
     a.y + a.h + padding > b.y;
 }
 
-function inflateRect(rectValue, padding) {
-  return {
-    x: rectValue.x - padding,
-    y: rectValue.y - padding,
-    w: rectValue.w + padding * 2,
-    h: rectValue.h + padding * 2
+function rangesOverlap(aStart, aEnd, bStart, bEnd, padding = 0) {
+  return Math.min(aEnd, bEnd) - Math.max(aStart, bStart) > -padding;
+}
+
+function getGapBetweenRects(a, b) {
+  const xGap = a.x + a.w < b.x ? b.x - (a.x + a.w) : b.x + b.w < a.x ? a.x - (b.x + b.w) : 0;
+  const yGap = a.y + a.h < b.y ? b.y - (a.y + a.h) : b.y + b.h < a.y ? a.y - (b.y + b.h) : 0;
+  return { xGap, yGap };
+}
+
+function createsNarrowPathGap(a, b, minWidth = PERSON_PATH_MIN_WIDTH) {
+  if (!a || !b) return false;
+  if (rectanglesOverlap(a, b, 0)) return false;
+  const xAligned = rangesOverlap(a.y, a.y + a.h, b.y, b.y + b.h, 4);
+  const yAligned = rangesOverlap(a.x, a.x + a.w, b.x, b.x + b.w, 4);
+  const gap = getGapBetweenRects(a, b);
+  return xAligned && gap.xGap < minWidth || yAligned && gap.yGap < minWidth;
+}
+
+function createsNarrowPathToAreaEdge(rectValue, area, minWidth = PERSON_PATH_MIN_WIDTH) {
+  if (!rectValue || !area) return false;
+  const touchesVerticalSpan = rectValue.y < area.y + area.h - minWidth && rectValue.y + rectValue.h > area.y + minWidth;
+  const touchesHorizontalSpan = rectValue.x < area.x + area.w - minWidth && rectValue.x + rectValue.w > area.x + minWidth;
+  const gaps = [
+    touchesVerticalSpan ? rectValue.x - area.x : minWidth,
+    touchesVerticalSpan ? area.x + area.w - (rectValue.x + rectValue.w) : minWidth,
+    touchesHorizontalSpan ? rectValue.y - area.y : minWidth,
+    touchesHorizontalSpan ? area.y + area.h - (rectValue.y + rectValue.h) : minWidth
+  ];
+  return gaps.some((gap) => gap >= 0 && gap < minWidth);
+}
+
+function getPlacementSolidRects(ignore = {}) {
+  const ignorePcId = Object.prototype.hasOwnProperty.call(ignore, "pcId") ? ignore.pcId : null;
+  const ignorePartitionId = ignore.partitionId || null;
+  const ignorePropId = ignore.propId || null;
+  return []
+    .concat(layout.pcs
+      .filter((pc) => pc.id !== ignorePcId)
+      .map((pc) => getPcVisualBounds(pc)))
+    .concat(state.mahjongTables || [])
+    .concat((state.partitions || [])
+      .filter((partition) => partition.id !== ignorePartitionId)
+      .filter((partition) => isBlockingPartition(partition)))
+    .concat(getMovablePropDefinitions()
+      .filter((prop) => prop.id !== ignorePropId && !isFreeMoveProp(prop))
+      .map((prop) => getMovablePropHitBounds(getMovablePropRect(prop.id))));
+}
+
+function hasNarrowPlacementGap(rectValue, area = null, ignore = {}, options = {}) {
+  if (!rectValue) return false;
+  const minWidth = options.minWidth || PERSON_PATH_MIN_WIDTH;
+  if (area && options.checkAreaEdges && createsNarrowPathToAreaEdge(rectValue, area, minWidth)) {
+    return true;
+  }
+  return getPlacementSolidRects(ignore).some((solid) => createsNarrowPathGap(rectValue, solid, minWidth));
+}
+
+function isPointTooCloseToPlacementSolid(point, clearance = PERSON_PATH_MIN_WIDTH) {
+  if (!point) return true;
+  const probe = {
+    x: point.x - clearance / 2,
+    y: point.y - clearance / 2,
+    w: clearance,
+    h: clearance
   };
+  return getPlacementSolidRects().some((solid) => rectanglesOverlap(probe, solid, 0));
 }
 
 function getAreaById(id) {
@@ -855,7 +940,15 @@ function syncFrontDeskLayoutFromCounter() {
     { x: counter.x - 68, y: counter.y + counter.h + 26 }
   ];
   layout.staffHome.cashier = { x: counter.x + counter.w - 22, y: counter.y + counter.h - 8 };
-  layout.staffHome.manager = { x: counter.x + 56, y: counter.y + 22 };
+  layout.staffHome.manager = getManagerCounterStation();
+}
+
+function getManagerCounterStation() {
+  const counter = layout.counter;
+  return {
+    x: counter.x + counter.w * 0.56,
+    y: counter.y + 24
+  };
 }
 
 function applyPropPositions() {
@@ -894,6 +987,11 @@ function handleLayoutTouch(worldX, worldY) {
 
   if (state.layoutMode === "propMove") {
     moveSelectedProp(worldX, worldY);
+    return true;
+  }
+
+  if (state.layoutMode === "toiletMove") {
+    moveToiletLayout();
     return true;
   }
 
@@ -1063,6 +1161,7 @@ function isPartitionPlacementValid(partition, ignorePartitionId = null) {
   if (state.mahjongTables.some((table) => rectanglesOverlap(partition, table, 6))) return false;
   if (state.partitions.some((item) => item.id !== ignorePartitionId && rectanglesOverlap(partition, item, 3))) return false;
   if (getMovablePropDefinitions().some((prop) => rectanglesOverlap(partition, getMovablePropHitBounds(getMovablePropRect(prop.id)), 4))) return false;
+  if (hasNarrowPlacementGap(partition, area, { partitionId: ignorePartitionId })) return false;
   return !getDoorAreaPairs().some(([a, b]) => {
     const door = getDoorGeometryBetween(a, b);
     return door && rectanglesOverlap(partition, door.rect, 8);
@@ -1427,6 +1526,8 @@ function isMovablePropPlacementValid(prop, ignorePropId = null) {
   if (state.mahjongTables.some((table) => rectanglesOverlap(prop, table, 4))) return false;
   if (state.partitions.some((partition) => rectanglesOverlap(prop, partition, 4))) return false;
   if (getMovablePropDefinitions().some((item) => item.id !== ignorePropId && rectanglesOverlap(prop, getMovablePropHitBounds(getMovablePropRect(item.id)), 3))) return false;
+  const area = getWalkableAreaAtPoint(prop.x + prop.w / 2, prop.y + prop.h / 2);
+  if (hasNarrowPlacementGap(prop, area, { propId: ignorePropId }, { checkAreaEdges: Boolean(area && area.typeId !== "publicFloor") })) return false;
   if (getDoorAreaPairs().some(([a, b]) => {
     const door = getDoorGeometryBetween(a, b);
     return door && rectanglesOverlap(prop, door.rect, 6);
@@ -1477,6 +1578,47 @@ function getAreaMoveCandidate(area) {
     w: area.w,
     h: area.h
   };
+}
+
+function getToiletMoveCandidate() {
+  const center = getViewportWorldCenter();
+  const size = { w: layout.toilet.w, h: layout.toilet.h };
+  const candidate = getAttachedAreaCandidate(center.x, center.y, size, layout.toilet.id);
+  if (candidate) {
+    return { area: candidate.area, attached: true };
+  }
+  return {
+    area: {
+      x: snapToGrid(center.x - size.w / 2),
+      y: snapToGrid(center.y - size.h / 2),
+      w: size.w,
+      h: size.h
+    },
+    attached: false
+  };
+}
+
+function isToiletMoveCandidateValid(candidate) {
+  return Boolean(candidate && candidate.attached && isAreaPlacementFree(candidate.area, layout.toilet.id));
+}
+
+function moveToiletLayout() {
+  if (state.toilet.busyGuestId || state.toilet.cleanWorkerId) {
+    say("\u5395\u6240\u6b63\u5728\u4f7f\u7528\u6216\u6e05\u6d01\u4e2d\uff0c\u7a0d\u540e\u518d\u79fb\u52a8\u3002");
+    return;
+  }
+
+  const candidate = getToiletMoveCandidate();
+  if (!isToiletMoveCandidateValid(candidate)) {
+    say("\u5395\u6240\u9700\u8981\u8d34\u7740\u5927\u5385\u6216\u516c\u533a\u5916\u5899\u653e\u7f6e\uff0c\u4e14\u4e0d\u80fd\u548c\u5176\u4ed6\u623f\u95f4\u91cd\u53e0\u3002");
+    return;
+  }
+
+  moveAreaTo(layout.toilet, candidate.area.x, candidate.area.y);
+  state.layoutToolActive = false;
+  state.layoutMode = "off";
+  markSaveDirty();
+  say("\u5395\u6240\u4f4d\u7f6e\u5df2\u8c03\u6574\uff0c\u95e8\u6d1e\u4f1a\u81ea\u52a8\u91cd\u7b97\u3002");
 }
 
 function moveAreaLayout(worldX, worldY) {
@@ -1841,6 +1983,7 @@ function buildSaveData() {
     lost: state.lost,
     time: state.time,
     lastPayrollMonth: state.lastPayrollMonth,
+    dailyLedger: normalizeDailyLedger(state.dailyLedger),
     inventory: Object.assign({}, state.inventory),
     purchaseQuantities: Object.assign({}, state.purchaseQuantities),
     employees: Object.assign({}, state.employees),
@@ -1906,6 +2049,7 @@ function restoreGame() {
   state.lost = Number.isFinite(data.lost) ? data.lost : state.lost;
   state.time = Number.isFinite(data.time) ? data.time : state.time;
   state.lastPayrollMonth = Number.isFinite(data.lastPayrollMonth) ? data.lastPayrollMonth : state.lastPayrollMonth;
+  state.dailyLedger = normalizeDailyLedger(data.dailyLedger, getDayIndex());
   state.inventory = Object.assign({}, data.inventory || {});
   state.purchaseQuantities = Object.assign({}, data.purchaseQuantities || {});
   state.employees = Object.assign({}, state.employees, data.employees || {});
@@ -2156,6 +2300,7 @@ function serveGuestDemand(guest) {
 
   state.inventory[product.id] = stock - 1;
   state.cash += product.sellPrice;
+  recordDailyRevenue("product", product.sellPrice, product.id);
   markSaveDirty();
   say(`\u9001\u51fa ${product.name}\uff0c\u989d\u5916\u6536\u5165 ${product.sellPrice} \u5143\u3002`);
   guest.demand = null;
@@ -2175,6 +2320,7 @@ function serveCompanionDemand(guest, byWorker) {
 
   const revenue = getCompanionDemandRevenue(guest);
   state.cash += revenue;
+  recordDailyRevenue("companion", revenue);
   markSaveDirty();
   say(`${byWorker ? "\u966a\u73a9\u5458" : "\u5df2"}\u5b8c\u6210\u966a\u73a9\u670d\u52a1\uff0c\u989d\u5916\u6536\u5165 ${revenue} \u5143\u3002`);
   guest.demand = null;
@@ -2182,13 +2328,32 @@ function serveCompanionDemand(guest, byWorker) {
 }
 
 function findTappedGuest(x, y) {
-  return state.guests.find((guest) => (
+  const demandGuest = state.guests.find((guest) => (
     guest.state === "playing" &&
-    x >= guest.x - 18 &&
-    x <= guest.x + 18 &&
-    y >= guest.y - 42 &&
-    y <= guest.y + 20
+    guest.demand &&
+    isPointInsideRect(x, y, getGuestDemandHitBounds(guest), 0)
   ));
+  if (demandGuest) return demandGuest;
+
+  return state.guests.find((guest) => (
+    ["entering", "queueing", "checkingIn", "playing"].includes(guest.state) &&
+    x >= guest.x - 28 &&
+    x <= guest.x + 28 &&
+    y >= guest.y - 64 &&
+    y <= guest.y + 26
+  ));
+}
+
+function getGuestDemandHitBounds(guest) {
+  const product = guest && guest.demand ? getProductById(guest.demand.productId) : null;
+  const label = product ? product.name : guest && guest.demand ? guest.demand.productName : "";
+  const bubbleW = Math.max(54, label.length * 15 + 18);
+  return {
+    x: guest.x - bubbleW / 2 - 8,
+    y: guest.y - 68,
+    w: bubbleW + 16,
+    h: 44
+  };
 }
 
 function findTappedDirtyPc(x, y) {
@@ -2599,6 +2764,12 @@ function isPcLayoutPositionValid(area, pc, ignorePcId = null) {
 
   const fixedObstacles = area.id === 1 ? getFixedPcPlacementObstacles() : [];
   const doorObstacles = getAreaDoorPlacementObstacles(area);
+  if (hasNarrowPlacementGap(bounds, area, { pcId: ignorePcId }, { checkAreaEdges: Boolean(area.typeId !== "publicFloor") })) {
+    return false;
+  }
+  if (fixedObstacles.concat(doorObstacles).some((obstacle) => createsNarrowPathGap(bounds, obstacle))) {
+    return false;
+  }
   return !fixedObstacles.some((obstacle) => rectanglesOverlap(coreBounds, obstacle, 3)) &&
     !doorObstacles.some((obstacle) => rectanglesOverlap(coreBounds, obstacle, 2));
 }
@@ -2635,20 +2806,61 @@ function getAreaDoorPlacementObstacles(area) {
   return obstacles;
 }
 
+function getPcAutoAlignment(x, y, ignorePcId = null) {
+  let alignedX = x;
+  let alignedY = y;
+  let bestX = null;
+  let bestY = null;
+
+  layout.pcs.forEach((pc) => {
+    if (pc.id === ignorePcId) return;
+    const dx = Math.abs(x - pc.x);
+    const dy = Math.abs(y - pc.y);
+    if (dx <= PC_AUTO_ALIGN_DISTANCE && (!bestX || dx < bestX.distance)) {
+      bestX = { value: pc.x, distance: dx };
+    }
+    if (dy <= PC_AUTO_ALIGN_DISTANCE && (!bestY || dy < bestY.distance)) {
+      bestY = { value: pc.y, distance: dy };
+    }
+  });
+
+  if (bestX) alignedX = bestX.value;
+  if (bestY) alignedY = bestY.value;
+
+  const vertical = Boolean(bestX);
+  const horizontal = Boolean(bestY);
+  const label = horizontal && vertical
+    ? "\u5df2\u6a2a\u7ad6\u81ea\u52a8\u5bf9\u9f50"
+    : horizontal
+      ? "\u5df2\u6a2a\u5411\u81ea\u52a8\u5bf9\u9f50"
+      : vertical
+        ? "\u5df2\u7eb5\u5411\u81ea\u52a8\u5bf9\u9f50"
+        : "";
+
+  return { x: alignedX, y: alignedY, horizontal, vertical, label };
+}
+
 function getPcPurchaseCandidate(worldX, worldY) {
-  const area = getAreaAtPoint(worldX, worldY);
-  if (!area || area.pcCount >= getAreaCapacity(area)) {
-    return { area, pc: null, canPlace: false };
+  const initialArea = getAreaAtPoint(worldX, worldY);
+  if (!initialArea) {
+    return { area: initialArea, pc: null, canPlace: false };
   }
 
-  const x = snapPcPosition(worldX - 21);
-  const y = snapPcPosition(worldY - 18);
+  const alignment = getPcAutoAlignment(snapPcPosition(worldX - 21), snapPcPosition(worldY - 18));
+  const area = getAreaAtPoint(alignment.x + 21, alignment.y + 18) || initialArea;
+  if (area.pcCount >= getAreaCapacity(area)) {
+    return { area, pc: null, canPlace: false, alignmentHint: alignment.label };
+  }
+
+  const x = alignment.x;
+  const y = alignment.y;
   const pc = createPc(layout.pcs.length, x, y, area.id, area.name);
   pc.equipmentLevel = state.pendingPcPurchase ? state.pendingPcPurchase.equipmentLevel : 1;
   return {
     area,
     pc,
-    canPlace: isPcPlacementValid(area, pc)
+    canPlace: isPcPlacementValid(area, pc),
+    alignmentHint: alignment.label
   };
 }
 
@@ -2670,7 +2882,7 @@ function placePendingPcPurchase(worldX, worldY) {
 
   const candidate = getPcPurchaseCandidate(worldX, worldY);
   if (!candidate.canPlace || !candidate.area || !candidate.pc) {
-    say("\u8fd9\u91cc\u653e\u4e0d\u4e0b\u7535\u8111\uff0c\u9700\u8981\u5728\u6709\u7a7a\u4f4d\u7684\u533a\u57df\u5185\u907f\u5f00\u5899\u4f53\u548c\u5df2\u6709\u8bbe\u5907\u3002");
+    say("\u8fd9\u91cc\u653e\u4e0d\u4e0b\u7535\u8111\uff0c\u9700\u8981\u907f\u5f00\u5899\u4f53\u548c\u8bbe\u5907\uff0c\u5e76\u7559\u51fa\u4eba\u7269\u901a\u9053\u3002");
     return true;
   }
 
@@ -2684,7 +2896,8 @@ function placePendingPcPurchase(worldX, worldY) {
   updateEquipmentLevel();
   updateCafeLevel();
   markSaveDirty();
-  say(`${candidate.area.name} \u5df2\u65b0\u8d2d ${getEquipmentTier(candidate.pc.equipmentLevel).name}\uff0c\u7f16\u53f7 ${candidate.pc.id + 1}\u3002`);
+  const alignNote = candidate.alignmentHint ? `\uff08${candidate.alignmentHint}\uff09` : "";
+  say(`${candidate.area.name} \u5df2\u65b0\u8d2d ${getEquipmentTier(candidate.pc.equipmentLevel).name}\uff0c\u7f16\u53f7 ${candidate.pc.id + 1}${alignNote}\u3002`);
   return true;
 }
 
@@ -2729,7 +2942,9 @@ function isMahjongPlacementValid(area, table) {
   const overlapsTable = state.mahjongTables.some((other) => rectanglesOverlap(table, other, 4));
   const overlapsPartition = state.partitions.some((partition) => rectanglesOverlap(table, partition, 4));
   const blocksDoor = getAreaDoorPlacementObstacles(area).some((obstacle) => rectanglesOverlap(table, obstacle, 4));
-  return !overlapsPc && !overlapsTable && !overlapsPartition && !blocksDoor;
+  const narrowGap = hasNarrowPlacementGap(table, area, {}, { checkAreaEdges: true }) ||
+    getAreaDoorPlacementObstacles(area).some((obstacle) => createsNarrowPathGap(table, obstacle));
+  return !overlapsPc && !overlapsTable && !overlapsPartition && !blocksDoor && !narrowGap;
 }
 
 function placePendingMahjongPurchaseAtPreview() {
@@ -2744,7 +2959,7 @@ function placePendingMahjongPurchaseAtPreview() {
   const center = getViewportWorldCenter();
   const candidate = getMahjongPurchaseCandidate(center.x, center.y);
   if (!candidate.canPlace) {
-    say("\u9ebb\u5c06\u684c\u9700\u8981\u653e\u5728\u68cb\u724c\u5ba4\u5185\uff0c\u5e76\u907f\u5f00\u95e8\u6d1e\u548c\u5df2\u6709\u8bbe\u5907\u3002");
+    say("\u9ebb\u5c06\u684c\u9700\u8981\u653e\u5728\u68cb\u724c\u5ba4\u5185\uff0c\u5e76\u907f\u5f00\u95e8\u6d1e\u548c\u8bbe\u5907\uff0c\u7559\u51fa\u901a\u9053\u3002");
     return true;
   }
 
@@ -2820,11 +3035,11 @@ function getWorkerHome(worker) {
       { x: counter.x + counter.w - 22, y: counter.y + counter.h - 8 },
       { x: counter.x + counter.w - 48, y: counter.y + counter.h - 8 }
     ],
-    manager: serviceStations,
+    manager: [getManagerCounterStation()],
     repairman: serviceStations.slice(1).concat(serviceStations.slice(0, 1)),
     companion: serviceStations.slice(2).concat(serviceStations.slice(0, 2)),
-    floor: floorStandby,
-    cleaner: cleanerStandby
+    floor: [getWorkerPatrolPoint(worker, 0)],
+    cleaner: [getWorkerPatrolPoint(worker, 1)]
   };
   const stations = stationSets[worker.type] || [layout.staffHome.floor];
   const safeStations = stations.filter((station) => !isStationTooCloseToToilet(station));
@@ -2834,14 +3049,23 @@ function getWorkerHome(worker) {
 
 function getWorkerPatrolPoint(worker, offset) {
   const room = layout.room;
-  const patrolPoints = [
-    { x: room.x + room.w * 0.25, y: room.y + room.h * 0.3 },
-    { x: room.x + room.w * 0.7, y: room.y + room.h * 0.32 },
-    { x: room.x + room.w * 0.72, y: room.y + room.h * 0.72 },
-    { x: room.x + room.w * 0.26, y: room.y + room.h * 0.74 },
-    { x: room.x + room.w * 0.5, y: room.y + room.h * 0.54 }
-  ].map((point) => getAreaSafePoint(room, point.x, point.y));
-  const step = Math.floor((state.time || 0) / 4 + (worker.homeIndex || 0) + offset) % patrolPoints.length;
+  const patrolAreas = [room].concat(state.publicFloors || []);
+  const patrolPoints = [];
+  patrolAreas.forEach((area, areaIndex) => {
+    [
+      { x: area.x + area.w * 0.22, y: area.y + area.h * 0.28 },
+      { x: area.x + area.w * 0.78, y: area.y + area.h * 0.28 },
+      { x: area.x + area.w * 0.78, y: area.y + area.h * 0.76 },
+      { x: area.x + area.w * 0.22, y: area.y + area.h * 0.76 },
+      { x: area.x + area.w * 0.5, y: area.y + area.h * 0.52 }
+    ].forEach((point) => {
+      const safe = getAreaSafePoint(area, point.x, point.y);
+      if (safe && !isStationTooCloseToToilet(safe) && !isPointTooCloseToPlacementSolid(safe, PERSON_PATH_MIN_WIDTH + 8)) {
+        patrolPoints.push(Object.assign({ areaIndex }, safe));
+      }
+    });
+  });
+  const step = Math.floor((state.time || 0) / 5 + (worker.homeIndex || 0) * 2 + offset) % patrolPoints.length;
   return patrolPoints[step] || getAreaSafePoint(room, room.x + room.w / 2, room.y + room.h / 2);
 }
 
@@ -2950,6 +3174,7 @@ function closePanels() {
   state.equipmentOpen = false;
   state.expansionOpen = false;
   state.layoutOpen = false;
+  state.ledgerOpen = false;
   state.pricingOpen = false;
   state.settingsOpen = false;
   state.pendingEquipmentTierLevel = null;
@@ -2978,6 +3203,7 @@ function clearActionButtons() {
   ui.expansionButton = null;
   ui.layoutButton = null;
   ui.settingsButton = null;
+  ui.closeLedgerButton = null;
   ui.purchaseMahjongButton = null;
   ui.rotatePartitionButton = null;
 }
@@ -3005,6 +3231,7 @@ function isAnyPanelOpen() {
     state.pcUpgradeMenu ||
     state.expansionOpen ||
     state.layoutOpen ||
+    state.ledgerOpen ||
     state.pricingOpen ||
     state.procurementOpen ||
     state.warehouseOpen ||
@@ -3173,6 +3400,26 @@ function handlePartitionActionMenuButton(button) {
 function handlePropActionMenuButton(button) {
   const prop = button.prop;
   if (!prop) {
+    state.propActionMenu = null;
+    return;
+  }
+
+  if (button.action === "ledger") {
+    state.ledgerOpen = true;
+    state.propActionMenu = null;
+    return;
+  }
+
+  if (button.action === "warehouse") {
+    closePanels();
+    state.warehouseOpen = true;
+    state.propActionMenu = null;
+    return;
+  }
+
+  if (button.action === "procurement") {
+    closePanels();
+    state.procurementOpen = true;
     state.propActionMenu = null;
     return;
   }
@@ -3407,6 +3654,13 @@ function handleTouch(x, y) {
 
   const pageButton = ui.pageButtons.find((button) => isPointInRect(x, y, button));
   if (pageButton && handlePageButton(pageButton)) {
+    return;
+  }
+
+  if (state.ledgerOpen) {
+    if (isPointInRect(x, y, ui.closeLedgerButton)) {
+      state.ledgerOpen = false;
+    }
     return;
   }
 
@@ -3692,6 +3946,11 @@ function handleTouch(x, y) {
     return;
   }
 
+  const tappedGuest = findTappedGuest(worldPoint.x, worldPoint.y);
+  if (tappedGuest && tryManualCheckInGuest(tappedGuest)) {
+    return;
+  }
+
   const tappedPc = getPcAtPoint(worldPoint.x, worldPoint.y);
   if (tappedPc) {
     openPcActionMenu(tappedPc, x, y);
@@ -3706,6 +3965,11 @@ function handleTouch(x, y) {
 
   const tappedProp = getMovablePropAtPoint(worldPoint.x, worldPoint.y);
   if (tappedProp) {
+    if (tappedProp.id === "counter") {
+      closePanels();
+      state.ledgerOpen = true;
+      return;
+    }
     openPropActionMenu(tappedProp, x, y);
     return;
   }
@@ -3714,9 +3978,11 @@ function handleTouch(x, y) {
     return;
   }
 
-  const guest = findTappedGuest(worldPoint.x, worldPoint.y);
-  if (guest && serveGuestDemand(guest)) {
-    return;
+  const guest = tappedGuest || findTappedGuest(worldPoint.x, worldPoint.y);
+  if (guest) {
+    if (serveGuestDemand(guest)) {
+      return;
+    }
   }
 }
 
@@ -3740,19 +4006,85 @@ function isPointInsideRect(x, y, area, padding = 0) {
     y <= area.y + area.h + padding;
 }
 
+function inflateRect(rectValue, padding) {
+  return {
+    x: rectValue.x - padding,
+    y: rectValue.y - padding,
+    w: rectValue.w + padding * 2,
+    h: rectValue.h + padding * 2
+  };
+}
+
+function isBlockingPartition(partition) {
+  const type = partition ? getPartitionType(partition.typeId) : null;
+  return Boolean(partition && (!type || type.blockMove !== false));
+}
+
+function getBlockingPartitionAtPoint(x, y, padding = 3) {
+  return state.partitions.find((partition) => (
+    isBlockingPartition(partition) &&
+    isPointInsideRect(x, y, partition, padding)
+  )) || null;
+}
+
+function getMovementIgnoredPropIds(entity = null) {
+  if (!entity || !entity.type) return [];
+  if (entity.type === "manager" || entity.type === "cashier") return ["counter"];
+  return [];
+}
+
+function getMovementIgnoredPcId(entity = null) {
+  if (!entity) return null;
+  if (Number.isFinite(entity.movementIgnorePcId)) return entity.movementIgnorePcId;
+  return null;
+}
+
+function isMovementBlockingProp(prop) {
+  return Boolean(prop && !isFreeMoveProp(prop) && prop.id !== "starterPlant");
+}
+
+function getMovementBlockingRects(entity = null) {
+  const ignoredProps = getMovementIgnoredPropIds(entity);
+  const ignoredPcId = getMovementIgnoredPcId(entity);
+  return []
+    .concat(layout.pcs
+      .filter((pc) => pc.id !== ignoredPcId)
+      .map((pc) => Object.assign({ blockType: "pc", blockId: pc.id }, getPcDeskBounds(pc))))
+    .concat((state.mahjongTables || []).map((table) => Object.assign({ blockType: "mahjong" }, table)))
+    .concat((state.partitions || [])
+      .filter(isBlockingPartition)
+      .map((partition) => Object.assign({ blockType: "partition", blockId: partition.id }, partition)))
+    .concat(getMovablePropDefinitions()
+      .filter((prop) => !ignoredProps.includes(prop.id) && isMovementBlockingProp(prop))
+      .map((prop) => Object.assign(
+        { blockType: "prop", blockId: prop.id },
+        getMovablePropHitBounds(getMovablePropRect(prop.id))
+      )));
+}
+
+function getMovementBlockerAtPoint(x, y, entity = null, padding = 3) {
+  return getMovementBlockingRects(entity).find((blocker) => (
+    isPointInsideRect(x, y, blocker, padding)
+  )) || null;
+}
+
+function isWalkBlockingPoint(x, y, entity = null) {
+  return Boolean(getMovementBlockerAtPoint(x, y, entity));
+}
+
 function segmentIntersectsRect(from, to, rectValue, padding = 0) {
-  const rectValuePadded = inflateRect(rectValue, padding);
-  if (isPointInsideRect(from.x, from.y, rectValuePadded) ||
-      isPointInsideRect(to.x, to.y, rectValuePadded)) {
+  const paddedRect = inflateRect(rectValue, padding);
+  if (isPointInsideRect(from.x, from.y, paddedRect) ||
+      isPointInsideRect(to.x, to.y, paddedRect)) {
     return true;
   }
 
-  const steps = Math.max(4, Math.ceil(distance(from, to) / 10));
+  const steps = Math.max(4, Math.ceil(distance(from, to) / 8));
   for (let index = 1; index < steps; index += 1) {
     const rate = index / steps;
     const x = from.x + (to.x - from.x) * rate;
     const y = from.y + (to.y - from.y) * rate;
-    if (isPointInsideRect(x, y, rectValuePadded)) return true;
+    if (isPointInsideRect(x, y, paddedRect)) return true;
   }
   return false;
 }
@@ -3760,7 +4092,8 @@ function segmentIntersectsRect(from, to, rectValue, padding = 0) {
 function getBlockingPartitionForRoute(from, target) {
   let best = null;
   state.partitions.forEach((partition) => {
-    if (!segmentIntersectsRect(from, target, partition, 10)) return;
+    if (!isBlockingPartition(partition)) return;
+    if (!segmentIntersectsRect(from, target, partition, 7)) return;
     const score = distanceToRectCenter(from.x, from.y, partition);
     if (!best || score < best.score) {
       best = { partition, score };
@@ -3769,48 +4102,117 @@ function getBlockingPartitionForRoute(from, target) {
   return best ? best.partition : null;
 }
 
-function getPartitionAvoidancePoint(entity, target) {
+function getMovementBlockerForRoute(from, target, entity = null) {
+  let best = null;
+  getMovementBlockingRects(entity).forEach((blocker) => {
+    if (!segmentIntersectsRect(from, target, blocker, 7)) return;
+    const score = distanceToRectCenter(from.x, from.y, blocker);
+    if (!best || score < best.score) {
+      best = { blocker, score };
+    }
+  });
+  return best ? best.blocker : null;
+}
+
+function isMovementPointUsable(entity, point) {
+  if (!point || isWalkBlockingPoint(point.x, point.y, entity)) return false;
+  return canMoveToPoint(entity, point.x, point.y) ||
+    isDoorwayPoint(point.x, point.y) ||
+    isEntranceWalkway(point.x, point.y);
+}
+
+function getMovementBlockerEscapePoint(entity) {
+  const blocker = getMovementBlockerAtPoint(entity.x, entity.y, entity, 1);
+  if (!blocker) return null;
+
+  const gap = 14;
+  const candidates = [
+    { x: blocker.x - gap, y: clamp(entity.y, blocker.y - gap, blocker.y + blocker.h + gap) },
+    { x: blocker.x + blocker.w + gap, y: clamp(entity.y, blocker.y - gap, blocker.y + blocker.h + gap) },
+    { x: clamp(entity.x, blocker.x - gap, blocker.x + blocker.w + gap), y: blocker.y - gap },
+    { x: clamp(entity.x, blocker.x - gap, blocker.x + blocker.w + gap), y: blocker.y + blocker.h + gap }
+  ];
+
+  return candidates
+    .filter((point) => isMovementPointUsable(entity, point) && getWalkableAreaAtPoint(point.x, point.y))
+    .sort((a, b) => distance(entity, a) - distance(entity, b))[0] || null;
+}
+
+function getPartitionEscapePoint(entity) {
+  const partition = getBlockingPartitionAtPoint(entity.x, entity.y, 1);
+  if (!partition) return null;
+
+  const gap = 12;
+  const candidates = [
+    { x: partition.x - gap, y: clamp(entity.y, partition.y - gap, partition.y + partition.h + gap) },
+    { x: partition.x + partition.w + gap, y: clamp(entity.y, partition.y - gap, partition.y + partition.h + gap) },
+    { x: clamp(entity.x, partition.x - gap, partition.x + partition.w + gap), y: partition.y - gap },
+    { x: clamp(entity.x, partition.x - gap, partition.x + partition.w + gap), y: partition.y + partition.h + gap }
+  ];
+
+  return candidates
+    .filter((point) => !isWalkBlockingPoint(point.x, point.y, entity) && getWalkableAreaAtPoint(point.x, point.y))
+    .sort((a, b) => distance(entity, a) - distance(entity, b))[0] || null;
+}
+
+function getPartitionDetourPoint(entity, target) {
   const partition = getBlockingPartitionForRoute(entity, target);
   if (!partition) return null;
 
-  const horizontal = partition.w >= partition.h;
-  const gap = 22;
-  const centerX = partition.x + partition.w / 2;
-  const centerY = partition.y + partition.h / 2;
-  const candidates = [];
+  const gap = 18;
+  const candidates = [
+    { x: partition.x - gap, y: partition.y - gap },
+    { x: partition.x + partition.w + gap, y: partition.y - gap },
+    { x: partition.x - gap, y: partition.y + partition.h + gap },
+    { x: partition.x + partition.w + gap, y: partition.y + partition.h + gap }
+  ];
 
-  if (horizontal) {
-    const currentSideY = entity.y < centerY ? partition.y - gap : partition.y + partition.h + gap;
-    const targetSideY = target.y < centerY ? partition.y - gap : partition.y + partition.h + gap;
-    [partition.x - gap, partition.x + partition.w + gap].forEach((x) => {
-      [currentSideY, targetSideY, entity.y].forEach((y) => candidates.push({ x, y }));
-    });
-  } else {
-    const currentSideX = entity.x < centerX ? partition.x - gap : partition.x + partition.w + gap;
-    const targetSideX = target.x < centerX ? partition.x - gap : partition.x + partition.w + gap;
-    [partition.y - gap, partition.y + partition.h + gap].forEach((y) => {
-      [currentSideX, targetSideX, entity.x].forEach((x) => candidates.push({ x, y }));
-    });
-  }
-
-  const scored = candidates
-    .map((candidate) => {
-      const area = getWalkableAreaAtPoint(candidate.x, candidate.y);
-      if (!area && !isEntranceWalkway(candidate.x, candidate.y) && !isDoorwayPoint(candidate.x, candidate.y)) return null;
-      if (isMachineBlockingPoint(candidate.x, candidate.y)) return null;
-      if (segmentIntersectsRect(entity, candidate, partition, 8)) return null;
-      const currentArea = getWalkableAreaAtPoint(entity.x, entity.y);
-      if (currentArea && area && !isTransitionOpen(currentArea, area, candidate.x, candidate.y)) return null;
-      const stillBlocked = segmentIntersectsRect(candidate, target, partition, 8);
+  return candidates
+    .filter((point) => {
+      if (!isMovementPointUsable(entity, point)) return false;
+      return !segmentIntersectsRect(entity, point, partition, 4);
+    })
+    .map((point) => {
+      const targetBlocked = segmentIntersectsRect(point, target, partition, 4);
       return {
-        point: candidate,
-        score: (stillBlocked ? 1000 : 0) + distance(entity, candidate) * 0.45 + distance(candidate, target)
+        point,
+        score: distance(entity, point) + distance(point, target) + (targetBlocked ? 120 : 0)
       };
     })
-    .filter(Boolean)
-    .sort((a, b) => a.score - b.score);
+    .sort((a, b) => a.score - b.score)
+    .map((item) => item.point)[0] || null;
+}
 
-  return scored.length ? scored[0].point : null;
+function getMovementDetourPoint(entity, target) {
+  const blocker = getMovementBlockerForRoute(entity, target, entity);
+  if (!blocker) return null;
+
+  const gap = blocker.blockType === "partition" ? 18 : 14;
+  const candidates = [
+    { x: blocker.x - gap, y: blocker.y - gap },
+    { x: blocker.x + blocker.w + gap, y: blocker.y - gap },
+    { x: blocker.x - gap, y: blocker.y + blocker.h + gap },
+    { x: blocker.x + blocker.w + gap, y: blocker.y + blocker.h + gap },
+    { x: blocker.x + blocker.w / 2, y: blocker.y - gap },
+    { x: blocker.x + blocker.w / 2, y: blocker.y + blocker.h + gap },
+    { x: blocker.x - gap, y: blocker.y + blocker.h / 2 },
+    { x: blocker.x + blocker.w + gap, y: blocker.y + blocker.h / 2 }
+  ];
+
+  return candidates
+    .filter((point) => {
+      if (!isMovementPointUsable(entity, point)) return false;
+      return !segmentIntersectsRect(entity, point, blocker, 4);
+    })
+    .map((point) => {
+      const targetBlocked = segmentIntersectsRect(point, target, blocker, 4);
+      return {
+        point,
+        score: distance(entity, point) + distance(point, target) + (targetBlocked ? 80 : 0)
+      };
+    })
+    .sort((a, b) => a.score - b.score)
+    .map((item) => item.point)[0] || null;
 }
 
 function getWalkableAreaAtPoint(x, y) {
@@ -3835,10 +4237,6 @@ function isEntranceWalkway(x, y) {
     y <= corridor.y + corridor.h + 6;
 }
 
-function isPcSeatTarget(x, y) {
-  return layout.pcs.some((pc) => Math.hypot(x - pc.seatX, y - pc.seatY) <= 10);
-}
-
 function isDoorwayPoint(x, y) {
   const pairs = getDoorAreaPairs();
   for (let index = 0; index < pairs.length; index += 1) {
@@ -3846,30 +4244,6 @@ function isDoorwayPoint(x, y) {
     if (door && isPointInsideRect(x, y, door.rect)) return true;
   }
   return false;
-}
-
-function isMachineBlockingPoint(x, y) {
-  if (isPcSeatTarget(x, y)) return false;
-  const blockedByPc = layout.pcs.some((pc) => (
-    x >= pc.x - 5 &&
-    x <= pc.x + pc.w + 5 &&
-    y >= pc.y - 5 &&
-    y <= pc.y + pc.h - 2
-  ));
-  if (blockedByPc) return true;
-  const blockedByTable = state.mahjongTables.some((table) => (
-    x >= table.x - 6 &&
-    x <= table.x + table.w + 6 &&
-    y >= table.y - 6 &&
-    y <= table.y + table.h + 6
-  ));
-  if (blockedByTable) return true;
-  return state.partitions.some((partition) => (
-    x >= partition.x - 3 &&
-    x <= partition.x + partition.w + 3 &&
-    y >= partition.y - 3 &&
-    y <= partition.y + partition.h + 3
-  ));
 }
 
 function isTransitionOpen(fromArea, toArea, x, y) {
@@ -4058,31 +4432,40 @@ function findAreaRoute(fromArea, toArea) {
 }
 
 function getNextRouteTarget(entity, target) {
+  if (entity.detourPoint) {
+    if (distance(entity, entity.detourPoint) > 5) return entity.detourPoint;
+    entity.detourPoint = null;
+  }
+
   const fromArea = getWalkableAreaAtPoint(entity.x, entity.y);
   const toArea = getWalkableAreaAtPoint(target.x, target.y);
+  let routeTarget = target;
   if (!fromArea || !toArea || fromArea.id === toArea.id) {
-    return getPartitionAvoidancePoint(entity, target) || target;
+    routeTarget = target;
+  } else {
+    const route = findAreaRoute(fromArea, toArea);
+    if (route.length >= 2) {
+      const transition = getTransitionPointBetween(route[0], route[1]);
+      if (transition && distance(entity, transition) > 5) {
+        routeTarget = transition;
+      } else {
+        const innerPoint = getDoorInnerPoint(route[0], route[1]);
+        routeTarget = innerPoint && distance(entity, innerPoint) > 4 ? innerPoint : target;
+      }
+    }
   }
 
-  const route = findAreaRoute(fromArea, toArea);
-  if (route.length < 2) return getPartitionAvoidancePoint(entity, target) || target;
-
-  const transition = getTransitionPointBetween(route[0], route[1]);
-  if (!transition) return getPartitionAvoidancePoint(entity, target) || target;
-  if (distance(entity, transition) > 5) {
-    return getPartitionAvoidancePoint(entity, transition) || transition;
+  const detour = getMovementDetourPoint(entity, routeTarget) ||
+    getPartitionDetourPoint(entity, routeTarget);
+  if (detour) {
+    entity.detourPoint = detour;
+    return detour;
   }
-
-  const innerPoint = getDoorInnerPoint(route[0], route[1]);
-  if (innerPoint && distance(entity, innerPoint) > 4) {
-    return getPartitionAvoidancePoint(entity, innerPoint) || innerPoint;
-  }
-  return getPartitionAvoidancePoint(entity, target) || target;
+  return routeTarget;
 }
 
 function canMoveToPoint(entity, x, y) {
-  if (isMachineBlockingPoint(x, y)) return false;
-
+  if (isWalkBlockingPoint(x, y, entity)) return false;
   const fromArea = getWalkableAreaAtPoint(entity.x, entity.y);
   const toArea = getWalkableAreaAtPoint(x, y);
   if (!toArea && !isEntranceWalkway(x, y) && !isDoorwayPoint(x, y)) return false;
@@ -4099,6 +4482,12 @@ function getAreaSafePoint(area, x, y) {
 }
 
 function getUnstuckPoint(entity, target) {
+  const blockerEscape = getMovementBlockerEscapePoint(entity);
+  if (blockerEscape) return blockerEscape;
+
+  const partitionEscape = getPartitionEscapePoint(entity);
+  if (partitionEscape) return partitionEscape;
+
   const currentArea = getWalkableAreaAtPoint(entity.x, entity.y);
   const targetArea = getWalkableAreaAtPoint(target.x, target.y);
   if (!currentArea && targetArea) {
@@ -4107,20 +4496,25 @@ function getUnstuckPoint(entity, target) {
       return { x: layout.entrance.x + 18, y: layout.entrance.y };
     }
   }
+
+  let routeRecovery = null;
   if (currentArea && targetArea && currentArea.id !== targetArea.id) {
     const route = findAreaRoute(currentArea, targetArea);
     if (route.length >= 2) {
-      return getDoorInnerPoint(route[0], route[1]) || getTransitionPointBetween(route[0], route[1]);
+      routeRecovery = getDoorInnerPoint(route[0], route[1]) || getTransitionPointBetween(route[0], route[1]);
     }
   }
 
-  const avoidance = getPartitionAvoidancePoint(entity, target);
-  if (avoidance) return avoidance;
+  const detour = getMovementDetourPoint(entity, routeRecovery || target) ||
+    getPartitionDetourPoint(entity, routeRecovery || target);
+  if (detour) return detour;
+  if (routeRecovery) return routeRecovery;
 
   if (currentArea) {
     const safe = getAreaSafePoint(currentArea, entity.x, entity.y);
     if (safe && Math.hypot(safe.x - entity.x, safe.y - entity.y) > 1) return safe;
-    return getAreaSafePoint(currentArea, target.x, target.y);
+    const targetSafe = getAreaSafePoint(currentArea, target.x, target.y);
+    return targetSafe && !getMovementBlockerForRoute(entity, targetSafe, entity) ? targetSafe : null;
   }
 
   if (targetArea) {
@@ -4137,6 +4531,17 @@ function getUnstuckPoint(entity, target) {
   return null;
 }
 
+function getEmergencyReroutePoint(entity, target, routedTarget) {
+  return getMovementBlockerEscapePoint(entity) ||
+    getPartitionEscapePoint(entity) ||
+    getMovementDetourPoint(entity, routedTarget) ||
+    getMovementDetourPoint(entity, target) ||
+    getPartitionDetourPoint(entity, routedTarget) ||
+    getPartitionDetourPoint(entity, target) ||
+    getUnstuckPoint(entity, routedTarget) ||
+    getUnstuckPoint(entity, target);
+}
+
 function moveToward(entity, target, speed, dt) {
   const routedTarget = getNextRouteTarget(entity, target);
   const dx = routedTarget.x - entity.x;
@@ -4147,6 +4552,7 @@ function moveToward(entity, target, speed, dt) {
     entity.x = routedTarget.x;
     entity.y = routedTarget.y;
     entity.stuckTimer = 0;
+    if (routedTarget === entity.detourPoint) entity.detourPoint = null;
     return routedTarget === target;
   }
 
@@ -4171,7 +4577,20 @@ function moveToward(entity, target, speed, dt) {
     entity.stuckTimer = (entity.stuckTimer || 0) + dt;
   }
 
-  if (entity.stuckTimer > 0.25 && len <= 18 && (isDoorwayPoint(routedTarget.x, routedTarget.y) || canMoveToPoint(entity, routedTarget.x, routedTarget.y))) {
+  if (entity.stuckTimer > STUCK_REROUTE_SECONDS) {
+    const recovery = getEmergencyReroutePoint(entity, target, routedTarget);
+    entity.detourPoint = null;
+    if (recovery && !isWalkBlockingPoint(recovery.x, recovery.y, entity)) {
+      entity.x = recovery.x;
+      entity.y = recovery.y;
+      entity.stuckTimer = 0;
+      return false;
+    }
+    entity.stuckTimer = STUCK_REROUTE_SECONDS * 0.5;
+  } else if (entity.stuckTimer > 0.25 && len <= 18 && (
+    isDoorwayPoint(routedTarget.x, routedTarget.y) ||
+    (canMoveToPoint(entity, routedTarget.x, routedTarget.y) && !getMovementBlockerForRoute(entity, routedTarget, entity))
+  )) {
     entity.x = routedTarget.x;
     entity.y = routedTarget.y;
     entity.stuckTimer = 0;
@@ -4182,7 +4601,9 @@ function moveToward(entity, target, speed, dt) {
   } else if (entity.stuckTimer > 0.55) {
     const recovery = getUnstuckPoint(entity, routedTarget);
     if (recovery && Math.hypot(recovery.x - entity.x, recovery.y - entity.y) > 1) {
-      if (canMoveToPoint(entity, recovery.x, recovery.y) || isDoorwayPoint(recovery.x, recovery.y) || getWalkableAreaAtPoint(recovery.x, recovery.y)) {
+      if (canMoveToPoint(entity, recovery.x, recovery.y) ||
+          isDoorwayPoint(recovery.x, recovery.y) ||
+          (getWalkableAreaAtPoint(recovery.x, recovery.y) && !isWalkBlockingPoint(recovery.x, recovery.y, entity))) {
         entity.x = recovery.x;
         entity.y = recovery.y;
         entity.stuckTimer = 0;
@@ -4220,21 +4641,30 @@ function getPcAccessPoint(pc) {
 
 function moveToPcSeat(entity, pc, speed, dt) {
   if (!pc) return false;
+  const previousIgnoredPcId = entity.movementIgnorePcId;
+  entity.movementIgnorePcId = pc.id;
   const seat = { x: pc.seatX, y: pc.seatY };
   if (distance(entity, seat) <= 18) {
     entity.x = seat.x;
     entity.y = seat.y;
+    entity.detourPoint = null;
+    entity.stuckTimer = 0;
+    entity.movementIgnorePcId = previousIgnoredPcId;
     return true;
   }
 
   const accessPoint = getPcAccessPoint(pc);
-  if (distance(entity, accessPoint) <= 12) {
+  if (distance(entity, accessPoint) <= 18 || (entity.stuckTimer || 0) > 0.45 && distance(entity, seat) <= 34) {
     entity.x = seat.x;
     entity.y = seat.y;
+    entity.detourPoint = null;
+    entity.stuckTimer = 0;
+    entity.movementIgnorePcId = previousIgnoredPcId;
     return true;
   }
 
   moveToward(entity, accessPoint, speed, dt);
+  entity.movementIgnorePcId = previousIgnoredPcId;
   return false;
 }
 
@@ -4324,6 +4754,58 @@ function getCurrentHour() {
   return Math.floor((state.time % GAME_DAY_SECONDS) / GAME_DAY_SECONDS * 24);
 }
 
+function createDailyLedger(dayIndex = getDayIndex()) {
+  return {
+    dayIndex,
+    internet: 0,
+    companion: 0,
+    products: {},
+    total: 0
+  };
+}
+
+function normalizeDailyLedger(ledger, dayIndex = getDayIndex()) {
+  if (!ledger || ledger.dayIndex !== dayIndex) return createDailyLedger(dayIndex);
+  const productsLedger = ledger.products && typeof ledger.products === "object" ? ledger.products : {};
+  const normalizedProducts = Object.keys(productsLedger).reduce((result, id) => {
+    result[id] = Number.isFinite(productsLedger[id]) ? productsLedger[id] : 0;
+    return result;
+  }, {});
+  const normalized = {
+    dayIndex,
+    internet: Number.isFinite(ledger.internet) ? ledger.internet : 0,
+    companion: Number.isFinite(ledger.companion) ? ledger.companion : 0,
+    products: normalizedProducts,
+    total: Number.isFinite(ledger.total) ? ledger.total : 0
+  };
+  normalized.total = normalized.internet +
+    normalized.companion +
+    Object.keys(normalized.products).reduce((sum, id) => sum + (Number.isFinite(normalized.products[id]) ? normalized.products[id] : 0), 0);
+  return normalized;
+}
+
+function ensureDailyLedger() {
+  const dayIndex = getDayIndex();
+  if (!state.dailyLedger || state.dailyLedger.dayIndex !== dayIndex) {
+    state.dailyLedger = createDailyLedger(dayIndex);
+  }
+}
+
+function recordDailyRevenue(kind, amount, productId = null) {
+  ensureDailyLedger();
+  const value = Math.max(0, Math.floor(amount || 0));
+  if (value <= 0) return;
+
+  if (kind === "internet") {
+    state.dailyLedger.internet += value;
+  } else if (kind === "companion") {
+    state.dailyLedger.companion += value;
+  } else if (kind === "product" && productId) {
+    state.dailyLedger.products[productId] = (state.dailyLedger.products[productId] || 0) + value;
+  }
+  state.dailyLedger.total += value;
+}
+
 function isWeekendRushDay() {
   return getWeekdayIndex() >= 4;
 }
@@ -4372,51 +4854,235 @@ function getMaxWaitingGuests() {
   return Math.max(2, Math.min(6, Math.floor(layout.pcs.length / 3) + 1));
 }
 
+function getExitOutsidePoint() {
+  return { x: layout.entrance.x - 42, y: layout.entrance.y, outside: true };
+}
+
+function getExitInsideCandidates() {
+  const room = layout.room;
+  return [
+    { x: room.x + 18, y: layout.entrance.y },
+    { x: room.x + 34, y: layout.entrance.y - 24 },
+    { x: room.x + 34, y: layout.entrance.y + 24 },
+    { x: room.x + 56, y: layout.entrance.y },
+    { x: room.x + 64, y: layout.entrance.y - 36 },
+    { x: room.x + 64, y: layout.entrance.y + 36 }
+  ].map((point) => getAreaSafePoint(room, point.x, point.y)).filter(Boolean);
+}
+
+function isExitCandidateUsable(entity, point) {
+  if (!point || isWalkBlockingPoint(point.x, point.y, entity)) return false;
+  if (!getWalkableAreaAtPoint(point.x, point.y) && !isEntranceWalkway(point.x, point.y)) return false;
+  return !getMovementBlockerForRoute(entity, point, entity);
+}
+
+function getGuestExitInsidePoint(guest) {
+  const candidates = getExitInsideCandidates()
+    .map((point) => ({
+      point,
+      usable: isExitCandidateUsable(guest, point),
+      score: Math.hypot(guest.x - point.x, guest.y - point.y)
+    }))
+    .sort((a, b) => (a.usable === b.usable ? a.score - b.score : a.usable ? -1 : 1));
+  return candidates[0] ? candidates[0].point : { x: layout.room.x + 18, y: layout.entrance.y };
+}
+
+function getGuestExitTarget(guest) {
+  if (guest.exitStage === "outside" ||
+      (isEntranceWalkway(guest.x, guest.y) && guest.x <= layout.room.x + 6)) {
+    return getExitOutsidePoint();
+  }
+  const inside = getGuestExitInsidePoint(guest);
+  return { x: inside.x, y: inside.y, outside: false };
+}
+
+function updateLeavingGuest(guest, index, dt) {
+  guest.pathTimer = (guest.pathTimer || 0) + dt;
+  const target = getGuestExitTarget(guest);
+  const left = moveToward(guest, target, guest.speed + 8, dt);
+
+  if (left && target.outside) {
+    state.guests.splice(index, 1);
+    return;
+  }
+
+  if (left) {
+    guest.exitStage = "outside";
+    guest.pathTimer = 0;
+    guest.detourPoint = null;
+    return;
+  }
+
+  if (guest.pathTimer > 2.4 || (guest.stuckTimer || 0) > 1.6) {
+    guest.exitStage = "inside";
+    guest.detourPoint = null;
+    const reroute = getEmergencyReroutePoint(guest, getGuestExitInsidePoint(guest), target);
+    if (reroute && !isWalkBlockingPoint(reroute.x, reroute.y, guest)) {
+      guest.detourPoint = reroute;
+    }
+    guest.pathTimer = 0;
+  }
+}
+
+function getFrontDeskStaffCounts() {
+  const workerCashiers = state.workers.filter((worker) => worker.type === "cashier").length;
+  const workerManagers = state.workers.filter((worker) => worker.type === "manager").length;
+  return {
+    cashier: Math.max(state.employees.cashier || 0, workerCashiers),
+    manager: Math.max(state.employees.manager || 0, workerManagers)
+  };
+}
+
+function hasFrontDeskStaff() {
+  const counts = getFrontDeskStaffCounts();
+  return counts.cashier > 0 || counts.manager > 0;
+}
+
+function getFrontDeskDuration() {
+  const counts = getFrontDeskStaffCounts();
+  const staffPower = counts.cashier * 1 + counts.manager * 0.75;
+  if (staffPower > 0) return Math.max(0.32, 1.08 - staffPower * 0.16);
+  return 0;
+}
+
+function getFrontDeskServicePoint() {
+  return layout.queue[0] || {
+    x: layout.counter.x - 12,
+    y: layout.counter.y + layout.counter.h + 26
+  };
+}
+
+function assignGuestToPc(guest, pc, manual = false) {
+  if (!guest || !pc) return false;
+  pc.occupiedBy = guest.id;
+  guest.pcId = pc.id;
+  guest.state = "toPc";
+  guest.pathTimer = 0;
+  guest.queueIndex = -1;
+  guest.manualCheckInPrompted = false;
+  guest.detourPoint = null;
+  guest.stuckTimer = 0;
+  say(`顾客 ${guest.id} ${manual ? "已手动开卡" : "已开卡"}，分配到 ${pc.id + 1} 号机。`);
+  return true;
+}
+
+function getFirstWaitingCheckInGuest() {
+  return state.guests
+    .filter((guest) => guest.state === "queueing" || guest.state === "entering")
+    .sort((a, b) => {
+      const aIndex = Number.isFinite(a.queueIndex) && a.queueIndex >= 0 ? a.queueIndex : 99;
+      const bIndex = Number.isFinite(b.queueIndex) && b.queueIndex >= 0 ? b.queueIndex : 99;
+      return aIndex - bIndex || distance(a, getFrontDeskServicePoint()) - distance(b, getFrontDeskServicePoint());
+    })[0] || null;
+}
+
+function isGuestReadyForCheckIn(guest) {
+  if (!guest) return false;
+  if (guest.state === "queueing") return true;
+  const servicePoint = layout.queue[guest.queueIndex] || getFrontDeskServicePoint();
+  return distance(guest, servicePoint) <= 18;
+}
+
+function startFrontDeskCheckIn(guest, manual = false, reservedPc = null) {
+  if (!guest || state.frontDesk.busyGuestId) return false;
+  const pc = reservedPc || findFreePc(guest);
+  if (!pc) return false;
+  const duration = manual ? MANUAL_CHECKIN_DURATION : getFrontDeskDuration();
+  if (duration <= 0) return false;
+  guest.state = "checkingIn";
+  guest.pathTimer = 0;
+  guest.detourPoint = null;
+  guest.stuckTimer = 0;
+  state.frontDesk.busyGuestId = guest.id;
+  state.frontDesk.timer = duration;
+  state.frontDesk.duration = duration;
+  state.frontDesk.manual = manual;
+  state.frontDesk.reservedPcId = pc.id;
+  return true;
+}
+
+function tryManualCheckInGuest(guest) {
+  if (!guest || (guest.state !== "queueing" && guest.state !== "entering")) return false;
+
+  const frontGuest = getFirstWaitingCheckInGuest();
+  if (frontGuest && frontGuest.id !== guest.id) {
+    say("先给排在最前面的顾客开卡。");
+    return true;
+  }
+
+  const servicePoint = layout.queue[guest.queueIndex] || getFrontDeskServicePoint();
+  if (guest.state === "entering" && distance(guest, servicePoint) > 36) {
+    say("等顾客走到前台后，再点击开卡。");
+    return true;
+  }
+
+  const manual = !hasFrontDeskStaff();
+  const pc = findFreePc(guest);
+  if (!pc) {
+    say("没有符合这位顾客要求的空机器。");
+    return true;
+  }
+
+  if (!startFrontDeskCheckIn(guest, manual, pc)) {
+    say("前台正在处理上一位顾客。");
+  }
+  return true;
+}
+
 function updateFrontDesk(dt) {
-  const cashierCount = state.employees.cashier || 0;
-  state.frontDesk.duration = cashierCount > 0
-    ? Math.max(0.42, 0.84 - (cashierCount - 1) * 0.12)
-    : 1.25;
+  if (!state.frontDesk.busyGuestId) {
+    state.frontDesk.duration = getFrontDeskDuration();
+    state.frontDesk.manual = false;
+  }
 
   if (state.frontDesk.busyGuestId) {
     state.frontDesk.timer -= dt;
     if (state.frontDesk.timer > 0) return;
 
     const guest = state.guests.find((item) => item.id === state.frontDesk.busyGuestId);
-    const pc = findFreePc(guest);
+    const reservedPc = layout.pcs.find((item) => item.id === state.frontDesk.reservedPcId);
+    const pc = reservedPc && guest && pcMatchesGuest(reservedPc, guest.guestType) ? reservedPc : findFreePc(guest);
 
     if (guest && pc) {
-      pc.occupiedBy = guest.id;
-      guest.pcId = pc.id;
-      guest.state = "toPc";
-      guest.pathTimer = 0;
-      guest.queueIndex = -1;
-      say(`顾客 ${guest.id} 已开机，分配到 ${pc.id + 1} 号机。`);
+      assignGuestToPc(guest, pc, Boolean(state.frontDesk.manual));
     } else if (guest) {
       guest.state = "queueing";
+      guest.manualCheckInPrompted = false;
     }
 
     state.frontDesk.busyGuestId = null;
     state.frontDesk.timer = 0;
+    state.frontDesk.manual = false;
+    state.frontDesk.reservedPcId = null;
   }
 
-  const nextGuest = state.guests.find((guest) => guest.state === "queueing" && guest.queueIndex === 0);
-  if (!nextGuest || !findFreePc(nextGuest)) return;
+  if (!hasFrontDeskStaff()) {
+    const waitingGuest = getFirstWaitingCheckInGuest();
+    if (waitingGuest && findFreePc(waitingGuest) && !waitingGuest.manualCheckInPrompted) {
+      waitingGuest.manualCheckInPrompted = true;
+      say("没有收银员或店长，点击前台顾客手动开卡。");
+    }
+    return;
+  }
 
-  nextGuest.state = "checkingIn";
-  state.frontDesk.busyGuestId = nextGuest.id;
-  state.frontDesk.timer = state.frontDesk.duration;
+  const nextGuest = getFirstWaitingCheckInGuest();
+  if (!isGuestReadyForCheckIn(nextGuest)) return;
+  const pc = nextGuest && findFreePc(nextGuest);
+  if (!nextGuest || !pc) return;
+
+  startFrontDeskCheckIn(nextGuest, false, pc);
 }
 
 function updateQueueTargets() {
   const waiting = state.guests.filter((guest) => (
     guest.state === "entering" ||
-    guest.state === "queueing"
+    guest.state === "queueing" ||
+    guest.state === "checkingIn"
   ));
 
   waiting.forEach((guest, index) => {
     guest.queueIndex = Math.min(index, layout.queue.length - 1);
-    if (guest.state === "entering" && distance(guest, layout.queue[guest.queueIndex]) < 2) {
+    if (guest.state === "entering" && distance(guest, layout.queue[guest.queueIndex]) < 12) {
       guest.state = "queueing";
     }
   });
@@ -4428,6 +5094,7 @@ function finishPlaying(guest, pc) {
   const income = hourlyRate * sessionHours;
 
   state.cash += income;
+  recordDailyRevenue("internet", income);
   state.served += 1;
   updateCafeLevel();
   pc.sessionsServed += 1;
@@ -4437,10 +5104,13 @@ function finishPlaying(guest, pc) {
     state.toilet.busyGuestId = null;
   }
   guest.state = "leaving";
+  guest.exitStage = "inside";
+  guest.pathTimer = 0;
+  guest.detourPoint = null;
   state.cleanliness = Math.max(0, state.cleanliness - 3);
   markSaveDirty();
   if (!maybeBreakPc(pc)) {
-    say(`顾客 ${guest.id} 下机结账，收入 ${income} 元。机位需要清理。`);
+    say("顾客 " + guest.id + " 下机结账，收入 " + income + " 元。机位需要清理。");
   }
 }
 
@@ -4491,8 +5161,22 @@ function assignDeliveryTask(worker) {
   worker.state = "toDeliver";
   worker.targetGuestId = guest.id;
   worker.targetProductId = guest.demand.productId;
+  worker.targetPcId = Number.isFinite(guest.pcId) ? guest.pcId : null;
   worker.pathTimer = 0;
   return true;
+}
+
+function getGuestDeliveryPoint(guest) {
+  const pc = guest ? layout.pcs[guest.pcId] : null;
+  if (pc) {
+    return getPcAccessPoint(pc);
+  }
+  return guest ? { x: guest.x, y: guest.y + 18 } : null;
+}
+
+function isWorkerCloseEnoughToDeliver(worker, guest, target) {
+  if (!worker || !guest || !target) return false;
+  return distance(worker, target) <= 24 || distance(worker, guest) <= 52;
 }
 
 function canServeDemandAutomatically(guest, worker) {
@@ -4559,7 +5243,7 @@ function getFloorMopPoint(worker) {
   const start = worker.homeIndex || 0;
   for (let offset = 0; offset < candidates.length; offset += 1) {
     const point = candidates[(start + offset) % candidates.length];
-    if (point && !isMachineBlockingPoint(point.x, point.y)) return point;
+    if (point) return point;
   }
   return getAreaSafePoint(room, room.x + 44, room.y + room.h - 48);
 }
@@ -4678,11 +5362,18 @@ function updateWorkers(dt) {
     if (worker.state === "toDeliver") {
       worker.pathTimer = (worker.pathTimer || 0) + dt;
       const guest = state.guests.find((item) => item.id === worker.targetGuestId);
-      if (!guest || !guest.demand || guest.demand.productId !== worker.targetProductId || worker.pathTimer > 8) {
+      const deliveryPoint = getGuestDeliveryPoint(guest);
+      if (!guest || !guest.demand || guest.demand.productId !== worker.targetProductId || !deliveryPoint) {
         resetWorker(worker);
         return;
       }
-      if (moveToward(worker, { x: guest.x, y: guest.y + 10 }, 62, dt)) {
+
+      const previousIgnoredPcId = worker.movementIgnorePcId;
+      if (Number.isFinite(guest.pcId)) worker.movementIgnorePcId = guest.pcId;
+      const arrived = moveToward(worker, deliveryPoint, 62, dt);
+      worker.movementIgnorePcId = previousIgnoredPcId;
+
+      if (arrived || isWorkerCloseEnoughToDeliver(worker, guest, deliveryPoint) || worker.pathTimer > 5.5) {
         worker.state = "delivering";
         worker.pathTimer = 0;
         worker.taskTimer = 0.7;
@@ -4740,6 +5431,7 @@ function serveGuestDemandByWorker(guest) {
 
   state.inventory[product.id] -= 1;
   state.cash += product.sellPrice;
+  recordDailyRevenue("product", product.sellPrice, product.id);
   markSaveDirty();
   say(`\u5458\u5de5\u9001\u51fa ${product.name}\uff0c\u989d\u5916\u6536\u5165 ${product.sellPrice} \u5143\u3002`);
   guest.demand = null;
@@ -4763,6 +5455,7 @@ function resetWorker(worker) {
   worker.taskTimer = 0;
   worker.pathTimer = 0;
   worker.stuckTimer = 0;
+  worker.detourPoint = null;
   worker.state = "station";
 }
 
@@ -4797,7 +5490,7 @@ function updateGuests(dt) {
     }
 
     if (guest.state === "checkingIn") {
-      moveToward(guest, { x: layout.counter.x + 14, y: layout.counter.y + layout.counter.h + 18 }, guest.speed, dt);
+      moveToward(guest, getFrontDeskServicePoint(), guest.speed, dt);
       continue;
     }
 
@@ -4805,7 +5498,7 @@ function updateGuests(dt) {
       const pc = layout.pcs[guest.pcId];
       const arrived = moveToPcSeat(guest, pc, guest.speed, dt);
       guest.pathTimer = (guest.pathTimer || 0) + dt;
-      if (arrived || guest.pathTimer > 8) {
+      if (arrived || guest.pathTimer > 4.5) {
         if (pc) {
           guest.x = pc.seatX;
           guest.y = pc.seatY;
@@ -4883,20 +5576,19 @@ function updateGuests(dt) {
     }
 
     if (guest.state === "leaving") {
-      const left = moveToward(guest, { x: layout.entrance.x - 42, y: layout.entrance.y }, guest.speed + 8, dt);
-      if (left) {
-        state.guests.splice(index, 1);
-      }
+      updateLeavingGuest(guest, index, dt);
     }
   }
 }
 
 function update(dt) {
   state.time += dt;
+  ensureDailyLedger();
   state.messageTimer = Math.max(0, state.messageTimer - dt);
   updateEquipmentLevel();
   updateCafeLevel();
   updateSpawn();
+  updateQueueTargets();
   updateFrontDesk(dt);
   updateGuests(dt);
   updateWorkers(dt);
@@ -5018,14 +5710,14 @@ function drawGlobalWoodPlanks(area) {
   for (let rowY = startRow; rowY < endY; rowY += plankH) {
     drawWoodPlankRow(area.x, rowY, area.w, plankH, rowY, plankH, boardW);
   }
-  rect(area.x, area.y + area.h - 2, area.w, 2, "rgba(201, 153, 85, 0.38)");
+  rect(area.x, area.y + area.h - 2, area.w, 2, "rgba(113, 73, 38, 0.32)");
 }
 
 function drawWoodPlankRow(x, y, w, h, rowSeed, plankH, boardW = 96) {
   const rowIndex = Math.floor(rowSeed / plankH);
-  const fill = rowIndex % 2 === 0 ? "#d8aa62" : "#e0b66d";
+  const fill = rowIndex % 2 === 0 ? "#c49350" : "#d0a05a";
   rect(x, y, w, h, fill);
-  rect(x, y, w, 2, "rgba(126, 82, 41, 0.28)");
+  rect(x, y, w, 2, "rgba(96, 58, 31, 0.34)");
 
   const offset = (rowIndex % 3) * Math.floor(boardW / 3);
   const startX = Math.floor((x - offset) / boardW) * boardW + offset;
@@ -5033,10 +5725,10 @@ function drawWoodPlankRow(x, y, w, h, rowSeed, plankH, boardW = 96) {
     const boardX = Math.max(x, col);
     const boardWClipped = Math.min(col + boardW, x + w) - boardX;
     const tone = seededUnit(rowIndex * 97 + Math.floor(col / boardW) * 31);
-    const shade = tone < 0.34 ? "rgba(74, 44, 26, 0.10)" : tone > 0.74 ? "rgba(255, 242, 208, 0.08)" : "rgba(0, 0, 0, 0)";
+    const shade = tone < 0.34 ? "rgba(74, 44, 26, 0.16)" : tone > 0.74 ? "rgba(255, 242, 208, 0.05)" : "rgba(0, 0, 0, 0)";
     rect(boardX, y + 2, boardWClipped, Math.max(2, h - 3), shade);
     if (col > x) {
-      rect(col, y + 2, 2, Math.max(4, h - 4), "rgba(126, 82, 41, 0.22)");
+      rect(col, y + 2, 2, Math.max(4, h - 4), "rgba(96, 58, 31, 0.30)");
     }
   }
 }
@@ -5557,12 +6249,19 @@ function drawPcPurchaseHint() {
   const worldX = state.camera.x + view.width / 2;
   const worldY = state.camera.y + (view.height - ACTION_BAR_HEIGHT + HUD_HEIGHT) / 2;
   const candidate = getPcPurchaseCandidate(worldX, worldY);
-  const pc = candidate.pc || createPc(-1, snapPcPosition(worldX - 21), snapPcPosition(worldY - 18), 1, "");
+  const fallbackAlignment = getPcAutoAlignment(snapPcPosition(worldX - 21), snapPcPosition(worldY - 18));
+  const pc = candidate.pc || createPc(-1, fallbackAlignment.x, fallbackAlignment.y, 1, "");
   const bounds = getPcVisualBounds(pc);
   const canPlace = Boolean(candidate.canPlace);
   rect(bounds.x, bounds.y, bounds.w, bounds.h, canPlace ? "rgba(105, 185, 109, 0.28)" : "rgba(217, 74, 69, 0.28)");
   strokeRect(bounds.x, bounds.y, bounds.w, bounds.h, canPlace ? COLORS.green : COLORS.red, 3);
-  text(canPlace ? "\u70b9\u51fb\u653e\u7f6e\u7535\u8111" : "\u65e0\u6cd5\u653e\u7f6e", bounds.x + bounds.w / 2, bounds.y + bounds.h / 2 - 8, 12, COLORS.text, "bold", "center");
+  const label = canPlace
+    ? (candidate.alignmentHint || "\u70b9\u51fb\u653e\u7f6e\u7535\u8111")
+    : "\u65e0\u6cd5\u653e\u7f6e";
+  text(label, bounds.x + bounds.w / 2, bounds.y + bounds.h / 2 - 12, 12, COLORS.text, "bold", "center");
+  if (canPlace && candidate.alignmentHint) {
+    text("\u9760\u8fd1\u8bbe\u5907\uff0c\u5df2\u5438\u9644\u5bf9\u9f50", bounds.x + bounds.w / 2, bounds.y + bounds.h / 2 + 6, 10, COLORS.text, "bold", "center");
+  }
 }
 
 function drawMahjongPurchaseHint() {
@@ -5638,6 +6337,16 @@ function drawLayoutSelection() {
     }
   }
 
+  if (state.layoutMode === "toiletMove") {
+    const candidate = getToiletMoveCandidate();
+    const area = candidate.area;
+    const canPlace = isToiletMoveCandidateValid(candidate);
+    rect(area.x, area.y, area.w, area.h, canPlace ? "rgba(105, 185, 109, 0.25)" : "rgba(217, 74, 69, 0.28)");
+    strokeRect(area.x, area.y, area.w, area.h, canPlace ? COLORS.green : COLORS.red, 3);
+    text(canPlace ? "\u53ef\u79fb\u52a8\u5395\u6240" : "\u9700\u8d34\u5899\u653e\u7f6e", area.x + area.w / 2, area.y + area.h / 2 - 8, 12, COLORS.text, "bold", "center");
+    text("\u5e03\u5c40\uff1a\u70b9\u51fb\u786e\u8ba4\u5395\u6240\u65b0\u4f4d\u7f6e", state.camera.x + view.width / 2, state.camera.y + HUD_HEIGHT + 8, 12, COLORS.yellow, "bold", "center");
+  }
+
   if (state.layoutMode === "deleteArea") {
     text("\u5e03\u5c40\uff1a\u70b9\u51fb\u9694\u65ad\u6216\u65e7\u5305\u95f4\u5220\u9664", state.camera.x + view.width / 2, state.camera.y + HUD_HEIGHT + 8, 12, COLORS.yellow, "bold", "center");
   }
@@ -5700,7 +6409,7 @@ function drawIndoorDetails() {
   const room = layout.room;
   rect(room.x + 22, room.y + 14, 42, 18, "#4b3027");
   strokeRect(room.x + 22, room.y + 14, 42, 18, "#d7a85b", 2);
-  text("黑网吧", room.x + 43, room.y + 17, 12, COLORS.text, "bold", "center");
+  text("小黑网吧", room.x + 43, room.y + 17, 12, COLORS.text, "bold", "center");
 
   rect(room.x + room.w - 52, room.y + room.h - 54, 22, 30, "#7b5a35");
   rect(room.x + room.w - 48, room.y + room.h - 64, 14, 14, COLORS.plant);
@@ -5765,7 +6474,7 @@ function drawPc(pc) {
     if (guest) {
       const progress = 1 - guest.playTimer / guest.playDuration;
       rect(pc.x, pc.y - 14, pc.w, 5, "rgba(20, 31, 37, 0.38)");
-      rect(pc.x, pc.y - 14, Math.round(pc.w * progress), 5, COLORS.yellow);
+      rect(pc.x, pc.y - 14, Math.round(pc.w * progress), 5, PLAY_PROGRESS_COLOR);
     }
     return;
   }
@@ -5814,7 +6523,7 @@ function drawPc(pc) {
   if (guest) {
     const progress = 1 - guest.playTimer / guest.playDuration;
     rect(pc.x, pc.y - 12, pc.w, 5, "rgba(20, 31, 37, 0.38)");
-    rect(pc.x, pc.y - 12, Math.round(pc.w * progress), 5, COLORS.yellow);
+    rect(pc.x, pc.y - 12, Math.round(pc.w * progress), 5, PLAY_PROGRESS_COLOR);
   }
 }
 
@@ -5912,7 +6621,7 @@ function drawOrientedPc(pc) {
   if (guest) {
     const progress = 1 - guest.playTimer / guest.playDuration;
     rect(pc.x, pc.y - 12, pc.w, 5, "rgba(20, 31, 37, 0.38)");
-    rect(pc.x, pc.y - 12, Math.round(pc.w * progress), 5, COLORS.yellow);
+    rect(pc.x, pc.y - 12, Math.round(pc.w * progress), 5, PLAY_PROGRESS_COLOR);
   }
 }
 
@@ -5992,19 +6701,20 @@ function drawLayoutToolControls() {
   ui.rotatePartitionButton = null;
   if (!state.layoutToolActive) return;
   const label = state.layoutMode === "pc" ? "\u9000\u51fa\u79fb\u52a8" : state.layoutMode === "deleteArea" ? "\u9000\u51fa\u5220\u9664" : "\u9000\u51fa\u5e03\u5c40";
+  const messageY = view.height - ACTION_BAR_HEIGHT - MESSAGE_BAR_HEIGHT - 10;
   ui.cancelMoveButton = {
-    x: view.width - 112,
-    y: HUD_HEIGHT + 10,
-    w: 96,
+    x: Math.round(view.width / 2 - 58),
+    y: messageY - 48,
+    w: 116,
     h: 30
   };
   drawWidePanelButton(ui.cancelMoveButton, label, "#7f5635");
 
   if (state.layoutMode === "partition") {
     ui.rotatePartitionButton = {
-      x: view.width - 112,
-      y: HUD_HEIGHT + 46,
-      w: 96,
+      x: Math.round(view.width / 2 - 58),
+      y: messageY - 84,
+      w: 116,
       h: 30
     };
     drawWidePanelButton(ui.rotatePartitionButton, "\u65cb\u8f6c 90\u00b0", "#8b552b");
@@ -6097,7 +6807,21 @@ function drawPropActionMenu() {
 
   const bounds = getMovablePropHitBounds(prop);
   const panelW = 104;
-  const panelH = 72;
+  const actions = prop.id === "counter"
+    ? [
+      { action: "ledger", label: "\u8d26\u672c" },
+      { action: "move", label: "\u79fb\u52a8" }
+    ]
+    : prop.id === "snackShelf"
+      ? [
+        { action: "warehouse", label: "\u67e5\u5e93\u5b58" },
+        { action: "procurement", label: "\u53bb\u91c7\u8d2d" },
+        { action: "move", label: "\u79fb\u52a8" }
+      ]
+      : [
+        { action: "move", label: "\u79fb\u52a8" }
+      ];
+  const panelH = 48 + actions.length * 24;
   const sx = bounds.x + bounds.w + 10 - state.camera.x;
   const sy = bounds.y - 14 - state.camera.y;
   const panelX = clamp(sx, 8, view.width - panelW - 8);
@@ -6106,16 +6830,18 @@ function drawPropActionMenu() {
   pixelPanel(panelX, panelY, panelW, panelH, "#fff2d0", "#e8c97a", COLORS.line);
   text(prop.name, panelX + panelW / 2, panelY + 10, 12, COLORS.line, "bold", "center");
 
-  const button = {
-    x: panelX + 12,
-    y: panelY + 38,
-    w: panelW - 24,
-    h: 22,
-    action: "move",
-    prop
-  };
-  ui.propActionButtons.push(button);
-  drawWidePanelButton(button, "\u79fb\u52a8", "#8b552b");
+  actions.forEach((item, index) => {
+    const button = {
+      x: panelX + 12,
+      y: panelY + 34 + index * 24,
+      w: panelW - 24,
+      h: 22,
+      action: item.action,
+      prop
+    };
+    ui.propActionButtons.push(button);
+    drawWidePanelButton(button, item.label, item.action === "move" ? "#8b552b" : "#4e8f4f");
+  });
 }
 
 function drawGuest(guest) {
@@ -6136,14 +6862,24 @@ function drawGuest(guest) {
     return;
   }
 
-  ellipse(x, y + 8, 13, 5, "rgba(18, 30, 36, 0.2)");
-  circle(x, y - 15, 7, "#f3c596");
-  roundedRect(x - 8, y - 22, 16, 7, 5, guest.palette.hair);
-  roundedRect(x - 9, y - 8, 18, 17, 7, guest.palette.shirt);
-  roundedRect(x - 11, y - 5, 4, 12, 3, "#f3c596");
-  roundedRect(x + 7, y - 5, 4, 12, 3, "#f3c596");
-  roundedRect(x - 7, y + 6, 6, 10, 3, "#24384a");
-  roundedRect(x + 1, y + 6, 6, 10, 3, "#24384a");
+  const palette = guest.palette || guestPalettes[0];
+  const skin = palette.skin || "#f3c596";
+  const pants = palette.pants || "#24384a";
+  const accent = palette.accent || "rgba(255, 242, 208, 0.42)";
+  ellipse(x, y + 9, 15, 6, "rgba(38, 23, 17, 0.36)");
+  roundedRect(x - 12, y - 11, 24, 23, 8, "#2b1711");
+  roundedRect(x - 11, y - 8, 22, 18, 6, palette.shirt);
+  rect(x - 9, y - 8, 18, 2, "rgba(255, 242, 208, 0.24)");
+  rect(x - 3, y - 6, 6, 15, accent);
+  rect(x - 8, y - 3, 5, 3, "rgba(255, 242, 208, 0.34)");
+  circle(x, y - 16, 10, COLORS.line);
+  circle(x, y - 16, 8, skin);
+  roundedRect(x - 8, y - 25, 16, 9, 5, palette.hair);
+  rect(x - 9, y - 19, 18, 4, palette.hair);
+  roundedRect(x - 11, y - 5, 4, 12, 3, skin);
+  roundedRect(x + 7, y - 5, 4, 12, 3, skin);
+  roundedRect(x - 7, y + 6, 6, 10, 3, pants);
+  roundedRect(x + 1, y + 6, 6, 10, 3, pants);
   circle(x - 2, y - 14, 1, "#203544");
   circle(x + 3, y - 14, 1, "#203544");
 
@@ -6157,11 +6893,18 @@ function drawGuest(guest) {
 }
 
 function drawSeatedGuest(guest, x, y) {
-  ellipse(x, y + 8, 12, 4, "rgba(58, 36, 24, 0.22)");
-  rect(x - 11, y - 3, 22, 14, "#557c8c");
-  rect(x - 8, y - 7, 16, 8, "#6a9aa2");
-  circle(x, y - 17, 8, "#f0c090");
-  roundedRect(x - 9, y - 25, 18, 8, 4, guest.palette.hair);
+  const palette = guest.palette || guestPalettes[0];
+  const skin = palette.skin || "#f0c090";
+  ellipse(x, y + 8, 14, 5, "rgba(38, 23, 17, 0.34)");
+  rect(x - 12, y - 4, 24, 16, "#2b1711");
+  rect(x - 10, y - 3, 20, 14, palette.pants || "#557c8c");
+  rect(x - 8, y - 8, 16, 9, palette.shirt);
+  rect(x - 3, y - 7, 6, 8, palette.accent || "rgba(255, 242, 208, 0.28)");
+  circle(x, y - 17, 10, COLORS.line);
+  circle(x, y - 17, 8, skin);
+  roundedRect(x - 9, y - 25, 18, 8, 4, palette.hair);
+  rect(x - 8, y - 20, 16, 4, palette.hair);
+  rect(x - 6, y - 21, 12, 3, "rgba(255, 242, 208, 0.28)");
   rect(x - 4, y - 12, 8, 4, "#d99a65");
   if (guest.demand) {
     drawDemandBubble(guest);
@@ -6720,6 +7463,50 @@ function drawHiringPanel() {
   text("\u5173\u95ed", ui.closeHiringButton.x + ui.closeHiringButton.w / 2, ui.closeHiringButton.y + 4, 12, COLORS.text, "bold", "center");
 }
 
+function drawLedgerPanel() {
+  if (!state.ledgerOpen) return;
+  ensureDailyLedger();
+
+  rect(0, 0, view.width, view.height, "rgba(20, 18, 16, 0.72)");
+  const panel = {
+    x: 20,
+    y: HUD_HEIGHT + 16,
+    w: view.width - 40,
+    h: Math.min(view.height - HUD_HEIGHT - ACTION_BAR_HEIGHT - 34, 360)
+  };
+  pixelPanel(panel.x, panel.y, panel.w, panel.h, "#fff2d0", "#e8c97a", COLORS.line);
+  text("\u5427\u53f0\u8d26\u672c", panel.x + panel.w / 2, panel.y + 14, 18, COLORS.line, "bold", "center");
+  text(`${getWeekdayName()}  ${getCurrentMonth()}\u6708${getCurrentDayOfMonth()}\u65e5  \u622a\u6b62 ${String(getCurrentHour()).padStart(2, "0")}:00`, panel.x + panel.w / 2, panel.y + 42, 12, "#7b5634", "bold", "center");
+
+  const rows = [
+    { label: "\u7f51\u8d39\u6536\u76ca", value: state.dailyLedger.internet }
+  ];
+  products.forEach((product) => {
+    const value = state.dailyLedger.products[product.id] || 0;
+    if (value > 0) rows.push({ label: `${product.name}\u6d88\u8d39`, value });
+  });
+  rows.push({ label: "\u966a\u73a9\u6536\u76ca", value: state.dailyLedger.companion });
+
+  const rowY = panel.y + 72;
+  const rowH = Math.max(18, Math.min(25, Math.floor((panel.h - 160) / Math.max(1, rows.length))));
+  rows.forEach((row, index) => {
+    const y = rowY + index * rowH;
+    rect(panel.x + 16, y - 4, panel.w - 32, Math.max(14, rowH - 5), index % 2 === 0 ? "#f6e4b8" : "#ead19a");
+    text(row.label, panel.x + 26, y, 12, COLORS.line, "bold");
+    text(`${row.value}\u5143`, panel.x + panel.w - 28, y, 12, row.value > 0 ? COLORS.red : "#7b5634", "bold", "right");
+  });
+
+  const totalY = panel.y + panel.h - 78;
+  rect(panel.x + 16, totalY, panel.w - 32, 34, COLORS.counter);
+  strokeRect(panel.x + 16, totalY, panel.w - 32, 34, COLORS.line, 3);
+  text("\u4eca\u65e5\u5408\u8ba1", panel.x + 30, totalY + 8, 14, COLORS.text, "bold");
+  text(`${state.dailyLedger.total}\u5143`, panel.x + panel.w - 30, totalY + 8, 14, COLORS.yellow, "bold", "right");
+  text("\u8fc7\u4e86 24 \u70b9\u4f1a\u81ea\u52a8\u6e05\u96f6\uff0c\u4e0d\u7559\u5386\u53f2\u8bb0\u5f55\u3002", panel.x + panel.w / 2, totalY + 42, 10, "#7b5634", "bold", "center");
+
+  ui.closeLedgerButton = { x: panel.x + panel.w - 66, y: panel.y + panel.h - 36, w: 48, h: 26 };
+  drawWidePanelButton(ui.closeLedgerButton, "\u5173\u95ed", "#7f5635");
+}
+
 function drawExpansionPanel() {
   if (!state.expansionOpen) return;
 
@@ -6873,7 +7660,7 @@ function drawLayoutPanel() {
     x: 22,
     y: HUD_HEIGHT + 34,
     w: view.width - 44,
-    h: 316
+    h: 354
   };
 
   rect(panel.x, panel.y, panel.w, panel.h, "#f0c98a");
@@ -6918,6 +7705,14 @@ function drawLayoutPanel() {
       x: fullX,
       y: panel.y + 186,
       w: fullW,
+      mode: "toiletMove",
+      label: "\u79fb\u52a8\u5395\u6240",
+      message: "\u5e03\u5c40\uff1a\u62d6\u52a8\u5730\u56fe\u5bf9\u51c6\u5395\u6240\u9884\u89c8\u6846\uff0c\u70b9\u5730\u56fe\u786e\u8ba4\u4f4d\u7f6e\u3002"
+    },
+    {
+      x: fullX,
+      y: panel.y + 224,
+      w: fullW,
       mode: "off",
       label: "\u9000\u51fa\u5e03\u5c40",
       message: "\u5df2\u9000\u51fa\u5e03\u5c40\u6a21\u5f0f\u3002"
@@ -6950,7 +7745,8 @@ function getLayoutModeLabel(mode) {
     floor: "\u94fa\u516c\u533a\u5730\u7816",
     partition: "\u6446\u653e\u9694\u65ad",
     partitionMove: "\u79fb\u52a8\u9694\u65ad",
-    propMove: "\u79fb\u52a8\u9053\u5177"
+    propMove: "\u79fb\u52a8\u9053\u5177",
+    toiletMove: "\u79fb\u52a8\u5395\u6240"
   }[mode] || "\u672a\u5f00\u542f";
 }
 
@@ -7110,7 +7906,7 @@ function drawSettingsPanel() {
     x: 22,
     y: HUD_HEIGHT + 34,
     w: view.width - 44,
-    h: Math.min(view.height - HUD_HEIGHT - 28, 390)
+    h: Math.min(view.height - HUD_HEIGHT - 28, 472)
   };
 
   rect(panel.x, panel.y, panel.w, panel.h, "#f0c98a");
@@ -7128,11 +7924,33 @@ function drawSettingsPanel() {
   text(`\u5f53\u524d\uff1a${modeLabel}`, panel.x + 24, panel.y + 66, 15, COLORS.line, "bold");
   text(modeDesc, panel.x + 24, panel.y + 93, 11, "#5d4532", "bold");
 
-  ui.toggleTestModeButton = { x: panel.x + 18, y: panel.y + 140, w: panel.w - 36, h: 32 };
-  ui.toggleMusicButton = { x: panel.x + 18, y: panel.y + 180, w: panel.w - 36, h: 32 };
-  ui.toggleSfxButton = { x: panel.x + 18, y: panel.y + 220, w: panel.w - 36, h: 32 };
-  ui.pricingButton = { x: panel.x + 18, y: panel.y + 260, w: panel.w - 36, h: 32 };
-  ui.saveGameButton = { x: panel.x + 18, y: panel.y + 300, w: panel.w - 36, h: 32 };
+  const versionBox = { x: panel.x + 12, y: panel.y + 136, w: panel.w - 24, h: 72 };
+  rect(versionBox.x, versionBox.y, versionBox.w, versionBox.h, "#f7dba5");
+  strokeRect(versionBox.x, versionBox.y, versionBox.w, versionBox.h, "#9a7043", 2);
+  rect(versionBox.x + 4, versionBox.y + 4, versionBox.w - 8, 18, "#8c4f35");
+  text("\u5ea7\u4f4d\u7248\u672c\u66f4\u65b0", versionBox.x + 12, versionBox.y + 7, 12, COLORS.text, "bold");
+  text(
+    `\u5ea7\u4f4d\u7248\u672c\u53f7\uff1a${SEAT_LAYOUT_VERSION.stage}${SEAT_LAYOUT_VERSION.code}`,
+    versionBox.x + 12,
+    versionBox.y + 30,
+    11,
+    COLORS.line,
+    "bold"
+  );
+  text(
+    `\u4fee\u6539\u65f6\u95f4\uff1a${SEAT_LAYOUT_VERSION.modifiedAt}`,
+    versionBox.x + 12,
+    versionBox.y + 50,
+    11,
+    "#5d4532",
+    "bold"
+  );
+
+  ui.toggleTestModeButton = { x: panel.x + 18, y: panel.y + 220, w: panel.w - 36, h: 32 };
+  ui.toggleMusicButton = { x: panel.x + 18, y: panel.y + 256, w: panel.w - 36, h: 32 };
+  ui.toggleSfxButton = { x: panel.x + 18, y: panel.y + 292, w: panel.w - 36, h: 32 };
+  ui.pricingButton = { x: panel.x + 18, y: panel.y + 328, w: panel.w - 36, h: 32 };
+  ui.saveGameButton = { x: panel.x + 18, y: panel.y + 364, w: panel.w - 36, h: 32 };
   ui.clearSaveButton = { x: panel.x + 18, y: panel.y + panel.h - 42, w: panel.w - 94, h: 30 };
   ui.closeSettingsButton = { x: panel.x + panel.w - 66, y: panel.y + panel.h - 42, w: 48, h: 30 };
 
@@ -7450,6 +8268,7 @@ function render() {
   drawProcurementPanel();
   drawWarehousePanel();
   drawHiringPanel();
+  drawLedgerPanel();
   drawExpansionPanel();
   drawLayoutPanel();
   drawEquipmentPanel();
@@ -7506,4 +8325,3 @@ try {
   drawFatalError(error);
   throw error;
 }
-
