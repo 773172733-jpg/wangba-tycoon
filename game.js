@@ -296,7 +296,7 @@ function createLayout() {
 
   const pcTop = counter.y + 126;
   const pcGapX = room.w * 0.24;
-  const pcGapY = 80;
+  const pcGapY = 136;
   const pcLeft = room.x + room.w * 0.28;
 
   const pcs = [
@@ -2734,7 +2734,7 @@ function getPcDeskBounds(pc) {
     x: pc.x - 5,
     y: pc.y - 8,
     w: pc.w + 10,
-    h: pc.h + 38
+    h: pc.h + 20
   };
 }
 
