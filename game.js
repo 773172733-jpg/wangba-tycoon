@@ -19,11 +19,11 @@ const AUDIO_SOURCES = {
   click: "audio/click.wav"
 };
 const CODE_DRAWN_VISUALS_ONLY = true;
-const GAME_VERSION = "Beta06240104C";
+const GAME_VERSION = "Beta06240115C";
 const SEAT_LAYOUT_VERSION = {
   stage: "Bate",
-  modifiedAt: "2026-06-24 01:04",
-  code: "06240104"
+  modifiedAt: "2026-06-24 01:15",
+  code: "06240115"
 };
 const PLAY_PROGRESS_COLOR = "#e83f3f";
 const STUCK_REROUTE_SECONDS = 0.65;
@@ -331,8 +331,9 @@ function createLayout() {
     cashier: { x: counter.x + counter.w - 22, y: counter.y + counter.h - 8 },
     floor: { x: room.x + 34, y: room.y + room.h - 76 },
     cleaner: { x: room.x + room.w - 34, y: room.y + room.h - 76 },
-    repairman: { x: room.x + room.w - 72, y: room.y + room.h - 76 },
-    manager: { x: counter.x + counter.w * 0.56, y: counter.y + 24 },
+    // Manager and repairman stand parallel behind the counter with clear separation.
+    manager: { x: counter.x + counter.w * 0.28, y: counter.y + 22 },
+    repairman: { x: counter.x + counter.w * 0.62, y: counter.y + 22 },
     companion: { x: room.x + room.w - 70, y: room.y + 90 }
   };
 
@@ -891,7 +892,7 @@ function getMovablePropDefinitions() {
     {
       id: "happySign",
       name: "\u5feb\u4e50\u4e0a\u7f51\u724c",
-      x: room.x + room.w - 150,
+      x: room.x + 228,
       y: room.y + 18,
       w: 52,
       h: 38,
@@ -902,12 +903,13 @@ function getMovablePropDefinitions() {
     {
       id: "starterPlant",
       name: "\u521d\u59cb\u76c6\u683d",
-      x: room.x + room.w - 78,
-      y: room.y + room.h - 90,
-      w: 58,
-      h: 78,
+      x: room.x + room.w - 136,
+      y: room.y + 14,
+      w: 40,
+      h: 54,
       movable: true,
-      sellable: false
+      sellable: false,
+      placement: "free"
     }
   ];
   return _movablePropDefsCache;
@@ -4390,11 +4392,7 @@ function getPcMovementBounds(pc) {
 }
 
 function getPropMovementBounds(prop) {
-  const bounds = getMovablePropHitBounds(prop);
-  if (prop && prop.id === "starterPlant") {
-    return getCenteredScaledRect(bounds, SOFT_MOVEMENT_COLLISION_SCALE);
-  }
-  return bounds;
+  return getMovablePropHitBounds(prop);
 }
 
 // Per-frame cache for the default (no entity overrides) movement blocking rects.
