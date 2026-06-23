@@ -2406,10 +2406,29 @@ function cleanToilet() {
 }
 
 function getToiletServicePoint() {
+  const pairs = getAttachableAreas()
+    .filter((area) => area.id !== layout.toilet.id && sharesWall(area, layout.toilet));
+  for (let index = 0; index < pairs.length; index += 1) {
+    const door = getDoorGeometryBetween(pairs[index], layout.toilet);
+    if (door) {
+      return getDoorInnerPoint(pairs[index], layout.toilet) || door.center;
+    }
+  }
   return {
     x: layout.toilet.x + layout.toilet.w / 2,
     y: layout.toilet.y + layout.toilet.h - 26
   };
+}
+
+function hasReachedToiletService(entity) {
+  if (!entity) return false;
+  const servicePoint = getToiletServicePoint();
+  if (distance(entity, servicePoint) <= 28) return true;
+  const doorArea = getAttachableAreas()
+    .filter((area) => area.id !== layout.toilet.id && sharesWall(area, layout.toilet))
+    .map((area) => getDoorGeometryBetween(area, layout.toilet))
+    .filter(Boolean)[0];
+  return Boolean(doorArea && distance(entity, doorArea.center) <= 24);
 }
 
 function pickWeightedDemandProductId(guest, pc) {
@@ -2986,7 +3005,9 @@ function createWorker(type) {
     taskTimer: 0,
     targetPcId: null,
     targetGuestId: null,
-    targetProductId: null
+    targetProductId: null,
+    idleTarget: null,
+    idleTimer: 0
   };
   const home = getWorkerHome(worker);
   worker.x = home.x;
@@ -3048,25 +3069,55 @@ function getWorkerHome(worker) {
 }
 
 function getWorkerPatrolPoint(worker, offset) {
-  const room = layout.room;
-  const patrolAreas = [room].concat(state.publicFloors || []);
-  const patrolPoints = [];
+  const patrolPoints = getWorkerPatrolPoints();
+  if (!patrolPoints.length) {
+    const room = layout.room;
+    return getAreaSafePoint(room, room.x + room.w / 2, room.y + room.h / 2);
+  }
+  const step = Math.floor((state.time || 0) / 5 + (worker.homeIndex || 0) * 2 + offset) % patrolPoints.length;
+  return patrolPoints[step];
+}
+
+function getWorkerPatrolPoints() {
+  const patrolAreas = [layout.room].concat(state.publicFloors || []);
+  const points = [];
   patrolAreas.forEach((area, areaIndex) => {
     [
-      { x: area.x + area.w * 0.22, y: area.y + area.h * 0.28 },
-      { x: area.x + area.w * 0.78, y: area.y + area.h * 0.28 },
-      { x: area.x + area.w * 0.78, y: area.y + area.h * 0.76 },
-      { x: area.x + area.w * 0.22, y: area.y + area.h * 0.76 },
+      { x: area.x + area.w * 0.2, y: area.y + area.h * 0.24 },
+      { x: area.x + area.w * 0.5, y: area.y + area.h * 0.24 },
+      { x: area.x + area.w * 0.8, y: area.y + area.h * 0.24 },
+      { x: area.x + area.w * 0.8, y: area.y + area.h * 0.52 },
+      { x: area.x + area.w * 0.8, y: area.y + area.h * 0.78 },
+      { x: area.x + area.w * 0.5, y: area.y + area.h * 0.78 },
+      { x: area.x + area.w * 0.2, y: area.y + area.h * 0.78 },
+      { x: area.x + area.w * 0.2, y: area.y + area.h * 0.52 },
       { x: area.x + area.w * 0.5, y: area.y + area.h * 0.52 }
     ].forEach((point) => {
       const safe = getAreaSafePoint(area, point.x, point.y);
-      if (safe && !isStationTooCloseToToilet(safe) && !isPointTooCloseToPlacementSolid(safe, PERSON_PATH_MIN_WIDTH + 8)) {
-        patrolPoints.push(Object.assign({ areaIndex }, safe));
+      if (safe && !isStationTooCloseToToilet(safe) && !isPointTooCloseToPlacementSolid(safe, PERSON_PATH_MIN_WIDTH)) {
+        points.push(Object.assign({ areaIndex }, safe));
       }
     });
   });
-  const step = Math.floor((state.time || 0) / 5 + (worker.homeIndex || 0) * 2 + offset) % patrolPoints.length;
-  return patrolPoints[step] || getAreaSafePoint(room, room.x + room.w / 2, room.y + room.h / 2);
+  return points;
+}
+
+function shouldWorkerRoam(worker) {
+  return worker && ["floor", "cleaner", "repairman", "companion"].includes(worker.type);
+}
+
+function getWorkerRoamTarget(worker) {
+  if (!shouldWorkerRoam(worker)) return getWorkerHome(worker);
+  const points = getWorkerPatrolPoints();
+  if (!points.length) return getWorkerHome(worker);
+  const current = worker.idleTarget;
+  const currentIndex = current ? points.findIndex((point) => Math.hypot(point.x - current.x, point.y - current.y) < 2) : -1;
+  const nextIndex = currentIndex >= 0
+    ? (currentIndex + 3 + (worker.homeIndex || 0)) % points.length
+    : (worker.id + Math.floor((state.time || 0) / 7)) % points.length;
+  worker.idleTarget = points[nextIndex];
+  worker.idleTimer = 0;
+  return worker.idleTarget;
 }
 
 function isStationTooCloseToToilet(point) {
@@ -4644,7 +4695,7 @@ function moveToPcSeat(entity, pc, speed, dt) {
   const previousIgnoredPcId = entity.movementIgnorePcId;
   entity.movementIgnorePcId = pc.id;
   const seat = { x: pc.seatX, y: pc.seatY };
-  if (distance(entity, seat) <= 18) {
+  if (distance(entity, seat) <= 22) {
     entity.x = seat.x;
     entity.y = seat.y;
     entity.detourPoint = null;
@@ -4654,7 +4705,7 @@ function moveToPcSeat(entity, pc, speed, dt) {
   }
 
   const accessPoint = getPcAccessPoint(pc);
-  if (distance(entity, accessPoint) <= 18 || (entity.stuckTimer || 0) > 0.45 && distance(entity, seat) <= 34) {
+  if (distance(entity, accessPoint) <= 30 || (entity.stuckTimer || 0) > 0.45 && distance(entity, seat) <= 44) {
     entity.x = seat.x;
     entity.y = seat.y;
     entity.detourPoint = null;
@@ -4666,6 +4717,11 @@ function moveToPcSeat(entity, pc, speed, dt) {
   moveToward(entity, accessPoint, speed, dt);
   entity.movementIgnorePcId = previousIgnoredPcId;
   return false;
+}
+
+function isCloseEnoughToServicePc(entity, pc) {
+  if (!entity || !pc) return false;
+  return distance(entity, getPcAccessPoint(pc)) <= 36 || distance(entity, { x: pc.seatX, y: pc.seatY }) <= 42;
 }
 
 function findFreePc(guest = null) {
@@ -5176,7 +5232,7 @@ function getGuestDeliveryPoint(guest) {
 
 function isWorkerCloseEnoughToDeliver(worker, guest, target) {
   if (!worker || !guest || !target) return false;
-  return distance(worker, target) <= 24 || distance(worker, guest) <= 52;
+  return distance(worker, target) <= 18 || distance(worker, guest) <= 24;
 }
 
 function canServeDemandAutomatically(guest, worker) {
@@ -5233,13 +5289,7 @@ function assignFloorMopTask(worker) {
 
 function getFloorMopPoint(worker) {
   const room = layout.room;
-  const candidates = [
-    { x: room.x + room.w * 0.28, y: room.y + room.h * 0.72 },
-    { x: room.x + room.w * 0.72, y: room.y + room.h * 0.72 },
-    { x: room.x + room.w * 0.28, y: room.y + room.h * 0.48 },
-    { x: room.x + room.w * 0.72, y: room.y + room.h * 0.48 },
-    { x: room.x + room.w * 0.5, y: room.y + room.h * 0.8 }
-  ].map((point) => getAreaSafePoint(room, point.x, point.y));
+  const candidates = getWorkerPatrolPoints();
   const start = worker.homeIndex || 0;
   for (let offset = 0; offset < candidates.length; offset += 1) {
     const point = candidates[(start + offset) % candidates.length];
@@ -5254,22 +5304,33 @@ function updateWorkers(dt) {
 
   state.workers.forEach((worker) => {
     if (worker.state === "station") {
-      const home = getWorkerHome(worker);
-      moveToward(worker, home, 36, dt);
+      if (shouldWorkerRoam(worker)) {
+        worker.idleTimer = (worker.idleTimer || 0) + dt;
+        const target = worker.idleTarget || getWorkerRoamTarget(worker);
+        const arrived = moveToward(worker, target, 36, dt);
+        if (arrived || distance(worker, target) <= 8 || worker.idleTimer > 7) {
+          getWorkerRoamTarget(worker);
+        }
+      } else {
+        const home = getWorkerHome(worker);
+        moveToward(worker, home, 36, dt);
+      }
       return;
     }
 
     if (worker.state === "toCleanPc") {
       worker.pathTimer = (worker.pathTimer || 0) + dt;
       const pc = layout.pcs[worker.targetPcId];
-      if (!pc || !pc.dirty || worker.pathTimer > 8) {
+      if (!pc || !pc.dirty) {
         resetWorker(worker);
         return;
       }
-      if (moveToPcSeat(worker, pc, 58, dt)) {
+      if (isCloseEnoughToServicePc(worker, pc) || moveToPcSeat(worker, pc, 58, dt)) {
         worker.state = "cleaningPc";
         worker.pathTimer = 0;
         worker.taskTimer = 1.6;
+      } else if (worker.pathTimer > 8) {
+        resetWorker(worker);
       }
       return;
     }
@@ -5277,14 +5338,16 @@ function updateWorkers(dt) {
     if (worker.state === "toRepairPc") {
       worker.pathTimer = (worker.pathTimer || 0) + dt;
       const pc = layout.pcs[worker.targetPcId];
-      if (!pc || !pc.broken || worker.pathTimer > 8) {
+      if (!pc || !pc.broken) {
         resetWorker(worker);
         return;
       }
-      if (moveToPcSeat(worker, pc, 58, dt)) {
+      if (isCloseEnoughToServicePc(worker, pc) || moveToPcSeat(worker, pc, 58, dt)) {
         worker.state = "repairingPc";
         worker.pathTimer = 0;
         worker.taskTimer = 1.25;
+      } else if (worker.pathTimer > 8) {
+        resetWorker(worker);
       }
       return;
     }
@@ -5319,7 +5382,7 @@ function updateWorkers(dt) {
         resetWorker(worker);
         return;
       }
-      if (moveToward(worker, getToiletServicePoint(), 58, dt)) {
+      if (moveToward(worker, getToiletServicePoint(), 58, dt) || hasReachedToiletService(worker)) {
         worker.state = "cleaningToilet";
         worker.pathTimer = 0;
         worker.taskTimer = 1.2;
@@ -5373,10 +5436,12 @@ function updateWorkers(dt) {
       const arrived = moveToward(worker, deliveryPoint, 62, dt);
       worker.movementIgnorePcId = previousIgnoredPcId;
 
-      if (arrived || isWorkerCloseEnoughToDeliver(worker, guest, deliveryPoint) || worker.pathTimer > 5.5) {
+      if (arrived || isWorkerCloseEnoughToDeliver(worker, guest, deliveryPoint)) {
         worker.state = "delivering";
         worker.pathTimer = 0;
         worker.taskTimer = 0.7;
+      } else if (worker.pathTimer > 8) {
+        resetWorker(worker);
       }
       return;
     }
@@ -5530,7 +5595,7 @@ function updateGuests(dt) {
     if (guest.state === "toToilet") {
       guest.pathTimer = (guest.pathTimer || 0) + dt;
       const arrived = moveToward(guest, getToiletServicePoint(), guest.speed, dt);
-      if (arrived) {
+      if (arrived || hasReachedToiletService(guest)) {
         guest.state = "usingToilet";
         guest.pathTimer = 0;
         guest.toiletTimer = random(3.2, 5.2);

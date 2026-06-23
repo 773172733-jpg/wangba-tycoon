@@ -106,7 +106,7 @@ const partitionTypes = [
     cost: 160,
     w: 24,
     h: 24,
-    blockMove: true,
+    blockMove: false,
     desc: "\u4fbf\u5b9c\u7eff\u5316\uff0c\u7528\u6765\u5207\u51fa\u5c0f\u533a\u57df\u3002"
   },
   {
