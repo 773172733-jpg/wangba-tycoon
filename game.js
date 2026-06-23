@@ -4106,6 +4106,12 @@ function distance(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
+function distanceToRect(point, rectValue) {
+  const dx = Math.max(rectValue.x - point.x, 0, point.x - (rectValue.x + rectValue.w));
+  const dy = Math.max(rectValue.y - point.y, 0, point.y - (rectValue.y + rectValue.h));
+  return Math.hypot(dx, dy);
+}
+
 function isPointInsideRect(x, y, area, padding = 0) {
   return x >= area.x - padding &&
     x <= area.x + area.w + padding &&
@@ -4964,7 +4970,9 @@ function moveToPcSeat(entity, pc, speed, dt) {
 
 function isCloseEnoughToServicePc(entity, pc) {
   if (!entity || !pc) return false;
-  return distance(entity, getPcAccessPoint(pc)) <= 36 || distance(entity, { x: pc.seatX, y: pc.seatY }) <= 42;
+  return distance(entity, getPcAccessPoint(pc)) <= 44 ||
+    distance(entity, { x: pc.seatX, y: pc.seatY }) <= 52 ||
+    distanceToRect(entity, getPcVisualBounds(pc)) <= 18;
 }
 
 function getPcServicePointCandidates(pc) {
@@ -4999,6 +5007,7 @@ function getBestPcServicePoint(entity, pc) {
 
 function moveToPcServicePoint(entity, pc, speed, dt) {
   if (!entity || !pc) return false;
+  if (isCloseEnoughToServicePc(entity, pc)) return true;
   const previousIgnoredPcId = entity.movementIgnorePcId;
   entity.movementIgnorePcId = pc.id;
   const servicePoint = getBestPcServicePoint(entity, pc);
@@ -5619,7 +5628,8 @@ function updateWorkers(dt) {
         resetWorker(worker);
         return;
       }
-      if (moveToPcServicePoint(worker, pc, 58, dt)) {
+      const nearDirtyPc = distanceToRect(worker, getPcVisualBounds(pc)) <= 34 && worker.pathTimer > 1.2;
+      if (nearDirtyPc || moveToPcServicePoint(worker, pc, 58, dt)) {
         worker.state = "cleaningPc";
         worker.pathTimer = 0;
         worker.taskTimer = 1.6;
@@ -5636,7 +5646,8 @@ function updateWorkers(dt) {
         resetWorker(worker);
         return;
       }
-      if (moveToPcServicePoint(worker, pc, 58, dt)) {
+      const nearBrokenPc = distanceToRect(worker, getPcVisualBounds(pc)) <= 34 && worker.pathTimer > 1.2;
+      if (nearBrokenPc || moveToPcServicePoint(worker, pc, 58, dt)) {
         worker.state = "repairingPc";
         worker.pathTimer = 0;
         worker.taskTimer = 1.25;
@@ -5676,7 +5687,9 @@ function updateWorkers(dt) {
         resetWorker(worker);
         return;
       }
-      if (moveToward(worker, getToiletServicePoint(), 58, dt) || hasReachedToiletService(worker)) {
+      const toiletBounds = { x: layout.toilet.x - 8, y: layout.toilet.y - 24, w: layout.toilet.w + 16, h: layout.toilet.h + 36 };
+      const nearToilet = distanceToRect(worker, toiletBounds) <= 28 && worker.pathTimer > 1.2;
+      if (nearToilet || moveToward(worker, getToiletServicePoint(), 58, dt) || hasReachedToiletService(worker)) {
         worker.state = "cleaningToilet";
         worker.pathTimer = 0;
         worker.taskTimer = 1.2;
