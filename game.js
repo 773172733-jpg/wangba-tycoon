@@ -1,10 +1,4 @@
-let screenCanvas;
-
-try {
-  screenCanvas = canvas;
-} catch (error) {
-  screenCanvas = wx.createCanvas();
-}
+let screenCanvas = (typeof canvas !== "undefined" && canvas) ? canvas : wx.createCanvas();
 
 const ctx = screenCanvas.getContext("2d");
 const systemInfo = wx.getSystemInfoSync();
@@ -31,7 +25,7 @@ const SEAT_LAYOUT_VERSION = {
   code: "06222226"
 };
 const PLAY_PROGRESS_COLOR = "#e83f3f";
-const STUCK_REROUTE_SECONDS = 3;
+const STUCK_REROUTE_SECONDS = 1.5;
 const PERSON_PATH_MIN_WIDTH = 24;
 const NAV_GRID_SIZE = 18;
 const PC_AUTO_ALIGN_DISTANCE = 18;
@@ -2415,9 +2409,10 @@ function getToiletServicePoint() {
       return getDoorInnerPoint(pairs[index], layout.toilet) || door.center;
     }
   }
+  const toilet = layout.toilet;
   return {
-    x: layout.toilet.x + layout.toilet.w / 2,
-    y: layout.toilet.y + layout.toilet.h - 26
+    x: toilet.x + toilet.w / 2,
+    y: toilet.y + toilet.h + 20
   };
 }
 
@@ -3110,9 +3105,12 @@ function getWorkerPatrolPoints() {
       { x: area.x + area.w * 0.5, y: area.y + area.h * 0.52 }
     ].forEach((point) => {
       const safe = getAreaSafePoint(area, point.x, point.y);
-      if (safe && !isStationTooCloseToToilet(safe) && !isPointTooCloseToPlacementSolid(safe, PERSON_PATH_MIN_WIDTH)) {
-        points.push(Object.assign({ areaIndex }, safe));
-      }
+      if (!safe) return;
+      if (isStationTooCloseToToilet(safe)) return;
+      if (isPointTooCloseToPlacementSolid(safe, PERSON_PATH_MIN_WIDTH)) return;
+      if (isWalkBlockingPoint(safe.x, safe.y)) return;
+      if (!getWalkableAreaAtPoint(safe.x, safe.y)) return;
+      points.push(Object.assign({ areaIndex }, safe));
     });
   });
   return points;
@@ -5517,6 +5515,9 @@ function updateWorkers(dt) {
         const target = worker.idleTarget || getWorkerRoamTarget(worker);
         const arrived = moveToward(worker, target, 36, dt);
         if (arrived || distance(worker, target) <= 8 || worker.idleTimer > 7) {
+          worker.stuckTimer = 0;
+          worker.detourPoint = null;
+          clearEntityNavigation(worker);
           getWorkerRoamTarget(worker);
         }
       } else {
@@ -8427,8 +8428,7 @@ function drawWorker(worker) {
 }
 
 function drawLegend() {
-  return;
-  text("入口", layout.room.x + 8, layout.entrance.y - 46, 11, COLORS.red, "bold");
+  // 暂不显示入口标注。
 }
 
 function drawIndoorDetailsModern() {
@@ -8560,7 +8560,7 @@ function render() {
 
 function loop() {
   const now = Date.now();
-  const dt = Math.min(0.05, (now - lastFrameAt) / 1000);
+  const dt = Math.min(0.1, (now - lastFrameAt) / 1000);
   lastFrameAt = now;
 
   update(dt);
