@@ -19,17 +19,21 @@ const AUDIO_SOURCES = {
   click: "audio/click.wav"
 };
 const CODE_DRAWN_VISUALS_ONLY = true;
+const GAME_VERSION = "Beta06240050C";
 const SEAT_LAYOUT_VERSION = {
   stage: "Bate",
-  modifiedAt: "2026-06-22 22:26",
-  code: "06222226"
+  modifiedAt: "2026-06-24 00:50",
+  code: "06240050"
 };
 const PLAY_PROGRESS_COLOR = "#e83f3f";
-const STUCK_REROUTE_SECONDS = 1.5;
+const STUCK_REROUTE_SECONDS = 0.65;
 const PERSON_PATH_MIN_WIDTH = 24;
-const NAV_GRID_SIZE = 18;
+const NAV_GRID_SIZE = 12;
+const SOFT_MOVEMENT_COLLISION_SCALE = 2 / 3;
+const PERSON_VISUAL_SCALE = 2 / 3;
 const PC_AUTO_ALIGN_DISTANCE = 18;
 const MANUAL_CHECKIN_DURATION = 1.25;
+const DEMAND_WAIT_SECONDS = 60;
 const BASE_OPERATIONAL_PCS = 4;
 const MAX_OPERATIONAL_PCS = 96;
 const WORLD_EXPANSION_MARGIN = 620;
@@ -83,6 +87,7 @@ const state = {
   cafeLevel: 1,
   equipmentLevel: 1,
   cleanliness: 100,
+  satisfaction: 100,
   served: 0,
   lost: 0,
   time: 0,
@@ -167,6 +172,8 @@ const state = {
   workers: [],
   mahjongTables: [],
   publicFloors: [],
+  purchasedFloorTileCount: 0,
+  floorLayoutSession: null,
   partitions: [],
   propPositions: {},
   inventory: {},
@@ -257,6 +264,7 @@ const touchState = {
 };
 
 function createLayout() {
+  invalidateMovablePropDefsCache();
   const roomY = HUD_HEIGHT + WORLD_TOP_MARGIN + 18;
   const roomW = Math.max(360, ceilToMultiple(view.width - 36, PUBLIC_FLOOR_SIZE));
   const targetRoomH = Math.max(420, Math.min(view.height - roomY - ACTION_BAR_HEIGHT - 48, view.width * 1.28));
@@ -296,7 +304,7 @@ function createLayout() {
 
   const pcTop = counter.y + 126;
   const pcGapX = room.w * 0.24;
-  const pcGapY = 136;
+  const pcGapY = 148;
   const pcLeft = room.x + room.w * 0.28;
 
   const pcs = [
@@ -837,10 +845,17 @@ function getPartitionAtPoint(x, y) {
   return null;
 }
 
+let _movablePropDefsCache = null;
+
+function invalidateMovablePropDefsCache() {
+  _movablePropDefsCache = null;
+}
+
 function getMovablePropDefinitions() {
+  if (_movablePropDefsCache) return _movablePropDefsCache;
   const room = layout.room;
   const counter = layout.counter;
-  return [
+  _movablePropDefsCache = [
     {
       id: "counter",
       name: "\u524d\u53f0",
@@ -895,6 +910,7 @@ function getMovablePropDefinitions() {
       sellable: false
     }
   ];
+  return _movablePropDefsCache;
 }
 
 function getMovablePropDefinition(propId) {
@@ -1015,7 +1031,125 @@ function handleLayoutTouch(worldX, worldY) {
   return true;
 }
 
+function clonePublicFloors(floors) {
+  return (floors || []).map((floor) => Object.assign({}, floor));
+}
+
+function getFloorTileOwnedCount() {
+  if (state.floorLayoutSession) return state.floorLayoutSession.ownedCount;
+  return Math.max(state.purchasedFloorTileCount || 0, state.publicFloors.length);
+}
+
+function beginFloorLayoutSession() {
+  if (state.floorLayoutSession) return;
+  const ownedCount = getFloorTileOwnedCount();
+  state.purchasedFloorTileCount = Math.max(state.purchasedFloorTileCount || 0, ownedCount);
+  state.floorLayoutSession = {
+    originalFloors: clonePublicFloors(state.publicFloors),
+    ownedCount,
+    startedCount: state.publicFloors.length
+  };
+}
+
+function getFloorLayoutExtraCount(count = state.publicFloors.length) {
+  return Math.max(0, count - getFloorTileOwnedCount());
+}
+
+function getFloorLayoutExtraCost(count = state.publicFloors.length) {
+  return getFloorLayoutExtraCount(count) * PUBLIC_FLOOR_COST;
+}
+
+function getFloorLayoutPlacedCount() {
+  return state.publicFloors.length;
+}
+
+function getFloorLayoutSessionCostText() {
+  const extraCount = getFloorLayoutExtraCount();
+  const cost = getFloorLayoutExtraCost();
+  return {
+    placedCount: getFloorLayoutPlacedCount(),
+    ownedCount: getFloorTileOwnedCount(),
+    extraCount,
+    cost
+  };
+}
+
+function enterFloorLayoutMode() {
+  beginFloorLayoutSession();
+  state.layoutToolActive = true;
+  state.layoutMode = "floor";
+  state.selectedAreaId = null;
+  state.selectedPcId = null;
+  state.selectedPartitionId = null;
+  state.selectedPropId = null;
+  state.pendingPartitionTypeId = null;
+}
+
+function finishFloorLayoutSession() {
+  if (!state.floorLayoutSession) {
+    state.layoutToolActive = false;
+    state.layoutMode = "off";
+    say("\u5df2\u9000\u51fa\u5e03\u5c40\u64cd\u4f5c\u3002");
+    return true;
+  }
+
+  const summary = getFloorLayoutSessionCostText();
+  if (summary.cost > state.cash) {
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u672c\u6b21\u65b0\u589e ${summary.extraCount} \u5757\u5730\u7816\u9700\u8981 ${summary.cost} \u5143\u3002`);
+    return false;
+  }
+
+  const applyExit = () => {
+    if (summary.cost > 0) {
+      state.cash -= summary.cost;
+    }
+    state.purchasedFloorTileCount = Math.max(state.floorLayoutSession.ownedCount, state.publicFloors.length);
+    state.floorLayoutSession = null;
+    state.layoutToolActive = false;
+    state.layoutMode = "off";
+    state.selectedAreaId = null;
+    state.selectedPcId = null;
+    state.selectedPartitionId = null;
+    state.selectedPropId = null;
+    markSaveDirty();
+    say(summary.extraCount > 0
+      ? `\u5df2\u786e\u8ba4\u94fa\u8bbe ${summary.placedCount} \u5757\u5730\u7816\uff0c\u65b0\u589e ${summary.extraCount} \u5757\uff0c\u82b1\u8d39 ${summary.cost} \u5143\u3002`
+      : `\u5df2\u8c03\u6574\u5730\u7816\u5e03\u5c40\uff0c\u5f53\u524d\u94fa\u8bbe ${summary.placedCount} \u5757\u3002`);
+  };
+
+  if (summary.extraCount > 0) {
+    openConfirmDialog(
+      "\u786e\u8ba4\u94fa\u7816",
+      `\u672c\u6b21\u603b\u94fa\u8bbe ${summary.placedCount} \u5757\u5730\u7816\uff0c\u5df2\u8d2d ${summary.ownedCount} \u5757\uff0c\u65b0\u589e\u8d2d\u4e70 ${summary.extraCount} \u5757\uff0c\u603b\u8ba1\u82b1\u8d39 ${summary.cost} \u5143\u3002\u786e\u8ba4\u8d2d\u4e70\u5e76\u9000\u51fa\u5e03\u5c40\u5417\uff1f`,
+      applyExit,
+      () => {
+        const session = state.floorLayoutSession;
+        if (session) {
+          state.publicFloors = clonePublicFloors(session.originalFloors);
+        }
+        state.floorLayoutSession = null;
+        state.layoutToolActive = false;
+        state.layoutMode = "off";
+        state.selectedAreaId = null;
+        state.selectedPcId = null;
+        state.selectedPartitionId = null;
+        state.selectedPropId = null;
+        say("\u5df2\u53d6\u6d88\u672c\u6b21\u94fa\u7816\uff0c\u6062\u590d\u539f\u6765\u7684\u5730\u7816\u5e03\u5c40\u3002");
+      }
+    );
+    return false;
+  }
+
+  applyExit();
+  return true;
+}
+
+function getPublicFloorDraftCountAfterAdd() {
+  return state.publicFloors.length + 1;
+}
+
 function addPublicFloor(worldX, worldY) {
+  beginFloorLayoutSession();
   const existingIndex = state.publicFloors.findIndex((item) => (
     worldX >= item.x &&
     worldX <= item.x + item.w &&
@@ -1024,13 +1158,14 @@ function addPublicFloor(worldX, worldY) {
   ));
   if (existingIndex >= 0) {
     state.publicFloors.splice(existingIndex, 1);
-    markSaveDirty();
-    say("\u5df2\u79fb\u9664\u8fd9\u5757\u516c\u533a\u5730\u7816\u3002");
+    const summary = getFloorLayoutSessionCostText();
+    say(`\u5df2\u79fb\u9664\u8fd9\u5757\u516c\u533a\u5730\u7816\u3002\u5f53\u524d ${summary.placedCount} \u5757\uff0c\u5f85\u652f\u4ed8 ${summary.cost} \u5143\u3002`);
     return;
   }
 
-  if (state.cash < PUBLIC_FLOOR_COST) {
-    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u94fa\u4e00\u5757\u5730\u7816\u9700\u8981 ${PUBLIC_FLOOR_COST} \u5143\u3002`);
+  const projectedCost = getFloorLayoutExtraCost(getPublicFloorDraftCountAfterAdd());
+  if (projectedCost > state.cash) {
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u672c\u6b21\u94fa\u8bbe\u540e\u9700\u652f\u4ed8 ${projectedCost} \u5143\u3002`);
     return;
   }
 
@@ -1048,10 +1183,11 @@ function addPublicFloor(worldX, worldY) {
   candidate.floor.id = `floor-${candidate.floor.x}-${candidate.floor.y}`;
   candidate.floor.typeId = "publicFloor";
   candidate.floor.name = "\u516c\u533a\u5730\u7816";
-  state.cash -= PUBLIC_FLOOR_COST;
   state.publicFloors.push(candidate.floor);
-  markSaveDirty();
-  say(candidate.hostType === "floor" ? `\u516c\u533a\u8fc7\u9053\u5df2\u5ef6\u5c55\uff0c\u82b1\u8d39 ${PUBLIC_FLOOR_COST}\u3002` : `\u5df2\u94fa\u8bbe\u5730\u7816\uff0c\u82b1\u8d39 ${PUBLIC_FLOOR_COST}\u3002`);
+  const summary = getFloorLayoutSessionCostText();
+  say(candidate.hostType === "floor"
+    ? `\u516c\u533a\u8fc7\u9053\u5df2\u5ef6\u5c55\u3002\u672c\u6b21\u65b0\u589e ${summary.extraCount} \u5757\uff0c\u5f85\u652f\u4ed8 ${summary.cost} \u5143\u3002`
+    : `\u5df2\u94fa\u8bbe\u5730\u7816\u3002\u672c\u6b21\u65b0\u589e ${summary.extraCount} \u5757\uff0c\u5f85\u652f\u4ed8 ${summary.cost} \u5143\u3002`);
 }
 
 function addPartition(worldX, worldY) {
@@ -1968,12 +2104,16 @@ function toggleSfxEnabled() {
 }
 
 function buildSaveData() {
+  const savedPublicFloors = state.floorLayoutSession
+    ? state.floorLayoutSession.originalFloors
+    : state.publicFloors;
   return {
     version: 1,
     cash: state.cash,
     cafeLevel: state.cafeLevel,
     equipmentLevel: state.equipmentLevel,
     cleanliness: state.cleanliness,
+    satisfaction: state.satisfaction,
     served: state.served,
     lost: state.lost,
     time: state.time,
@@ -1984,7 +2124,8 @@ function buildSaveData() {
     employees: Object.assign({}, state.employees),
     nextAreaId: state.nextAreaId,
     rentedAreas: state.rentedAreas.map((area) => Object.assign({}, area)),
-    publicFloors: state.publicFloors.map((floor) => Object.assign({}, floor)),
+    publicFloors: savedPublicFloors.map((floor) => Object.assign({}, floor)),
+    purchasedFloorTileCount: Math.max(state.purchasedFloorTileCount || 0, savedPublicFloors.length),
     partitions: state.partitions.map((partition) => Object.assign({}, partition)),
     propPositions: Object.assign({}, state.propPositions),
     mahjongTables: state.mahjongTables.map((table) => Object.assign({}, table)),
@@ -2040,6 +2181,7 @@ function restoreGame() {
   state.cafeLevel = Number.isFinite(data.cafeLevel) ? data.cafeLevel : state.cafeLevel;
   state.equipmentLevel = Number.isFinite(data.equipmentLevel) ? data.equipmentLevel : state.equipmentLevel;
   state.cleanliness = Number.isFinite(data.cleanliness) ? data.cleanliness : state.cleanliness;
+  state.satisfaction = Number.isFinite(data.satisfaction) ? data.satisfaction : state.satisfaction;
   state.served = Number.isFinite(data.served) ? data.served : state.served;
   state.lost = Number.isFinite(data.lost) ? data.lost : state.lost;
   state.time = Number.isFinite(data.time) ? data.time : state.time;
@@ -2077,6 +2219,9 @@ function restoreGame() {
       .map(normalizePublicFloor)
       .filter((floor, index, floors) => floors.findIndex((item) => item.x === floor.x && item.y === floor.y) === index)
     : [];
+  state.purchasedFloorTileCount = Number.isFinite(data.purchasedFloorTileCount)
+    ? Math.max(data.purchasedFloorTileCount, state.publicFloors.length)
+    : state.publicFloors.length;
   state.partitions = Array.isArray(data.partitions)
     ? data.partitions.map(normalizePartition).filter(Boolean)
     : [];
@@ -2213,8 +2358,8 @@ function createDemand(guest) {
       type: "companion",
       productId: "companionPlay",
       productName: "\u966a\u73a9",
-      timer: 18,
-      patience: 18,
+      timer: DEMAND_WAIT_SECONDS,
+      patience: DEMAND_WAIT_SECONDS,
       handled: false
     };
   }
@@ -2225,8 +2370,8 @@ function createDemand(guest) {
   return {
     productId: id,
     productName: product.name,
-    timer: 16,
-    patience: 16,
+    timer: DEMAND_WAIT_SECONDS,
+    patience: DEMAND_WAIT_SECONDS,
     handled: false
   };
 }
@@ -2252,7 +2397,10 @@ function updateDemand(guest, dt) {
   guest.demand.timer -= dt;
   if (guest.demand.timer > 0) return;
 
-  say(`\u987e\u5ba2 ${guest.id} \u7b49\u4e0d\u5230 ${guest.demand.productName}\uff0c\u8fd9\u5355\u6ca1\u8d5a\u5230\u3002`);
+  const satisfaction = Number.isFinite(state.satisfaction) ? state.satisfaction : 100;
+  state.satisfaction = Math.max(0, satisfaction - 5);
+  markSaveDirty();
+  say(`\u987e\u5ba2 ${guest.id} \u7b49 ${guest.demand.productName} \u592a\u4e45\uff0c\u4e0d\u6ee1\u610f\u5730\u653e\u5f03\u4e86\u3002`);
   guest.demand = null;
 }
 
@@ -2272,9 +2420,19 @@ function tryStartToiletEvent(guest, dt) {
   }
 }
 
+function cancelAssignedDemandWorker(guest) {
+  if (!guest || !guest.demand || !guest.demand.assignedWorkerId) return;
+  const assignedWorker = state.workers.find((worker) => worker.id === guest.demand.assignedWorkerId);
+  if (assignedWorker) {
+    resetWorker(assignedWorker);
+  }
+  guest.demand.assignedWorkerId = null;
+}
+
 function serveGuestDemand(guest) {
   if (!guest || !guest.demand) return false;
   if (isCompanionDemand(guest.demand)) {
+    cancelAssignedDemandWorker(guest);
     return serveCompanionDemand(guest, false);
   }
 
@@ -2293,6 +2451,7 @@ function serveGuestDemand(guest) {
     return true;
   }
 
+  cancelAssignedDemandWorker(guest);
   state.inventory[product.id] = stock - 1;
   state.cash += product.sellPrice;
   recordDailyRevenue("product", product.sellPrice, product.id);
@@ -2340,8 +2499,7 @@ function findTappedGuest(x, y) {
 }
 
 function getGuestDemandHitBounds(guest) {
-  const product = guest && guest.demand ? getProductById(guest.demand.productId) : null;
-  const label = product ? product.name : guest && guest.demand ? guest.demand.productName : "";
+  const label = getDemandBubbleLabel(guest);
   const bubbleW = Math.max(54, label.length * 15 + 18);
   return {
     x: guest.x - bubbleW / 2 - 8,
@@ -2349,6 +2507,13 @@ function getGuestDemandHitBounds(guest) {
     w: bubbleW + 16,
     h: 44
   };
+}
+
+function getDemandBubbleLabel(guest) {
+  if (!guest || !guest.demand) return "";
+  const product = getProductById(guest.demand.productId);
+  const baseLabel = product ? product.name : guest.demand.productName;
+  return guest.demand.assignedWorkerId ? `${baseLabel}...` : baseLabel;
 }
 
 function findTappedDirtyPc(x, y) {
@@ -2388,8 +2553,12 @@ function isToiletTapped(x, y) {
     y <= toilet.y + toilet.h + 10;
 }
 
+function isToiletNeedsCleaning() {
+  return state.toilet.dirty || state.toilet.useCount > 0;
+}
+
 function cleanToilet() {
-  if (!state.toilet.dirty) return false;
+  if (!isToiletNeedsCleaning()) return false;
 
   state.toilet.dirty = false;
   state.toilet.useCount = 0;
@@ -3015,7 +3184,7 @@ function createWorker(type) {
     targetGuestId: null,
     targetProductId: null,
     idleTarget: null,
-    idleTimer: 0
+    idleTimer: Math.random() * 6
   };
   const home = getWorkerHome(worker);
   worker.x = home.x;
@@ -3110,6 +3279,13 @@ function getWorkerPatrolPoints() {
       if (isPointTooCloseToPlacementSolid(safe, PERSON_PATH_MIN_WIDTH)) return;
       if (isWalkBlockingPoint(safe.x, safe.y)) return;
       if (!getWalkableAreaAtPoint(safe.x, safe.y)) return;
+      const tooCloseToPc = layout.pcs.some((pc) => {
+        const bounds = getPcDeskBounds(pc);
+        const cx = bounds.x + bounds.w / 2;
+        const cy = bounds.y + bounds.h / 2;
+        return Math.hypot(safe.x - cx, safe.y - cy) < 60;
+      });
+      if (tooCloseToPc) return;
       points.push(Object.assign({ areaIndex }, safe));
     });
   });
@@ -3157,6 +3333,12 @@ function canWorkerDeliver(worker) {
   return worker.type === "cashier" || worker.type === "manager" || worker.type === "companion";
 }
 
+function getWorkerFreeMovePcIds(worker) {
+  return worker && (worker.type === "cleaner" || worker.type === "floor")
+    ? layout.pcs.map((pc) => pc.id)
+    : [];
+}
+
 function getWorkerLabel(type) {
   return {
     cashier: "\u6536\u94f6",
@@ -3187,7 +3369,7 @@ function sanitizeWorkerTaskLocks() {
     }
   });
 
-  if (!state.toilet.dirty) {
+  if (!isToiletNeedsCleaning()) {
     state.toilet.cleanWorkerId = null;
   } else if (state.toilet.cleanWorkerId && !state.workers.some((worker) => (
     worker.id === state.toilet.cleanWorkerId &&
@@ -3275,6 +3457,7 @@ function isPointInRect(x, y, button) {
 }
 
 function closePanels() {
+  const keepFloorLayoutSession = Boolean(state.floorLayoutSession);
   state.procurementOpen = false;
   state.warehouseOpen = false;
   state.hiringOpen = false;
@@ -3294,12 +3477,12 @@ function closePanels() {
   state.propActionMenu = null;
   state.pcUpgradeMenu = null;
   state.confirmDialog = null;
-  state.layoutToolActive = false;
+  state.layoutToolActive = keepFloorLayoutSession;
   state.selectedAreaId = null;
   state.selectedPcId = null;
   state.selectedPartitionId = null;
   state.selectedPropId = null;
-  state.layoutMode = "off";
+  state.layoutMode = keepFloorLayoutSession ? "floor" : "off";
 }
 
 function clearActionButtons() {
@@ -3346,8 +3529,8 @@ function isAnyPanelOpen() {
     state.equipmentOpen;
 }
 
-function openConfirmDialog(title, body, onConfirm) {
-  state.confirmDialog = { title, body, onConfirm };
+function openConfirmDialog(title, body, onConfirm, onCancel = null) {
+  state.confirmDialog = { title, body, onConfirm, onCancel };
 }
 
 function getPcPurchaseValue(level) {
@@ -3560,6 +3743,10 @@ function confirmPcUpgrade(pc, tier) {
 }
 
 function cancelLayoutTool() {
+  if (state.layoutMode === "floor" && state.floorLayoutSession) {
+    finishFloorLayoutSession();
+    return;
+  }
   state.layoutToolActive = false;
   state.selectedAreaId = null;
   state.selectedPcId = null;
@@ -3612,8 +3799,7 @@ function handleBuildOffer(offer) {
   state.selectedPcId = null;
   state.pendingPartitionTypeId = null;
   if (offer.kind === "floor") {
-    state.layoutToolActive = true;
-    state.layoutMode = "floor";
+    enterFloorLayoutMode();
     say(`\u5df2\u8fdb\u5165\u94fa\u5730\u7816\u6a21\u5f0f\uff0c\u6bcf\u5757 ${PUBLIC_FLOOR_COST} \u5143\uff0c\u70b9\u51fb\u5730\u56fe\u94fa\u8bbe\u3002`);
     return;
   }
@@ -3699,7 +3885,11 @@ function handleTouch(x, y) {
 
   if (state.confirmDialog) {
     if (isPointInRect(x, y, ui.confirmNoButton)) {
+      const dialog = state.confirmDialog;
       state.confirmDialog = null;
+      if (dialog && typeof dialog.onCancel === "function") {
+        dialog.onCancel();
+      }
       return;
     }
 
@@ -3844,6 +4034,25 @@ function handleTouch(x, y) {
 
     const modeButton = ui.layoutModeButtons.find((button) => isPointInRect(x, y, button));
     if (modeButton) {
+      if (modeButton.mode === "floor") {
+        enterFloorLayoutMode();
+        state.layoutOpen = false;
+        say(modeButton.message);
+        return;
+      }
+
+      if (modeButton.mode === "off") {
+        state.layoutOpen = false;
+        cancelLayoutTool();
+        return;
+      }
+
+      if (state.floorLayoutSession) {
+        state.layoutOpen = false;
+        finishFloorLayoutSession();
+        return;
+      }
+
       state.layoutMode = modeButton.mode;
       state.layoutToolActive = modeButton.mode !== "off";
       state.selectedAreaId = null;
@@ -4054,8 +4263,14 @@ function handleTouch(x, y) {
   }
 
   const tappedGuest = findTappedGuest(worldPoint.x, worldPoint.y);
-  if (tappedGuest && tryManualCheckInGuest(tappedGuest)) {
-    return;
+  if (tappedGuest) {
+    if (tryManualCheckInGuest(tappedGuest)) {
+      return;
+    }
+
+    if (serveGuestDemand(tappedGuest)) {
+      return;
+    }
   }
 
   const tappedPc = getPcAtPoint(worldPoint.x, worldPoint.y);
@@ -4086,11 +4301,7 @@ function handleTouch(x, y) {
   }
 
   const guest = tappedGuest || findTappedGuest(worldPoint.x, worldPoint.y);
-  if (guest) {
-    if (serveGuestDemand(guest)) {
-      return;
-    }
-  }
+  if (guest && serveGuestDemand(guest)) return;
 }
 
 function random(min, max) {
@@ -4146,23 +4357,61 @@ function getMovementIgnoredPropIds(entity = null) {
   return [];
 }
 
-function getMovementIgnoredPcId(entity = null) {
-  if (!entity) return null;
-  if (Number.isFinite(entity.movementIgnorePcId)) return entity.movementIgnorePcId;
-  return null;
+function getMovementIgnoredPcIds(entity = null) {
+  const ids = new Set();
+  if (!entity) return ids;
+  if (Number.isFinite(entity.movementIgnorePcId)) ids.add(entity.movementIgnorePcId);
+  if (Array.isArray(entity.movementIgnorePcIds)) {
+    entity.movementIgnorePcIds.forEach((id) => {
+      if (Number.isFinite(id)) ids.add(id);
+    });
+  }
+  return ids;
 }
 
 function isMovementBlockingProp(prop) {
-  return Boolean(prop && !isFreeMoveProp(prop) && prop.id !== "starterPlant");
+  return Boolean(prop && !isFreeMoveProp(prop));
 }
+
+function getCenteredScaledRect(rectValue, scale) {
+  if (!rectValue || !Number.isFinite(scale) || scale <= 0) return rectValue;
+  const w = rectValue.w * scale;
+  const h = rectValue.h * scale;
+  return Object.assign({}, rectValue, {
+    x: rectValue.x + (rectValue.w - w) / 2,
+    y: rectValue.y + (rectValue.h - h) / 2,
+    w,
+    h
+  });
+}
+
+function getPcMovementBounds(pc) {
+  return getCenteredScaledRect(getPcDeskBounds(pc), SOFT_MOVEMENT_COLLISION_SCALE);
+}
+
+function getPropMovementBounds(prop) {
+  const bounds = getMovablePropHitBounds(prop);
+  if (prop && prop.id === "starterPlant") {
+    return getCenteredScaledRect(bounds, SOFT_MOVEMENT_COLLISION_SCALE);
+  }
+  return bounds;
+}
+
+// Per-frame cache for the default (no entity overrides) movement blocking rects.
+// Cleared at the top of update() each frame to stay consistent.
+let _movementBlockingRectsCache = null;
 
 function getMovementBlockingRects(entity = null) {
   const ignoredProps = getMovementIgnoredPropIds(entity);
-  const ignoredPcId = getMovementIgnoredPcId(entity);
-  return []
+  const ignoredPcIds = getMovementIgnoredPcIds(entity);
+  // When no entity-specific overrides are needed, reuse the cached list for this frame.
+  const hasOverrides = ignoredProps.length > 0 || ignoredPcIds.size > 0;
+  if (!hasOverrides && _movementBlockingRectsCache) return _movementBlockingRectsCache;
+
+  const result = []
     .concat(layout.pcs
-      .filter((pc) => pc.id !== ignoredPcId)
-      .map((pc) => Object.assign({ blockType: "pc", blockId: pc.id }, getPcDeskBounds(pc))))
+      .filter((pc) => !ignoredPcIds.has(pc.id))
+      .map((pc) => Object.assign({ blockType: "pc", blockId: pc.id }, getPcMovementBounds(pc))))
     .concat((state.mahjongTables || []).map((table) => Object.assign({ blockType: "mahjong" }, table)))
     .concat((state.partitions || [])
       .filter(isBlockingPartition)
@@ -4171,8 +4420,11 @@ function getMovementBlockingRects(entity = null) {
       .filter((prop) => !ignoredProps.includes(prop.id) && isMovementBlockingProp(prop))
       .map((prop) => Object.assign(
         { blockType: "prop", blockId: prop.id },
-        getMovablePropHitBounds(getMovablePropRect(prop.id))
+        getPropMovementBounds(getMovablePropRect(prop.id))
       )));
+
+  if (!hasOverrides) _movementBlockingRectsCache = result;
+  return result;
 }
 
 function getMovementBlockerAtPoint(x, y, entity = null, padding = 3) {
@@ -4193,8 +4445,8 @@ function clearEntityNavigation(entity) {
 }
 
 function getNavigationTargetKey(entity, target) {
-  const ignoredPc = getMovementIgnoredPcId(entity);
-  return `${Math.round(target.x)}:${Math.round(target.y)}:${Number.isFinite(ignoredPc) ? ignoredPc : "none"}`;
+  const ignoredPcs = Array.from(getMovementIgnoredPcIds(entity)).sort((a, b) => a - b).join(",");
+  return `${Math.round(target.x)}:${Math.round(target.y)}:${ignoredPcs || "none"}`;
 }
 
 function canStandAtMovementPoint(entity, point) {
@@ -4289,8 +4541,7 @@ function computeNavigationPath(entity, target) {
 
   while (open.length && iterations < 1400) {
     iterations += 1;
-    open.sort((a, b) => a.f - b.f);
-    const current = open.shift();
+    const current = open.shift(); // open is kept sorted on insert below
     if (closed.has(current.key)) continue;
     if (current.key === goalKey) {
       const cells = [];
@@ -4323,7 +4574,11 @@ function computeNavigationPath(entity, target) {
       if (costs[nextKey] !== undefined && nextCost >= costs[nextKey]) return;
       costs[nextKey] = nextCost;
       cameFrom[nextKey] = current.key;
-      open.push({ key: nextKey, col, row, g: nextCost, f: nextCost + Math.hypot(col - goalCol, row - goalRow) });
+      const newNode = { key: nextKey, col, row, g: nextCost, f: nextCost + Math.hypot(col - goalCol, row - goalRow) };
+      // Binary-insert to keep open sorted by f — avoids O(n log n) full sort each iteration.
+      let lo = 0; let hi = open.length;
+      while (lo < hi) { const mid = (lo + hi) >>> 1; if (open[mid].f <= newNode.f) lo = mid + 1; else hi = mid; }
+      open.splice(lo, 0, newNode);
     });
   }
   return null;
@@ -4853,20 +5108,45 @@ function moveToward(entity, target, speed, dt) {
   const step = Math.min(len, speed * dt);
   const nx = dx / len;
   const ny = dy / len;
-  const candidates = [
-    { x: entity.x + nx * step, y: entity.y + ny * step },
-    { x: entity.x + nx * step, y: entity.y },
-    { x: entity.x, y: entity.y + ny * step },
-    { x: entity.x - ny * step, y: entity.y + nx * step },
-    { x: entity.x + ny * step, y: entity.y - nx * step }
-  ];
 
-  const next = candidates.find((candidate) => canMoveToPoint(entity, candidate.x, candidate.y));
-  if (next) {
-    const nextDistance = Math.hypot(moveTarget.x - next.x, moveTarget.y - next.y);
-    entity.x = next.x;
-    entity.y = next.y;
-    entity.stuckTimer = nextDistance < len - 0.2 ? 0 : (entity.stuckTimer || 0) + dt;
+  // Try direct movement first
+  const directX = entity.x + nx * step;
+  const directY = entity.y + ny * step;
+
+  let movedX = entity.x;
+  let movedY = entity.y;
+  let moved = false;
+
+  if (canMoveToPoint(entity, directX, directY)) {
+    movedX = directX;
+    movedY = directY;
+    moved = true;
+  } else {
+    // Slide along X or Y axis — pick the one that gets closer to the target.
+    // Never use perpendicular-rotation candidates: they cause visible oscillation.
+    const canSlideX = Math.abs(nx) > 0.01 && canMoveToPoint(entity, entity.x + nx * step, entity.y);
+    const canSlideY = Math.abs(ny) > 0.01 && canMoveToPoint(entity, entity.x, entity.y + ny * step);
+
+    if (canSlideX && canSlideY) {
+      const dX = Math.hypot(moveTarget.x - (entity.x + nx * step), moveTarget.y - entity.y);
+      const dY = Math.hypot(moveTarget.x - entity.x, moveTarget.y - (entity.y + ny * step));
+      if (dX <= dY) { movedX = entity.x + nx * step; } else { movedY = entity.y + ny * step; }
+      moved = true;
+    } else if (canSlideX) {
+      movedX = entity.x + nx * step;
+      moved = true;
+    } else if (canSlideY) {
+      movedY = entity.y + ny * step;
+      moved = true;
+    }
+  }
+
+  if (moved) {
+    entity.x = movedX;
+    entity.y = movedY;
+    // Any successful movement — including wall-sliding — resets the stuck timer.
+    // The old logic incremented stuckTimer even during valid slides, causing false reroutes.
+    entity.stuckTimer = 0;
     if (entity.navPath && distance(entity, moveTarget) <= 5 && entity.navIndex < entity.navPath.length - 1) {
       entity.navIndex += 1;
     }
@@ -4896,7 +5176,7 @@ function moveToward(entity, target, speed, dt) {
     entity.x = routedTarget.x;
     entity.y = routedTarget.y;
     entity.stuckTimer = 0;
-  } else if (entity.stuckTimer > 0.55) {
+  } else if (entity.stuckTimer > 0.35) {
     const recovery = getUnstuckPoint(entity, routedTarget);
     if (recovery && Math.hypot(recovery.x - entity.x, recovery.y - entity.y) > 1) {
       if (canMoveToPoint(entity, recovery.x, recovery.y) ||
@@ -4908,7 +5188,7 @@ function moveToward(entity, target, speed, dt) {
         clearEntityNavigation(entity);
       }
     }
-  } else if (entity.stuckTimer > 0.35 && !getWalkableAreaAtPoint(entity.x, entity.y) && !isEntranceWalkway(entity.x, entity.y)) {
+  } else if (entity.stuckTimer > 0.2 && !getWalkableAreaAtPoint(entity.x, entity.y) && !isEntranceWalkway(entity.x, entity.y)) {
     const recovery = getUnstuckPoint(entity, routedTarget);
     if (recovery) {
       entity.x = recovery.x;
@@ -4937,6 +5217,33 @@ function getPcAccessPoint(pc) {
     x: Math.max(area.x + 16, Math.min(area.x + area.w - 16, point.x)),
     y: Math.max(area.y + 36, Math.min(area.y + area.h - 16, point.y))
   };
+}
+
+function getNearbyPcIgnoreIds(point, radius = 88, requiredId = null) {
+  if (!point) return Number.isFinite(requiredId) ? [requiredId] : [];
+  const ids = [];
+  layout.pcs.forEach((pc) => {
+    if (pc.id === requiredId ||
+        distance(point, getPcAccessPoint(pc)) <= radius ||
+        distanceToRect(point, getPcMovementBounds(pc)) <= radius * 0.45) {
+      ids.push(pc.id);
+    }
+  });
+  return Array.from(new Set(ids));
+}
+
+function runWithIgnoredPcs(entity, pcIds, callback) {
+  if (!entity || !Array.isArray(pcIds) || pcIds.length === 0) return callback();
+  const previousIgnoredPcId = entity.movementIgnorePcId;
+  const previousIgnoredPcIds = entity.movementIgnorePcIds;
+  entity.movementIgnorePcId = null;
+  entity.movementIgnorePcIds = Array.from(new Set(pcIds.filter((id) => Number.isFinite(id))));
+  try {
+    return callback();
+  } finally {
+    entity.movementIgnorePcId = previousIgnoredPcId;
+    entity.movementIgnorePcIds = previousIgnoredPcIds;
+  }
 }
 
 function moveToPcSeat(entity, pc, speed, dt) {
@@ -4970,8 +5277,10 @@ function moveToPcSeat(entity, pc, speed, dt) {
 
 function isCloseEnoughToServicePc(entity, pc) {
   if (!entity || !pc) return false;
-  return distance(entity, getPcAccessPoint(pc)) <= 44 ||
-    distance(entity, { x: pc.seatX, y: pc.seatY }) <= 52 ||
+  // Thresholds tightened: 44→26px (access point), 52→32px (seat).
+  // The original values let workers service PCs from nearly a full desk-width away.
+  return distance(entity, getPcAccessPoint(pc)) <= 26 ||
+    distance(entity, { x: pc.seatX, y: pc.seatY }) <= 32 ||
     distanceToRect(entity, getPcVisualBounds(pc)) <= 18;
 }
 
@@ -4992,27 +5301,29 @@ function getPcServicePointCandidates(pc) {
 
 function getBestPcServicePoint(entity, pc) {
   if (!entity || !pc) return null;
-  const previousIgnoredPcId = entity.movementIgnorePcId;
-  entity.movementIgnorePcId = pc.id;
-  const candidates = getPcServicePointCandidates(pc)
-    .filter((point) => canStandAtMovementPoint(entity, point))
-    .map((point) => ({
-      point,
-      score: distance(entity, point) + (getMovementBlockerForRoute(entity, point, entity) ? 120 : 0)
-    }))
-    .sort((a, b) => a.score - b.score);
-  entity.movementIgnorePcId = previousIgnoredPcId;
-  return candidates.length ? candidates[0].point : getPcAccessPoint(pc);
+  const ignoreIds = getNearbyPcIgnoreIds(getPcAccessPoint(pc), 88, pc.id)
+    .concat(getNearbyPcIgnoreIds(entity, 54));
+  return runWithIgnoredPcs(entity, ignoreIds, () => {
+    const candidates = getPcServicePointCandidates(pc)
+      .filter((point) => canStandAtMovementPoint(entity, point))
+      .map((point) => ({
+        point,
+        score: distance(entity, point) + (getMovementBlockerForRoute(entity, point, entity) ? 120 : 0)
+      }))
+      .sort((a, b) => a.score - b.score);
+    return candidates.length ? candidates[0].point : getPcAccessPoint(pc);
+  });
 }
 
 function moveToPcServicePoint(entity, pc, speed, dt) {
   if (!entity || !pc) return false;
   if (isCloseEnoughToServicePc(entity, pc)) return true;
-  const previousIgnoredPcId = entity.movementIgnorePcId;
-  entity.movementIgnorePcId = pc.id;
   const servicePoint = getBestPcServicePoint(entity, pc);
-  const arrived = servicePoint && (distance(entity, servicePoint) <= 26 || moveToward(entity, servicePoint, speed, dt));
-  entity.movementIgnorePcId = previousIgnoredPcId;
+  const ignoreIds = getNearbyPcIgnoreIds(servicePoint || getPcAccessPoint(pc), 88, pc.id)
+    .concat(getNearbyPcIgnoreIds(entity, 54));
+  const arrived = runWithIgnoredPcs(entity, ignoreIds, () => (
+    servicePoint && (distance(entity, servicePoint) <= 26 || moveToward(entity, servicePoint, speed, dt))
+  ));
   return Boolean(arrived || isCloseEnoughToServicePc(entity, pc));
 }
 
@@ -5470,7 +5781,7 @@ function updateCleanliness(dt) {
     guest.state === "usingToilet" ||
     guest.state === "backToPc"
   )).length;
-  const toiletPenalty = state.toilet.dirty ? 0.01 : 0;
+  const toiletPenalty = isToiletNeedsCleaning() ? 0.01 : 0;
   const decay = (0.0012 * activeGuests + 0.006 * dirtyPcCount + toiletPenalty) * dt;
 
   state.cleanliness = Math.max(0, state.cleanliness - decay);
@@ -5527,7 +5838,9 @@ function getGuestDeliveryPoint(guest) {
 
 function isWorkerCloseEnoughToDeliver(worker, guest, target) {
   if (!worker || !guest || !target) return false;
-  return distance(worker, target) <= 18 || distance(worker, guest) <= 24;
+  // Removed "distance(worker, guest) <= 24" — that check triggered delivery when the
+  // worker passed beside the PC without reaching the access point, causing mid-air handoffs.
+  return distance(worker, target) <= 16;
 }
 
 function canServeDemandAutomatically(guest, worker) {
@@ -5568,7 +5881,7 @@ function assignPcCleaningTask(worker) {
 }
 
 function assignToiletCleaningTask(worker) {
-  if (!state.toilet.dirty || state.toilet.cleanWorkerId || state.toilet.busyGuestId) return false;
+  if (!isToiletNeedsCleaning() || state.toilet.cleanWorkerId || state.toilet.busyGuestId) return false;
 
   state.toilet.cleanWorkerId = worker.id;
   worker.state = "toCleanToilet";
@@ -5607,7 +5920,21 @@ function updateWorkers(dt) {
       if (shouldWorkerRoam(worker)) {
         worker.idleTimer = (worker.idleTimer || 0) + dt;
         const target = worker.idleTarget || getWorkerRoamTarget(worker);
-        const arrived = moveToward(worker, target, 22, dt);
+        if (worker.type === "floor" && (worker.idleTimer || 0) > 2) {
+          const nearbyDirtyPc = layout.pcs
+            .filter((pc) => pc.dirty && !pc.cleanWorkerId)
+            .find((pc) => distance(worker, getPcAccessPoint(pc)) < 80);
+          if (nearbyDirtyPc) {
+            nearbyDirtyPc.cleanWorkerId = worker.id;
+            worker.state = "toCleanPc";
+            worker.targetPcId = nearbyDirtyPc.id;
+            worker.pathTimer = 0;
+            worker.stuckTimer = 0;
+            clearEntityNavigation(worker);
+            return;
+          }
+        }
+        const arrived = runWithIgnoredPcs(worker, getWorkerFreeMovePcIds(worker), () => moveToward(worker, target, 22, dt));
         if (arrived || distance(worker, target) <= 8 || worker.idleTimer > 12) {
           worker.stuckTimer = 0;
           worker.detourPoint = null;
@@ -5616,7 +5943,30 @@ function updateWorkers(dt) {
         }
       } else {
         const home = getWorkerHome(worker);
-        moveToward(worker, home, 36, dt);
+        worker.pathTimer = (worker.pathTimer || 0) + dt;
+        // Cleaners and floor workers ignore all PCs when returning home — they shouldn't
+        // get stuck at desk edges while trying to reach their station.
+        const ignoreIds = (worker.type === "cleaner" || worker.type === "floor")
+          ? layout.pcs.map((pc) => pc.id)
+          : (worker.type === "manager" || worker.type === "cashier")
+            ? getNearbyPcIgnoreIds(worker, 72)
+            : [];
+        const arrived = runWithIgnoredPcs(worker, ignoreIds, () => moveToward(worker, home, 36, dt));
+        if (arrived || distance(worker, home) <= 8) {
+          worker.pathTimer = 0;
+          worker.stuckTimer = 0;
+          worker.detourPoint = null;
+          clearEntityNavigation(worker);
+        } else if ((worker.type === "manager" || worker.type === "cashier") &&
+            worker.pathTimer > 5 &&
+            distance(worker, home) <= 220) {
+          worker.x = home.x;
+          worker.y = home.y;
+          worker.pathTimer = 0;
+          worker.stuckTimer = 0;
+          worker.detourPoint = null;
+          clearEntityNavigation(worker);
+        }
       }
       return;
     }
@@ -5629,11 +5979,14 @@ function updateWorkers(dt) {
         return;
       }
       const nearDirtyPc = distanceToRect(worker, getPcVisualBounds(pc)) <= 34 && worker.pathTimer > 1.2;
-      if (nearDirtyPc || moveToPcServicePoint(worker, pc, 58, dt)) {
+      // Threshold reduced from 92px to 44px — 92px was so large the worker could trigger
+      // cleaning from the other side of a plant without ever reaching the PC.
+      const blockedNearDirtyPc = distanceToRect(worker, getPcVisualBounds(pc)) <= 44 && worker.pathTimer > 3.5;
+      if (nearDirtyPc || blockedNearDirtyPc || moveToPcServicePoint(worker, pc, 58, dt)) {
         worker.state = "cleaningPc";
         worker.pathTimer = 0;
         worker.taskTimer = 1.6;
-      } else if (worker.pathTimer > 8) {
+      } else if (worker.pathTimer > 5) {
         resetWorker(worker);
       }
       return;
@@ -5647,11 +6000,12 @@ function updateWorkers(dt) {
         return;
       }
       const nearBrokenPc = distanceToRect(worker, getPcVisualBounds(pc)) <= 34 && worker.pathTimer > 1.2;
-      if (nearBrokenPc || moveToPcServicePoint(worker, pc, 58, dt)) {
+      const blockedNearBrokenPc = distanceToRect(worker, getPcVisualBounds(pc)) <= 44 && worker.pathTimer > 3.5;
+      if (nearBrokenPc || blockedNearBrokenPc || moveToPcServicePoint(worker, pc, 58, dt)) {
         worker.state = "repairingPc";
         worker.pathTimer = 0;
         worker.taskTimer = 1.25;
-      } else if (worker.pathTimer > 8) {
+      } else if (worker.pathTimer > 5) {
         resetWorker(worker);
       }
       return;
@@ -5683,13 +6037,27 @@ function updateWorkers(dt) {
 
     if (worker.state === "toCleanToilet") {
       worker.pathTimer = (worker.pathTimer || 0) + dt;
-      if (!state.toilet.dirty || worker.pathTimer > 8) {
+      if (!isToiletNeedsCleaning()) {
+        resetWorker(worker);
+        return;
+      }
+      const maxWait = state.toilet.busyGuestId ? 20 : 8;
+      if (worker.pathTimer > maxWait) {
         resetWorker(worker);
         return;
       }
       const toiletBounds = { x: layout.toilet.x - 8, y: layout.toilet.y - 24, w: layout.toilet.w + 16, h: layout.toilet.h + 36 };
-      const nearToilet = distanceToRect(worker, toiletBounds) <= 28 && worker.pathTimer > 1.2;
-      if (nearToilet || moveToward(worker, getToiletServicePoint(), 58, dt) || hasReachedToiletService(worker)) {
+      const toiletDistance = distanceToRect(worker, toiletBounds);
+      const nearToilet = toiletDistance <= 28 && worker.pathTimer > 0.8;
+      // Threshold reduced from 110px to 52px — the cleaner was completing toilet cleaning
+      // while standing outside the door blocked by a plant, never actually entering.
+      const blockedNearToilet = toiletDistance <= 52 && worker.pathTimer > 6.0;
+      // Cleaners ignore all PCs when walking to the toilet so they don't get stuck
+      // at desk corners on their path (e.g. PC #3 blocking the route to the right wall).
+      const toiletArrived = runWithIgnoredPcs(worker, layout.pcs.map((pc) => pc.id), () => (
+        moveToward(worker, getToiletServicePoint(), 58, dt)
+      ));
+      if (nearToilet || blockedNearToilet || toiletArrived || hasReachedToiletService(worker)) {
         worker.state = "cleaningToilet";
         worker.pathTimer = 0;
         worker.taskTimer = 1.2;
@@ -5708,11 +6076,12 @@ function updateWorkers(dt) {
 
     if (worker.state === "toMopFloor") {
       worker.pathTimer = (worker.pathTimer || 0) + dt;
-      if (state.cleanliness >= 99 || worker.pathTimer > 8) {
+      if (state.cleanliness >= 99 || worker.pathTimer > 5) {
         resetWorker(worker);
         return;
       }
-      if (moveToward(worker, getFloorMopPoint(worker), 52, dt)) {
+      const arrived = runWithIgnoredPcs(worker, getWorkerFreeMovePcIds(worker), () => moveToward(worker, getFloorMopPoint(worker), 52, dt));
+      if (arrived) {
         worker.state = "moppingFloor";
         worker.pathTimer = 0;
         worker.taskTimer = 1.4;
@@ -5738,16 +6107,16 @@ function updateWorkers(dt) {
         return;
       }
 
-      const previousIgnoredPcId = worker.movementIgnorePcId;
-      if (Number.isFinite(guest.pcId)) worker.movementIgnorePcId = guest.pcId;
-      const arrived = moveToward(worker, deliveryPoint, 62, dt);
-      worker.movementIgnorePcId = previousIgnoredPcId;
+      const ignoreIds = Number.isFinite(guest.pcId)
+        ? getNearbyPcIgnoreIds(deliveryPoint, 88, guest.pcId).concat(getNearbyPcIgnoreIds(worker, 54))
+        : [];
+      const arrived = runWithIgnoredPcs(worker, ignoreIds, () => moveToward(worker, deliveryPoint, 62, dt));
 
       if (arrived || isWorkerCloseEnoughToDeliver(worker, guest, deliveryPoint)) {
         worker.state = "delivering";
         worker.pathTimer = 0;
         worker.taskTimer = 0.7;
-      } else if (worker.pathTimer > 8) {
+      } else if (worker.pathTimer > 5) {
         resetWorker(worker);
       }
       return;
@@ -5828,6 +6197,8 @@ function resetWorker(worker) {
   worker.pathTimer = 0;
   worker.stuckTimer = 0;
   worker.detourPoint = null;
+  worker.movementIgnorePcId = null;
+  worker.movementIgnorePcIds = null;
   clearEntityNavigation(worker);
   worker.state = "station";
 }
@@ -5968,11 +6339,14 @@ function updateGuests(dt) {
 }
 
 function update(dt) {
+  // Clear per-frame movement cache so each frame gets fresh obstacle data.
+  _movementBlockingRectsCache = null;
+
   state.time += dt;
   ensureDailyLedger();
   state.messageTimer = Math.max(0, state.messageTimer - dt);
-  updateEquipmentLevel();
-  updateCafeLevel();
+  // updateEquipmentLevel / updateCafeLevel removed from the hot loop —
+  // they are now called only when purchases, upgrades, or hiring actually happen.
   updateSpawn();
   updateQueueTargets();
   updateFrontDesk(dt);
@@ -6749,7 +7123,9 @@ function drawPublicFloorPlacementHint() {
     h: PUBLIC_FLOOR_SIZE
   };
   clampAreaToWorld(floor);
-  const canPlace = Boolean(candidate) && isPublicFloorPlacementFree(floor) && state.cash >= PUBLIC_FLOOR_COST;
+  const canPlace = Boolean(candidate) &&
+    isPublicFloorPlacementFree(floor) &&
+    getFloorLayoutExtraCost(getPublicFloorDraftCountAfterAdd()) <= state.cash;
   rect(floor.x, floor.y, floor.w, floor.h, canPlace ? "rgba(105, 185, 109, 0.28)" : "rgba(217, 74, 69, 0.28)");
   strokeRect(floor.x, floor.y, floor.w, floor.h, canPlace ? COLORS.green : COLORS.red, 3);
   text(canPlace ? "\u53ef\u94fa\u8bbe" : "\u65e0\u6cd5\u94fa\u8bbe", floor.x + floor.w / 2, floor.y + floor.h / 2 - 8, 12, COLORS.text, "bold", "center");
@@ -7096,6 +7472,17 @@ function drawLayoutToolControls() {
   };
   drawWidePanelButton(ui.cancelMoveButton, label, "#7f5635");
 
+  if (state.layoutMode === "floor") {
+    const summary = getFloorLayoutSessionCostText();
+    const boxW = Math.min(view.width - 46, 270);
+    const boxX = Math.round(view.width / 2 - boxW / 2);
+    const boxY = ui.cancelMoveButton.y - 44;
+    rect(boxX, boxY, boxW, 34, "rgba(255, 242, 208, 0.94)");
+    strokeRect(boxX, boxY, boxW, 34, COLORS.wallDark, 2);
+    text(`\u5f53\u524d ${summary.placedCount} \u5757 / \u5df2\u8d2d ${summary.ownedCount} \u5757`, boxX + boxW / 2, boxY + 5, 11, COLORS.line, "bold", "center");
+    text(`\u672c\u6b21\u65b0\u589e ${summary.extraCount} \u5757  \u5f85\u652f\u4ed8 ${summary.cost} \u5143`, boxX + boxW / 2, boxY + 19, 11, summary.cost > state.cash ? COLORS.red : COLORS.text, "bold", "center");
+  }
+
   if (state.layoutMode === "partition") {
     ui.rotatePartitionButton = {
       x: Math.round(view.width / 2 - 58),
@@ -7230,6 +7617,15 @@ function drawPropActionMenu() {
   });
 }
 
+function drawScaledPerson(x, y, drawFn) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(PERSON_VISUAL_SCALE, PERSON_VISUAL_SCALE);
+  ctx.translate(-x, -y);
+  drawFn();
+  ctx.restore();
+}
+
 function drawGuest(guest) {
   const x = Math.round(guest.x);
   const y = Math.round(guest.y);
@@ -7238,9 +7634,11 @@ function drawGuest(guest) {
     return;
   }
 
-  if (drawAsset("guest", x - 15, y - 50, 31, 50)) {
+  const assetW = 31 * PERSON_VISUAL_SCALE;
+  const assetH = 50 * PERSON_VISUAL_SCALE;
+  if (drawAsset("guest", x - assetW / 2, y - assetH, assetW, assetH)) {
     if (guest.state === "queueing") {
-      text("...", x, y - 62, 11, COLORS.text, "bold", "center");
+      text("...", x, y - 42, 11, COLORS.text, "bold", "center");
     }
     if (guest.state === "playing" && guest.demand) {
       drawDemandBubble(guest);
@@ -7252,25 +7650,27 @@ function drawGuest(guest) {
   const skin = palette.skin || "#f3c596";
   const pants = palette.pants || "#24384a";
   const accent = palette.accent || "rgba(255, 242, 208, 0.42)";
-  ellipse(x, y + 9, 15, 6, "rgba(38, 23, 17, 0.36)");
-  roundedRect(x - 12, y - 11, 24, 23, 8, "#2b1711");
-  roundedRect(x - 11, y - 8, 22, 18, 6, palette.shirt);
-  rect(x - 9, y - 8, 18, 2, "rgba(255, 242, 208, 0.24)");
-  rect(x - 3, y - 6, 6, 15, accent);
-  rect(x - 8, y - 3, 5, 3, "rgba(255, 242, 208, 0.34)");
-  circle(x, y - 16, 10, COLORS.line);
-  circle(x, y - 16, 8, skin);
-  roundedRect(x - 8, y - 25, 16, 9, 5, palette.hair);
-  rect(x - 9, y - 19, 18, 4, palette.hair);
-  roundedRect(x - 11, y - 5, 4, 12, 3, skin);
-  roundedRect(x + 7, y - 5, 4, 12, 3, skin);
-  roundedRect(x - 7, y + 6, 6, 10, 3, pants);
-  roundedRect(x + 1, y + 6, 6, 10, 3, pants);
-  circle(x - 2, y - 14, 1, "#203544");
-  circle(x + 3, y - 14, 1, "#203544");
+  drawScaledPerson(x, y, () => {
+    ellipse(x, y + 9, 15, 6, "rgba(38, 23, 17, 0.36)");
+    roundedRect(x - 12, y - 11, 24, 23, 8, "#2b1711");
+    roundedRect(x - 11, y - 8, 22, 18, 6, palette.shirt);
+    rect(x - 9, y - 8, 18, 2, "rgba(255, 242, 208, 0.24)");
+    rect(x - 3, y - 6, 6, 15, accent);
+    rect(x - 8, y - 3, 5, 3, "rgba(255, 242, 208, 0.34)");
+    circle(x, y - 16, 10, COLORS.line);
+    circle(x, y - 16, 8, skin);
+    roundedRect(x - 8, y - 25, 16, 9, 5, palette.hair);
+    rect(x - 9, y - 19, 18, 4, palette.hair);
+    roundedRect(x - 11, y - 5, 4, 12, 3, skin);
+    roundedRect(x + 7, y - 5, 4, 12, 3, skin);
+    roundedRect(x - 7, y + 6, 6, 10, 3, pants);
+    roundedRect(x + 1, y + 6, 6, 10, 3, pants);
+    circle(x - 2, y - 14, 1, "#203544");
+    circle(x + 3, y - 14, 1, "#203544");
+  });
 
   if (guest.state === "queueing") {
-    text("...", x, y - 36, 11, COLORS.text, "bold", "center");
+    text("...", x, y - 26, 11, COLORS.text, "bold", "center");
   }
 
   if (guest.state === "playing" && guest.demand) {
@@ -7281,17 +7681,19 @@ function drawGuest(guest) {
 function drawSeatedGuest(guest, x, y) {
   const palette = guest.palette || guestPalettes[0];
   const skin = palette.skin || "#f0c090";
-  ellipse(x, y + 8, 14, 5, "rgba(38, 23, 17, 0.34)");
-  rect(x - 12, y - 4, 24, 16, "#2b1711");
-  rect(x - 10, y - 3, 20, 14, palette.pants || "#557c8c");
-  rect(x - 8, y - 8, 16, 9, palette.shirt);
-  rect(x - 3, y - 7, 6, 8, palette.accent || "rgba(255, 242, 208, 0.28)");
-  circle(x, y - 17, 10, COLORS.line);
-  circle(x, y - 17, 8, skin);
-  roundedRect(x - 9, y - 25, 18, 8, 4, palette.hair);
-  rect(x - 8, y - 20, 16, 4, palette.hair);
-  rect(x - 6, y - 21, 12, 3, "rgba(255, 242, 208, 0.28)");
-  rect(x - 4, y - 12, 8, 4, "#d99a65");
+  drawScaledPerson(x, y, () => {
+    ellipse(x, y + 8, 14, 5, "rgba(38, 23, 17, 0.34)");
+    rect(x - 12, y - 4, 24, 16, "#2b1711");
+    rect(x - 10, y - 3, 20, 14, palette.pants || "#557c8c");
+    rect(x - 8, y - 8, 16, 9, palette.shirt);
+    rect(x - 3, y - 7, 6, 8, palette.accent || "rgba(255, 242, 208, 0.28)");
+    circle(x, y - 17, 10, COLORS.line);
+    circle(x, y - 17, 8, skin);
+    roundedRect(x - 9, y - 25, 18, 8, 4, palette.hair);
+    rect(x - 8, y - 20, 16, 4, palette.hair);
+    rect(x - 6, y - 21, 12, 3, "rgba(255, 242, 208, 0.28)");
+    rect(x - 4, y - 12, 8, 4, "#d99a65");
+  });
   if (guest.demand) {
     drawDemandBubble(guest);
   }
@@ -7299,9 +7701,8 @@ function drawSeatedGuest(guest, x, y) {
 
 function drawDemandBubble(guest) {
   const x = Math.round(guest.x);
-  const y = Math.round(guest.y) - 48;
-  const product = getProductById(guest.demand.productId);
-  const label = product ? product.name : guest.demand.productName;
+  const y = Math.round(guest.y) - 38;
+  const label = getDemandBubbleLabel(guest);
   const bubbleW = Math.max(48, label.length * 15 + 14);
   const bubbleX = Math.max(12, Math.min(view.width - bubbleW - 12, x - bubbleW / 2));
   const progress = Math.max(0, guest.demand.timer / guest.demand.patience);
@@ -7521,6 +7922,7 @@ function drawStockShelf() {
 
 function drawToilet() {
   const toilet = layout.toilet;
+  const needsCleaning = isToiletNeedsCleaning();
   const flushWithRoomRight = toilet.x === layout.room.x + layout.room.w && verticalOverlap(toilet, layout.room) > 0;
   if (flushWithRoomRight) {
     roundedRect(toilet.x, toilet.y - 6, toilet.w + 6, toilet.h + 12, 6, COLORS.wallDark);
@@ -7528,8 +7930,8 @@ function drawToilet() {
     roundedRect(toilet.x - 6, toilet.y - 6, toilet.w + 12, toilet.h + 12, 6, COLORS.wallDark);
   }
   roundedRect(toilet.x, toilet.y, toilet.w, toilet.h, 5, COLORS.wall);
-  roundedRect(toilet.x + 4, toilet.y + 4, toilet.w - 8, 22, 4, state.toilet.dirty ? "#b16b66" : COLORS.wallTop);
-  if (state.toilet.dirty) {
+  roundedRect(toilet.x + 4, toilet.y + 4, toilet.w - 8, 22, 4, needsCleaning ? "#b16b66" : COLORS.wallTop);
+  if (needsCleaning) {
     rect(toilet.x + 9, toilet.y + 32, toilet.w - 18, toilet.h - 42, "#b58b68");
   } else {
     drawTiledArea({ x: toilet.x + 9, y: toilet.y + 32, w: toilet.w - 18, h: toilet.h - 42 });
@@ -7548,7 +7950,7 @@ function drawToilet() {
     rect(px - 1, py - 3, 4, 4, "#9a642f");
   }
 
-  if (state.toilet.dirty) {
+  if (needsCleaning) {
     rect(toilet.x + toilet.w - 15, toilet.y + 30, 8, 8, COLORS.red);
     drawCleanBubble(toilet.x + toilet.w / 2, toilet.y - 38, "\u6e05\u5395\u6240");
   }
@@ -8310,13 +8712,13 @@ function drawSettingsPanel() {
   text(`\u5f53\u524d\uff1a${modeLabel}`, panel.x + 24, panel.y + 66, 15, COLORS.line, "bold");
   text(modeDesc, panel.x + 24, panel.y + 93, 11, "#5d4532", "bold");
 
-  const versionBox = { x: panel.x + 12, y: panel.y + 136, w: panel.w - 24, h: 72 };
+  const versionBox = { x: panel.x + 12, y: panel.y + 136, w: panel.w - 24, h: 88 };
   rect(versionBox.x, versionBox.y, versionBox.w, versionBox.h, "#f7dba5");
   strokeRect(versionBox.x, versionBox.y, versionBox.w, versionBox.h, "#9a7043", 2);
   rect(versionBox.x + 4, versionBox.y + 4, versionBox.w - 8, 18, "#8c4f35");
-  text("\u5ea7\u4f4d\u7248\u672c\u66f4\u65b0", versionBox.x + 12, versionBox.y + 7, 12, COLORS.text, "bold");
+  text("\u7248\u672c\u4fe1\u606f", versionBox.x + 12, versionBox.y + 7, 12, COLORS.text, "bold");
   text(
-    `\u5ea7\u4f4d\u7248\u672c\u53f7\uff1a${SEAT_LAYOUT_VERSION.stage}${SEAT_LAYOUT_VERSION.code}`,
+    `\u6e38\u620f\u7248\u672c\uff1a${GAME_VERSION}`,
     versionBox.x + 12,
     versionBox.y + 30,
     11,
@@ -8324,9 +8726,17 @@ function drawSettingsPanel() {
     "bold"
   );
   text(
-    `\u4fee\u6539\u65f6\u95f4\uff1a${SEAT_LAYOUT_VERSION.modifiedAt}`,
+    `\u5ea7\u4f4d\u7248\u672c\uff1a${SEAT_LAYOUT_VERSION.stage}${SEAT_LAYOUT_VERSION.code}`,
     versionBox.x + 12,
     versionBox.y + 50,
+    11,
+    "#5d4532",
+    "bold"
+  );
+  text(
+    `\u66f4\u65b0\u65f6\u95f4\uff1a${SEAT_LAYOUT_VERSION.modifiedAt}`,
+    versionBox.x + 12,
+    versionBox.y + 70,
     11,
     "#5d4532",
     "bold"
@@ -8504,32 +8914,36 @@ function drawWorker(worker) {
   const y = Math.round(worker.y);
   const hat = getWorkerHatColor(worker.type);
   const workerAsset = worker.type === "cashier" ? "cashier" : worker.type === "cleaner" ? "cleaner" : "";
-  if (workerAsset && drawAsset(workerAsset, x - 16, y - 58, worker.type === "cleaner" ? 28 : 27, worker.type === "cleaner" ? 50 : 49)) {
+  const assetW = (worker.type === "cleaner" ? 28 : 27) * PERSON_VISUAL_SCALE;
+  const assetH = (worker.type === "cleaner" ? 50 : 49) * PERSON_VISUAL_SCALE;
+  if (workerAsset && drawAsset(workerAsset, x - assetW / 2, y - assetH, assetW, assetH)) {
     const label = getWorkerLabel(worker.type);
     const bubbleW = Math.max(32, label.length * 13 + 8);
-    roundedRect(x - bubbleW / 2, y - 72, bubbleW, 17, 5, "#fff7dd");
-    strokeRoundedRect(x - bubbleW / 2, y - 72, bubbleW, 17, 5, "rgba(25, 36, 43, 0.28)", 1);
-    text(label, x, y - 70, 10, COLORS.line, "bold", "center");
+    roundedRect(x - bubbleW / 2, y - 50, bubbleW, 17, 5, "#fff7dd");
+    strokeRoundedRect(x - bubbleW / 2, y - 50, bubbleW, 17, 5, "rgba(25, 36, 43, 0.28)", 1);
+    text(label, x, y - 48, 10, COLORS.line, "bold", "center");
     return;
   }
 
-  ellipse(x, y + 8, 13, 5, "rgba(18, 30, 36, 0.2)");
-  circle(x, y - 15, 7, "#f3c596");
-  roundedRect(x - 8, y - 24, 16, 6, 4, hat);
-  roundedRect(x - 5, y - 29, 10, 6, 3, hat);
-  roundedRect(x - 9, y - 8, 18, 17, 7, "#203544");
-  roundedRect(x - 8, y - 5, 16, 4, 2, COLORS.yellow);
-  roundedRect(x - 3, y - 8, 6, 17, 3, COLORS.yellow);
-  roundedRect(x - 11, y - 5, 4, 12, 3, "#f3c596");
-  roundedRect(x + 7, y - 5, 4, 12, 3, "#f3c596");
-  roundedRect(x - 7, y + 6, 6, 10, 3, "#24384a");
-  roundedRect(x + 1, y + 6, 6, 10, 3, "#24384a");
+  drawScaledPerson(x, y, () => {
+    ellipse(x, y + 8, 13, 5, "rgba(18, 30, 36, 0.2)");
+    circle(x, y - 15, 7, "#f3c596");
+    roundedRect(x - 8, y - 24, 16, 6, 4, hat);
+    roundedRect(x - 5, y - 29, 10, 6, 3, hat);
+    roundedRect(x - 9, y - 8, 18, 17, 7, "#203544");
+    roundedRect(x - 8, y - 5, 16, 4, 2, COLORS.yellow);
+    roundedRect(x - 3, y - 8, 6, 17, 3, COLORS.yellow);
+    roundedRect(x - 11, y - 5, 4, 12, 3, "#f3c596");
+    roundedRect(x + 7, y - 5, 4, 12, 3, "#f3c596");
+    roundedRect(x - 7, y + 6, 6, 10, 3, "#24384a");
+    roundedRect(x + 1, y + 6, 6, 10, 3, "#24384a");
+  });
 
   const label = getWorkerLabel(worker.type);
   const bubbleW = Math.max(32, label.length * 13 + 8);
-  rect(x - bubbleW / 2 - 1, y - 43, bubbleW + 2, 19, COLORS.line);
-  rect(x - bubbleW / 2, y - 42, bubbleW, 17, "#fff7dd");
-  text(label, x, y - 40, 10, COLORS.line, "bold", "center");
+  rect(x - bubbleW / 2 - 1, y - 35, bubbleW + 2, 19, COLORS.line);
+  rect(x - bubbleW / 2, y - 34, bubbleW, 17, "#fff7dd");
+  text(label, x, y - 32, 10, COLORS.line, "bold", "center");
 }
 
 function drawLegend() {
@@ -8650,15 +9064,15 @@ function render() {
   drawLayoutToolControls();
   drawSystemMessageBar();
   drawActionBar();
-  drawProcurementPanel();
-  drawWarehousePanel();
-  drawHiringPanel();
-  drawLedgerPanel();
-  drawExpansionPanel();
-  drawLayoutPanel();
-  drawEquipmentPanel();
-  drawSettingsPanel();
-  drawPricingPanel();
+  if (state.procurementOpen) drawProcurementPanel();
+  if (state.warehouseOpen) drawWarehousePanel();
+  if (state.hiringOpen) drawHiringPanel();
+  if (state.ledgerOpen) drawLedgerPanel();
+  if (state.expansionOpen) drawExpansionPanel();
+  if (state.layoutOpen) drawLayoutPanel();
+  if (state.equipmentOpen) drawEquipmentPanel();
+  if (state.settingsOpen) drawSettingsPanel();
+  if (state.pricingOpen) drawPricingPanel();
   drawPcUpgradeMenu();
   drawConfirmDialog();
 }
