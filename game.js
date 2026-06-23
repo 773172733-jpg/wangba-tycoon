@@ -33,6 +33,7 @@ const SEAT_LAYOUT_VERSION = {
 const PLAY_PROGRESS_COLOR = "#e83f3f";
 const STUCK_REROUTE_SECONDS = 3;
 const PERSON_PATH_MIN_WIDTH = 24;
+const NAV_GRID_SIZE = 18;
 const PC_AUTO_ALIGN_DISTANCE = 18;
 const MANUAL_CHECKIN_DURATION = 1.25;
 const BASE_OPERATIONAL_PCS = 4;
@@ -2431,6 +2432,18 @@ function hasReachedToiletService(entity) {
   return Boolean(doorArea && distance(entity, doorArea.center) <= 24);
 }
 
+function startGuestUsingToilet(guest) {
+  const servicePoint = getToiletServicePoint();
+  guest.x = servicePoint.x;
+  guest.y = servicePoint.y;
+  guest.state = "usingToilet";
+  guest.pathTimer = 0;
+  guest.toiletTimer = random(4.2, 6.2);
+  guest.detourPoint = null;
+  guest.stuckTimer = 0;
+  clearEntityNavigation(guest);
+}
+
 function pickWeightedDemandProductId(guest, pc) {
   const level = pc ? pc.equipmentLevel : state.equipmentLevel;
   const premiumBias = level >= 5 ? 3.3 : level >= 4 ? 2.4 : level >= 3 ? 1.45 : 1;
@@ -3057,7 +3070,10 @@ function getWorkerHome(worker) {
       { x: counter.x + counter.w - 48, y: counter.y + counter.h - 8 }
     ],
     manager: [getManagerCounterStation()],
-    repairman: serviceStations.slice(1).concat(serviceStations.slice(0, 1)),
+    repairman: [
+      { x: counter.x + 86, y: counter.y + 22 },
+      { x: counter.x + 112, y: counter.y + 22 }
+    ],
     companion: serviceStations.slice(2).concat(serviceStations.slice(0, 2)),
     floor: [getWorkerPatrolPoint(worker, 0)],
     cleaner: [getWorkerPatrolPoint(worker, 1)]
@@ -3103,7 +3119,7 @@ function getWorkerPatrolPoints() {
 }
 
 function shouldWorkerRoam(worker) {
-  return worker && ["floor", "cleaner", "repairman", "companion"].includes(worker.type);
+  return worker && ["floor", "cleaner", "companion"].includes(worker.type);
 }
 
 function getWorkerRoamTarget(worker) {
@@ -4123,6 +4139,182 @@ function isWalkBlockingPoint(x, y, entity = null) {
   return Boolean(getMovementBlockerAtPoint(x, y, entity));
 }
 
+function clearEntityNavigation(entity) {
+  if (!entity) return;
+  entity.navPath = null;
+  entity.navIndex = 0;
+  entity.navTargetKey = null;
+}
+
+function getNavigationTargetKey(entity, target) {
+  const ignoredPc = getMovementIgnoredPcId(entity);
+  return `${Math.round(target.x)}:${Math.round(target.y)}:${Number.isFinite(ignoredPc) ? ignoredPc : "none"}`;
+}
+
+function canStandAtMovementPoint(entity, point) {
+  if (!point || isWalkBlockingPoint(point.x, point.y, entity)) return false;
+  return Boolean(getWalkableAreaAtPoint(point.x, point.y) || isEntranceWalkway(point.x, point.y) || isDoorwayPoint(point.x, point.y));
+}
+
+function canTraverseMovementSegment(entity, from, to) {
+  if (!from || !to) return false;
+  if (!canStandAtMovementPoint(entity, to)) return false;
+  const blocker = getMovementBlockerForRoute(from, to, entity);
+  if (blocker && !isPointInsideRect(to.x, to.y, blocker, 1)) return false;
+
+  const steps = Math.max(2, Math.ceil(distance(from, to) / 7));
+  let previousArea = getWalkableAreaAtPoint(from.x, from.y);
+  for (let index = 1; index <= steps; index += 1) {
+    const rate = index / steps;
+    const point = {
+      x: from.x + (to.x - from.x) * rate,
+      y: from.y + (to.y - from.y) * rate
+    };
+    if (!canStandAtMovementPoint(entity, point)) return false;
+    const area = getWalkableAreaAtPoint(point.x, point.y);
+    if (previousArea && area && previousArea.id !== area.id && !isTransitionOpen(previousArea, area, point.x, point.y)) {
+      return false;
+    }
+    if (area) previousArea = area;
+  }
+  return true;
+}
+
+function getNavigationBounds(from, target) {
+  const world = getExpandedWorldBounds();
+  const margin = 220;
+  return {
+    minX: Math.max(world.minX, Math.min(from.x, target.x) - margin),
+    minY: Math.max(world.minY, Math.min(from.y, target.y) - margin),
+    maxX: Math.min(world.maxX, Math.max(from.x, target.x) + margin),
+    maxY: Math.min(world.maxY, Math.max(from.y, target.y) + margin)
+  };
+}
+
+function getNearestNavigationPoint(entity, point, bounds) {
+  if (canStandAtMovementPoint(entity, point)) return { x: point.x, y: point.y, direct: true };
+  const baseCol = Math.round((point.x - bounds.minX) / NAV_GRID_SIZE);
+  const baseRow = Math.round((point.y - bounds.minY) / NAV_GRID_SIZE);
+  let best = null;
+  for (let radius = 0; radius <= 7; radius += 1) {
+    for (let row = baseRow - radius; row <= baseRow + radius; row += 1) {
+      for (let col = baseCol - radius; col <= baseCol + radius; col += 1) {
+        if (row !== baseRow - radius && row !== baseRow + radius && col !== baseCol - radius && col !== baseCol + radius) continue;
+        const candidate = {
+          x: bounds.minX + col * NAV_GRID_SIZE,
+          y: bounds.minY + row * NAV_GRID_SIZE,
+          col,
+          row
+        };
+        if (candidate.x < bounds.minX || candidate.x > bounds.maxX || candidate.y < bounds.minY || candidate.y > bounds.maxY) continue;
+        if (!canStandAtMovementPoint(entity, candidate)) continue;
+        const score = distance(point, candidate);
+        if (!best || score < best.score) best = Object.assign({ score }, candidate);
+      }
+    }
+    if (best) return best;
+  }
+  return null;
+}
+
+function computeNavigationPath(entity, target) {
+  const startPoint = { x: entity.x, y: entity.y };
+  if (canTraverseMovementSegment(entity, startPoint, target)) return [target];
+
+  const bounds = getNavigationBounds(startPoint, target);
+  const start = getNearestNavigationPoint(entity, startPoint, bounds);
+  const goal = getNearestNavigationPoint(entity, target, bounds);
+  if (!start || !goal) return null;
+
+  const keyOf = (col, row) => `${col}:${row}`;
+  const startKey = keyOf(start.col || Math.round((start.x - bounds.minX) / NAV_GRID_SIZE), start.row || Math.round((start.y - bounds.minY) / NAV_GRID_SIZE));
+  const goalCol = goal.col || Math.round((goal.x - bounds.minX) / NAV_GRID_SIZE);
+  const goalRow = goal.row || Math.round((goal.y - bounds.minY) / NAV_GRID_SIZE);
+  const goalKey = keyOf(goalCol, goalRow);
+  const open = [{ key: startKey, col: Number(startKey.split(":")[0]), row: Number(startKey.split(":")[1]), g: 0, f: distance(start, goal) }];
+  const cameFrom = {};
+  const costs = { [startKey]: 0 };
+  const closed = new Set();
+  const dirs = [
+    [1, 0], [-1, 0], [0, 1], [0, -1],
+    [1, 1], [1, -1], [-1, 1], [-1, -1]
+  ];
+  let iterations = 0;
+
+  while (open.length && iterations < 1400) {
+    iterations += 1;
+    open.sort((a, b) => a.f - b.f);
+    const current = open.shift();
+    if (closed.has(current.key)) continue;
+    if (current.key === goalKey) {
+      const cells = [];
+      let cursor = current.key;
+      while (cursor) {
+        const [col, row] = cursor.split(":").map(Number);
+        cells.push({ col, row, x: bounds.minX + col * NAV_GRID_SIZE, y: bounds.minY + row * NAV_GRID_SIZE });
+        cursor = cameFrom[cursor];
+      }
+      cells.reverse();
+      const path = cells
+        .map((cell) => ({ x: cell.x, y: cell.y }))
+        .filter((point, index) => index > 0 || distance(point, startPoint) > 4);
+      if (canTraverseMovementSegment(entity, path[path.length - 1] || startPoint, target)) path.push(target);
+      return simplifyNavigationPath(entity, startPoint, path);
+    }
+    closed.add(current.key);
+
+    dirs.forEach(([dc, dr]) => {
+      const col = current.col + dc;
+      const row = current.row + dr;
+      const point = { x: bounds.minX + col * NAV_GRID_SIZE, y: bounds.minY + row * NAV_GRID_SIZE };
+      if (point.x < bounds.minX || point.x > bounds.maxX || point.y < bounds.minY || point.y > bounds.maxY) return;
+      const nextKey = keyOf(col, row);
+      if (closed.has(nextKey)) return;
+      const from = { x: bounds.minX + current.col * NAV_GRID_SIZE, y: bounds.minY + current.row * NAV_GRID_SIZE };
+      if (!canTraverseMovementSegment(entity, from, point)) return;
+      const moveCost = dc !== 0 && dr !== 0 ? 1.414 : 1;
+      const nextCost = current.g + moveCost;
+      if (costs[nextKey] !== undefined && nextCost >= costs[nextKey]) return;
+      costs[nextKey] = nextCost;
+      cameFrom[nextKey] = current.key;
+      open.push({ key: nextKey, col, row, g: nextCost, f: nextCost + Math.hypot(col - goalCol, row - goalRow) });
+    });
+  }
+  return null;
+}
+
+function simplifyNavigationPath(entity, start, path) {
+  if (!path || path.length <= 2) return path || null;
+  const simplified = [];
+  let anchor = start;
+  for (let index = 0; index < path.length; index += 1) {
+    const next = path[index + 1];
+    if (!next || !canTraverseMovementSegment(entity, anchor, next)) {
+      simplified.push(path[index]);
+      anchor = path[index];
+    }
+  }
+  return simplified;
+}
+
+function getNavigationMoveTarget(entity, target) {
+  const key = getNavigationTargetKey(entity, target);
+  if (entity.navTargetKey !== key || !entity.navPath || !entity.navPath.length) {
+    entity.navPath = computeNavigationPath(entity, target);
+    entity.navIndex = 0;
+    entity.navTargetKey = key;
+  }
+  if (!entity.navPath || !entity.navPath.length) return target;
+  while (entity.navIndex < entity.navPath.length - 1 && distance(entity, entity.navPath[entity.navIndex]) <= 5) {
+    entity.navIndex += 1;
+  }
+  const waypoint = entity.navPath[entity.navIndex] || target;
+  if (distance(entity, waypoint) <= 5 && entity.navIndex >= entity.navPath.length - 1) {
+    return target;
+  }
+  return waypoint;
+}
+
 function segmentIntersectsRect(from, to, rectValue, padding = 0) {
   const paddedRect = inflateRect(rectValue, padding);
   if (isPointInsideRect(from.x, from.y, paddedRect) ||
@@ -4595,16 +4787,21 @@ function getEmergencyReroutePoint(entity, target, routedTarget) {
 
 function moveToward(entity, target, speed, dt) {
   const routedTarget = getNextRouteTarget(entity, target);
-  const dx = routedTarget.x - entity.x;
-  const dy = routedTarget.y - entity.y;
+  const moveTarget = getNavigationMoveTarget(entity, routedTarget);
+  const dx = moveTarget.x - entity.x;
+  const dy = moveTarget.y - entity.y;
   const len = Math.hypot(dx, dy);
 
   if (len < 1) {
-    entity.x = routedTarget.x;
-    entity.y = routedTarget.y;
+    entity.x = moveTarget.x;
+    entity.y = moveTarget.y;
     entity.stuckTimer = 0;
-    if (routedTarget === entity.detourPoint) entity.detourPoint = null;
-    return routedTarget === target;
+    if (moveTarget === entity.detourPoint) entity.detourPoint = null;
+    if (entity.navPath && entity.navIndex < entity.navPath.length - 1) {
+      entity.navIndex += 1;
+      return false;
+    }
+    return routedTarget === target && distance(entity, target) <= 5;
   }
 
   const step = Math.min(len, speed * dt);
@@ -4620,10 +4817,13 @@ function moveToward(entity, target, speed, dt) {
 
   const next = candidates.find((candidate) => canMoveToPoint(entity, candidate.x, candidate.y));
   if (next) {
-    const nextDistance = Math.hypot(routedTarget.x - next.x, routedTarget.y - next.y);
+    const nextDistance = Math.hypot(moveTarget.x - next.x, moveTarget.y - next.y);
     entity.x = next.x;
     entity.y = next.y;
     entity.stuckTimer = nextDistance < len - 0.2 ? 0 : (entity.stuckTimer || 0) + dt;
+    if (entity.navPath && distance(entity, moveTarget) <= 5 && entity.navIndex < entity.navPath.length - 1) {
+      entity.navIndex += 1;
+    }
   } else {
     entity.stuckTimer = (entity.stuckTimer || 0) + dt;
   }
@@ -4635,6 +4835,7 @@ function moveToward(entity, target, speed, dt) {
       entity.x = recovery.x;
       entity.y = recovery.y;
       entity.stuckTimer = 0;
+      clearEntityNavigation(entity);
       return false;
     }
     entity.stuckTimer = STUCK_REROUTE_SECONDS * 0.5;
@@ -4658,6 +4859,7 @@ function moveToward(entity, target, speed, dt) {
         entity.x = recovery.x;
         entity.y = recovery.y;
         entity.stuckTimer = 0;
+        clearEntityNavigation(entity);
       }
     }
   } else if (entity.stuckTimer > 0.35 && !getWalkableAreaAtPoint(entity.x, entity.y) && !isEntranceWalkway(entity.x, entity.y)) {
@@ -4666,9 +4868,10 @@ function moveToward(entity, target, speed, dt) {
       entity.x = recovery.x;
       entity.y = recovery.y;
       entity.stuckTimer = 0;
+      clearEntityNavigation(entity);
     }
   }
-  return routedTarget === target && len <= step + 0.5;
+  return routedTarget === target && distance(entity, target) <= Math.max(5, step + 1);
 }
 
 function getPcAccessPoint(pc) {
@@ -5200,6 +5403,7 @@ function assignRepairTask(worker) {
   worker.state = "toRepairPc";
   worker.targetPcId = pc.id;
   worker.pathTimer = 0;
+  clearEntityNavigation(worker);
   return true;
 }
 
@@ -5219,6 +5423,7 @@ function assignDeliveryTask(worker) {
   worker.targetProductId = guest.demand.productId;
   worker.targetPcId = Number.isFinite(guest.pcId) ? guest.pcId : null;
   worker.pathTimer = 0;
+  clearEntityNavigation(worker);
   return true;
 }
 
@@ -5266,6 +5471,7 @@ function assignPcCleaningTask(worker) {
   worker.state = "toCleanPc";
   worker.targetPcId = pc.id;
   worker.pathTimer = 0;
+  clearEntityNavigation(worker);
   return true;
 }
 
@@ -5275,6 +5481,7 @@ function assignToiletCleaningTask(worker) {
   state.toilet.cleanWorkerId = worker.id;
   worker.state = "toCleanToilet";
   worker.pathTimer = 0;
+  clearEntityNavigation(worker);
   return true;
 }
 
@@ -5284,6 +5491,7 @@ function assignFloorMopTask(worker) {
   state.floorCleaningWorkerId = worker.id;
   worker.state = "toMopFloor";
   worker.pathTimer = 0;
+  clearEntityNavigation(worker);
   return true;
 }
 
@@ -5521,6 +5729,7 @@ function resetWorker(worker) {
   worker.pathTimer = 0;
   worker.stuckTimer = 0;
   worker.detourPoint = null;
+  clearEntityNavigation(worker);
   worker.state = "station";
 }
 
@@ -5571,6 +5780,7 @@ function updateGuests(dt) {
         guest.state = "playing";
         guest.playTimer = guest.playDuration;
         guest.pathTimer = 0;
+        clearEntityNavigation(guest);
       }
       continue;
     }
@@ -5594,17 +5804,21 @@ function updateGuests(dt) {
 
     if (guest.state === "toToilet") {
       guest.pathTimer = (guest.pathTimer || 0) + dt;
-      const arrived = moveToward(guest, getToiletServicePoint(), guest.speed, dt);
+      const toiletPoint = getToiletServicePoint();
+      const arrived = moveToward(guest, toiletPoint, guest.speed, dt);
       if (arrived || hasReachedToiletService(guest)) {
-        guest.state = "usingToilet";
-        guest.pathTimer = 0;
-        guest.toiletTimer = random(3.2, 5.2);
+        startGuestUsingToilet(guest);
       } else if (guest.pathTimer > 8) {
-        if (state.toilet.busyGuestId === guest.id) {
-          state.toilet.busyGuestId = null;
+        if (distance(guest, toiletPoint) <= 90) {
+          startGuestUsingToilet(guest);
+        } else {
+          if (state.toilet.busyGuestId === guest.id) {
+            state.toilet.busyGuestId = null;
+          }
+          guest.state = "backToPc";
+          guest.pathTimer = 0;
+          clearEntityNavigation(guest);
         }
-        guest.state = "backToPc";
-        guest.pathTimer = 0;
       }
       continue;
     }
@@ -5636,6 +5850,7 @@ function updateGuests(dt) {
         }
         guest.state = "playing";
         guest.pathTimer = 0;
+        clearEntityNavigation(guest);
       }
       continue;
     }
