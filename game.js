@@ -3172,6 +3172,45 @@ function getIdleWorkers() {
   return state.workers.filter((worker) => worker.state === "station");
 }
 
+function sanitizeWorkerTaskLocks() {
+  layout.pcs.forEach((pc) => {
+    if (!pc.dirty) {
+      pc.cleanWorkerId = null;
+      return;
+    }
+    if (pc.cleanWorkerId && !state.workers.some((worker) => (
+      worker.id === pc.cleanWorkerId &&
+      worker.targetPcId === pc.id &&
+      (worker.state === "toCleanPc" || worker.state === "cleaningPc")
+    ))) {
+      pc.cleanWorkerId = null;
+    }
+  });
+
+  if (!state.toilet.dirty) {
+    state.toilet.cleanWorkerId = null;
+  } else if (state.toilet.cleanWorkerId && !state.workers.some((worker) => (
+    worker.id === state.toilet.cleanWorkerId &&
+    (worker.state === "toCleanToilet" || worker.state === "cleaningToilet")
+  ))) {
+    state.toilet.cleanWorkerId = null;
+  }
+
+  if (state.toilet.busyGuestId && !state.guests.some((guest) => (
+    guest.id === state.toilet.busyGuestId &&
+    (guest.state === "toToilet" || guest.state === "usingToilet")
+  ))) {
+    state.toilet.busyGuestId = null;
+  }
+
+  if (state.floorCleaningWorkerId && !state.workers.some((worker) => (
+    worker.id === state.floorCleaningWorkerId &&
+    (worker.state === "toMopFloor" || worker.state === "moppingFloor")
+  ))) {
+    state.floorCleaningWorkerId = null;
+  }
+}
+
 function calculateCafeLevel() {
   return getCafeLevelForServed(state.served);
 }
@@ -4928,6 +4967,46 @@ function isCloseEnoughToServicePc(entity, pc) {
   return distance(entity, getPcAccessPoint(pc)) <= 36 || distance(entity, { x: pc.seatX, y: pc.seatY }) <= 42;
 }
 
+function getPcServicePointCandidates(pc) {
+  const area = getAreaById(pc.areaId) || layout.room;
+  const bounds = getPcVisualBounds(pc);
+  const rawPoints = [
+    getPcAccessPoint(pc),
+    { x: pc.x + pc.w / 2, y: pc.y - 22 },
+    { x: pc.x + pc.w / 2, y: pc.y + pc.h + 28 },
+    { x: bounds.x - 18, y: bounds.y + bounds.h / 2 },
+    { x: bounds.x + bounds.w + 18, y: bounds.y + bounds.h / 2 },
+    { x: pc.seatX - 22, y: pc.seatY + 8 },
+    { x: pc.seatX + 22, y: pc.seatY + 8 }
+  ];
+  return rawPoints.map((point) => getAreaSafePoint(area, point.x, point.y)).filter(Boolean);
+}
+
+function getBestPcServicePoint(entity, pc) {
+  if (!entity || !pc) return null;
+  const previousIgnoredPcId = entity.movementIgnorePcId;
+  entity.movementIgnorePcId = pc.id;
+  const candidates = getPcServicePointCandidates(pc)
+    .filter((point) => canStandAtMovementPoint(entity, point))
+    .map((point) => ({
+      point,
+      score: distance(entity, point) + (getMovementBlockerForRoute(entity, point, entity) ? 120 : 0)
+    }))
+    .sort((a, b) => a.score - b.score);
+  entity.movementIgnorePcId = previousIgnoredPcId;
+  return candidates.length ? candidates[0].point : getPcAccessPoint(pc);
+}
+
+function moveToPcServicePoint(entity, pc, speed, dt) {
+  if (!entity || !pc) return false;
+  const previousIgnoredPcId = entity.movementIgnorePcId;
+  entity.movementIgnorePcId = pc.id;
+  const servicePoint = getBestPcServicePoint(entity, pc);
+  const arrived = servicePoint && (distance(entity, servicePoint) <= 26 || moveToward(entity, servicePoint, speed, dt));
+  entity.movementIgnorePcId = previousIgnoredPcId;
+  return Boolean(arrived || isCloseEnoughToServicePc(entity, pc));
+}
+
 function findFreePc(guest = null) {
   if (guest && guest.guestType) {
     return layout.pcs.find((pc) => pcMatchesGuest(pc, guest.guestType));
@@ -5389,6 +5468,7 @@ function updateCleanliness(dt) {
 }
 
 function assignWorkerTasks() {
+  sanitizeWorkerTaskLocks();
   getIdleWorkers().forEach((worker) => {
     if (canWorkerRepair(worker) && assignRepairTask(worker)) return;
     if (canWorkerDeliver(worker) && assignDeliveryTask(worker)) return;
@@ -5465,7 +5545,9 @@ function assignCleaningTask(worker) {
 }
 
 function assignPcCleaningTask(worker) {
-  const pc = layout.pcs.find((item) => item.dirty && !item.cleanWorkerId);
+  const pc = layout.pcs
+    .filter((item) => item.dirty && !item.cleanWorkerId)
+    .sort((a, b) => distance(worker, getPcAccessPoint(a)) - distance(worker, getPcAccessPoint(b)))[0];
   if (!pc) return false;
 
   pc.cleanWorkerId = worker.id;
@@ -5537,7 +5619,7 @@ function updateWorkers(dt) {
         resetWorker(worker);
         return;
       }
-      if (isCloseEnoughToServicePc(worker, pc) || moveToPcSeat(worker, pc, 58, dt)) {
+      if (moveToPcServicePoint(worker, pc, 58, dt)) {
         worker.state = "cleaningPc";
         worker.pathTimer = 0;
         worker.taskTimer = 1.6;
@@ -5554,7 +5636,7 @@ function updateWorkers(dt) {
         resetWorker(worker);
         return;
       }
-      if (isCloseEnoughToServicePc(worker, pc) || moveToPcSeat(worker, pc, 58, dt)) {
+      if (moveToPcServicePoint(worker, pc, 58, dt)) {
         worker.state = "repairingPc";
         worker.pathTimer = 0;
         worker.taskTimer = 1.25;
