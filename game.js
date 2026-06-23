@@ -19,11 +19,11 @@ const AUDIO_SOURCES = {
   click: "audio/click.wav"
 };
 const CODE_DRAWN_VISUALS_ONLY = true;
-const GAME_VERSION = "Beta06240115C";
+const GAME_VERSION = "Beta06240133C";
 const SEAT_LAYOUT_VERSION = {
   stage: "Bate",
-  modifiedAt: "2026-06-24 01:15",
-  code: "06240115"
+  modifiedAt: "2026-06-24 01:33",
+  code: "06240133"
 };
 const PLAY_PROGRESS_COLOR = "#e83f3f";
 const STUCK_REROUTE_SECONDS = 0.65;
@@ -331,9 +331,9 @@ function createLayout() {
     cashier: { x: counter.x + counter.w - 22, y: counter.y + counter.h - 8 },
     floor: { x: room.x + 34, y: room.y + room.h - 76 },
     cleaner: { x: room.x + room.w - 34, y: room.y + room.h - 76 },
-    // Manager and repairman stand parallel behind the counter with clear separation.
-    manager: { x: counter.x + counter.w * 0.28, y: counter.y + 22 },
-    repairman: { x: counter.x + counter.w * 0.62, y: counter.y + 22 },
+    // Manager at far-left of counter, repairman at center — fixed pixel offsets for reliable gap.
+    manager: { x: counter.x + 14, y: counter.y + 20 },
+    repairman: { x: counter.x + 64, y: counter.y + 20 },
     companion: { x: room.x + room.w - 70, y: room.y + 90 }
   };
 
@@ -3144,7 +3144,7 @@ function isMahjongPlacementValid(area, table) {
   return !overlapsPc && !overlapsTable && !overlapsPartition && !blocksDoor && !narrowGap;
 }
 
-function placePendingMahjongPurchaseAtPreview() {
+function placePendingMahjongPurchase(worldX, worldY) {
   if (!state.pendingMahjongPurchase) return false;
 
   if (state.cash < MAHJONG_TABLE_COST) {
@@ -3153,8 +3153,7 @@ function placePendingMahjongPurchaseAtPreview() {
     return true;
   }
 
-  const center = getViewportWorldCenter();
-  const candidate = getMahjongPurchaseCandidate(center.x, center.y);
+  const candidate = getMahjongPurchaseCandidate(worldX, worldY);
   if (!candidate.canPlace) {
     say("\u9ebb\u5c06\u684c\u9700\u8981\u653e\u5728\u68cb\u724c\u5ba4\u5185\uff0c\u5e76\u907f\u5f00\u95e8\u6d1e\u548c\u8bbe\u5907\uff0c\u7559\u51fa\u901a\u9053\u3002");
     return true;
@@ -3166,6 +3165,11 @@ function placePendingMahjongPurchaseAtPreview() {
   markSaveDirty();
   say(`${candidate.area.name} \u5df2\u6446\u653e\u9ebb\u5c06\u684c\u3002`);
   return true;
+}
+
+function placePendingMahjongPurchaseAtPreview() {
+  const center = getViewportWorldCenter();
+  return placePendingMahjongPurchase(center.x, center.y);
 }
 
 function createWorker(type) {
@@ -4244,11 +4248,15 @@ function handleTouch(x, y) {
     return;
   }
 
-  if (placePendingPcPurchaseAtPreview()) {
+  // Place at the tapped world position so the user can tap exactly where they want
+  // the PC — avoids confusion caused by staff walking through the viewport center area.
+  if (state.pendingPcPurchase) {
+    placePendingPcPurchase(worldPoint.x, worldPoint.y);
     return;
   }
 
-  if (placePendingMahjongPurchaseAtPreview()) {
+  if (state.pendingMahjongPurchase) {
+    placePendingMahjongPurchase(worldPoint.x, worldPoint.y);
     return;
   }
 
@@ -8957,6 +8965,8 @@ function drawWorker(worker) {
     return;
   }
 
+  const isMopping = worker.state === "moppingFloor" || worker.state === "toMopFloor";
+
   drawScaledPerson(x, y, () => {
     ellipse(x, y + 8, 13, 5, "rgba(18, 30, 36, 0.2)");
     circle(x, y - 15, 7, "#f3c596");
@@ -8969,12 +8979,29 @@ function drawWorker(worker) {
     roundedRect(x + 7, y - 5, 4, 12, 3, "#f3c596");
     roundedRect(x - 7, y + 6, 6, 10, 3, "#24384a");
     roundedRect(x + 1, y + 6, 6, 10, 3, "#24384a");
+
+    if (isMopping) {
+      // Mop handle: oscillates left-right using state.time
+      const swing = Math.sin(state.time * 5) * 5;
+      const hx = x + 12 + swing;
+      rect(hx - 1, y - 22, 2, 30, "#8b6c45");
+      // Mop head (wider wet strip at bottom)
+      rect(hx - 8, y + 7, 16, 5, "#7fc4de");
+      rect(hx - 6, y + 10, 12, 2, "#aadff5");
+      // Water sparkle dots
+      if (Math.sin(state.time * 7 + 1) > 0.3) {
+        circle(hx - 10 + Math.abs(swing), y + 14, 2, "rgba(100,200,240,0.7)");
+      }
+      if (Math.sin(state.time * 7 - 0.5) > 0.4) {
+        circle(hx + 8 - Math.abs(swing) * 0.5, y + 13, 1.5, "rgba(100,200,240,0.6)");
+      }
+    }
   });
 
-  const label = getWorkerLabel(worker.type);
+  const label = isMopping ? "拖地中" : getWorkerLabel(worker.type);
   const bubbleW = Math.max(32, label.length * 13 + 8);
   rect(x - bubbleW / 2 - 1, y - 35, bubbleW + 2, 19, COLORS.line);
-  rect(x - bubbleW / 2, y - 34, bubbleW, 17, "#fff7dd");
+  rect(x - bubbleW / 2, y - 34, bubbleW, 17, isMopping ? "#d4f0ff" : "#fff7dd");
   text(label, x, y - 32, 10, COLORS.line, "bold", "center");
 }
 
