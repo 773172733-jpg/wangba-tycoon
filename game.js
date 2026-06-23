@@ -3125,10 +3125,13 @@ function getWorkerRoamTarget(worker) {
   const points = getWorkerPatrolPoints();
   if (!points.length) return getWorkerHome(worker);
   const current = worker.idleTarget;
-  const currentIndex = current ? points.findIndex((point) => Math.hypot(point.x - current.x, point.y - current.y) < 2) : -1;
+  const currentIndex = current
+    ? points.findIndex((point) => Math.hypot(point.x - current.x, point.y - current.y) < 2)
+    : -1;
+  const offset = (worker.homeIndex || 0) % points.length;
   const nextIndex = currentIndex >= 0
-    ? (currentIndex + 3 + (worker.homeIndex || 0)) % points.length
-    : (worker.id + Math.floor((state.time || 0) / 7)) % points.length;
+    ? (currentIndex + 1) % points.length
+    : (worker.id + offset + Math.floor((state.time || 0) / 7)) % points.length;
   worker.idleTarget = points[nextIndex];
   worker.idleTimer = 0;
   return worker.idleTarget;
@@ -5513,8 +5516,8 @@ function updateWorkers(dt) {
       if (shouldWorkerRoam(worker)) {
         worker.idleTimer = (worker.idleTimer || 0) + dt;
         const target = worker.idleTarget || getWorkerRoamTarget(worker);
-        const arrived = moveToward(worker, target, 36, dt);
-        if (arrived || distance(worker, target) <= 8 || worker.idleTimer > 7) {
+        const arrived = moveToward(worker, target, 22, dt);
+        if (arrived || distance(worker, target) <= 8 || worker.idleTimer > 12) {
           worker.stuckTimer = 0;
           worker.detourPoint = null;
           clearEntityNavigation(worker);
@@ -5843,14 +5846,21 @@ function updateGuests(dt) {
     if (guest.state === "backToPc") {
       guest.pathTimer = (guest.pathTimer || 0) + dt;
       const pc = layout.pcs[guest.pcId];
-      const arrived = moveToPcSeat(guest, pc, guest.speed, dt);
-      if (arrived || guest.pathTimer > 8) {
-        if (pc) {
-          guest.x = pc.seatX;
-          guest.y = pc.seatY;
-        }
+      if (!pc) {
         guest.state = "playing";
         guest.pathTimer = 0;
+        guest.movementIgnorePcId = null;
+        clearEntityNavigation(guest);
+        continue;
+      }
+      guest.movementIgnorePcId = pc.id;
+      const arrived = moveToPcSeat(guest, pc, guest.speed, dt);
+      if (arrived || guest.pathTimer > 8) {
+        guest.x = pc.seatX;
+        guest.y = pc.seatY;
+        guest.state = "playing";
+        guest.pathTimer = 0;
+        guest.movementIgnorePcId = null;
         clearEntityNavigation(guest);
       }
       continue;
