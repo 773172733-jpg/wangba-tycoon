@@ -19,11 +19,11 @@ const AUDIO_SOURCES = {
   click: "audio/click.wav"
 };
 const CODE_DRAWN_VISUALS_ONLY = true;
-const GAME_VERSION = "Beta06240050C";
+const GAME_VERSION = "Beta06240054C";
 const SEAT_LAYOUT_VERSION = {
   stage: "Bate",
-  modifiedAt: "2026-06-24 00:50",
-  code: "06240050"
+  modifiedAt: "2026-06-24 00:54",
+  code: "06240054"
 };
 const PLAY_PROGRESS_COLOR = "#e83f3f";
 const STUCK_REROUTE_SECONDS = 0.65;
@@ -304,7 +304,7 @@ function createLayout() {
 
   const pcTop = counter.y + 126;
   const pcGapX = room.w * 0.24;
-  const pcGapY = 148;
+  const pcGapY = 116;
   const pcLeft = room.x + room.w * 0.28;
 
   const pcs = [
