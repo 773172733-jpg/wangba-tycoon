@@ -19,11 +19,11 @@ const AUDIO_SOURCES = {
   click: "audio/click.wav"
 };
 const CODE_DRAWN_VISUALS_ONLY = true;
-const GAME_VERSION = "Beta06240054C";
+const GAME_VERSION = "Beta06240104C";
 const SEAT_LAYOUT_VERSION = {
   stage: "Bate",
-  modifiedAt: "2026-06-24 00:54",
-  code: "06240054"
+  modifiedAt: "2026-06-24 01:04",
+  code: "06240104"
 };
 const PLAY_PROGRESS_COLOR = "#e83f3f";
 const STUCK_REROUTE_SECONDS = 0.65;
@@ -1134,6 +1134,8 @@ function finishFloorLayoutSession() {
         state.selectedPcId = null;
         state.selectedPartitionId = null;
         state.selectedPropId = null;
+        // Walls have just snapped back \u2014 rescue anyone that wandered into the draft area.
+        rescueEntitiesOutsideWalkableArea();
         say("\u5df2\u53d6\u6d88\u672c\u6b21\u94fa\u7816\uff0c\u6062\u590d\u539f\u6765\u7684\u5730\u7816\u5e03\u5c40\u3002");
       }
     );
@@ -2587,13 +2589,10 @@ function getToiletServicePoint() {
 
 function hasReachedToiletService(entity) {
   if (!entity) return false;
-  const servicePoint = getToiletServicePoint();
-  if (distance(entity, servicePoint) <= 28) return true;
-  const doorArea = getAttachableAreas()
-    .filter((area) => area.id !== layout.toilet.id && sharesWall(area, layout.toilet))
-    .map((area) => getDoorGeometryBetween(area, layout.toilet))
-    .filter(Boolean)[0];
-  return Boolean(doorArea && distance(entity, doorArea.center) <= 24);
+  // Only accept positions within the service point inside the toilet.
+  // The old "doorArea.center <= 24" check could fire while the entity was still in the
+  // main room (door center is on the wall boundary), causing invisible cleans.
+  return distance(entity, getToiletServicePoint()) <= 20;
 }
 
 function startGuestUsingToilet(guest) {
@@ -3753,6 +3752,7 @@ function cancelLayoutTool() {
   state.selectedPartitionId = null;
   state.selectedPropId = null;
   state.layoutMode = "off";
+  rescueEntitiesOutsideWalkableArea();
   say("\u5df2\u9000\u51fa\u5e03\u5c40\u64cd\u4f5c\u3002");
 }
 
@@ -6046,18 +6046,20 @@ function updateWorkers(dt) {
         resetWorker(worker);
         return;
       }
-      const toiletBounds = { x: layout.toilet.x - 8, y: layout.toilet.y - 24, w: layout.toilet.w + 16, h: layout.toilet.h + 36 };
-      const toiletDistance = distanceToRect(worker, toiletBounds);
-      const nearToilet = toiletDistance <= 28 && worker.pathTimer > 0.8;
-      // Threshold reduced from 110px to 52px — the cleaner was completing toilet cleaning
-      // while standing outside the door blocked by a plant, never actually entering.
-      const blockedNearToilet = toiletDistance <= 52 && worker.pathTimer > 6.0;
+      const toiletServicePoint = getToiletServicePoint();
       // Cleaners ignore all PCs when walking to the toilet so they don't get stuck
-      // at desk corners on their path (e.g. PC #3 blocking the route to the right wall).
+      // at desk corners (e.g. PC #3 blocking the right-wall route).
       const toiletArrived = runWithIgnoredPcs(worker, layout.pcs.map((pc) => pc.id), () => (
-        moveToward(worker, getToiletServicePoint(), 58, dt)
+        moveToward(worker, toiletServicePoint, 58, dt)
       ));
-      if (nearToilet || blockedNearToilet || toiletArrived || hasReachedToiletService(worker)) {
+      // True fallback: only after 7 seconds of pathTimer AND still very close to the toilet
+      // (toilet actual bounds, no inflation) — prevents completing from outside the door.
+      const toiletActualBounds = layout.toilet;
+      const blockedNearToilet = distanceToRect(worker, toiletActualBounds) <= 36 && worker.pathTimer > 7.0;
+      if (toiletArrived || hasReachedToiletService(worker) || blockedNearToilet) {
+        // Snap worker inside the toilet so they are visually present before cleaning animation.
+        worker.x = toiletServicePoint.x;
+        worker.y = toiletServicePoint.y;
         worker.state = "cleaningToilet";
         worker.pathTimer = 0;
         worker.taskTimer = 1.2;
@@ -6177,6 +6179,38 @@ function serveGuestDemandByWorker(guest) {
   say(`\u5458\u5de5\u9001\u51fa ${product.name}\uff0c\u989d\u5916\u6536\u5165 ${product.sellPrice} \u5143\u3002`);
   guest.demand = null;
   return true;
+}
+
+// Called after any layout change that could shrink the walkable area (e.g. cancelling a
+// floor-tile draft). Teleports entities that ended up outside walkable bounds to their
+// home position so they are not permanently stuck inside walls.
+function rescueEntitiesOutsideWalkableArea() {
+  const roomCenter = { x: layout.room.x + layout.room.w / 2, y: layout.room.y + layout.room.h / 2 };
+
+  state.workers.forEach((worker) => {
+    if (!getWalkableAreaAtPoint(worker.x, worker.y) && !isEntranceWalkway(worker.x, worker.y)) {
+      const home = getWorkerHome(worker);
+      const safePos = (home && getWalkableAreaAtPoint(home.x, home.y)) ? home : roomCenter;
+      worker.x = safePos.x;
+      worker.y = safePos.y;
+      worker.stuckTimer = 0;
+      worker.detourPoint = null;
+      clearEntityNavigation(worker);
+      resetWorker(worker);
+    }
+  });
+
+  state.guests.forEach((guest) => {
+    if (!getWalkableAreaAtPoint(guest.x, guest.y) && !isEntranceWalkway(guest.x, guest.y)) {
+      // Send displaced guests back toward the entrance to leave naturally.
+      guest.x = layout.entrance.x + 4;
+      guest.y = layout.entrance.y;
+      guest.state = "leaving";
+      guest.stuckTimer = 0;
+      guest.detourPoint = null;
+      clearEntityNavigation(guest);
+    }
+  });
 }
 
 function resetWorker(worker) {
