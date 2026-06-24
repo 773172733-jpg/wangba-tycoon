@@ -19,11 +19,11 @@ const AUDIO_SOURCES = {
   click: "audio/click.wav"
 };
 const CODE_DRAWN_VISUALS_ONLY = true;
-const GAME_VERSION = "Beta06241330G";
+const GAME_VERSION = "Beta06241402G";
 const SEAT_LAYOUT_VERSION = {
   stage: "Bate",
-  modifiedAt: "2026-06-24 13:30",
-  code: "06241330"
+  modifiedAt: "2026-06-24 14:02",
+  code: "06241402"
 };
 const PLAY_PROGRESS_COLOR = "#e83f3f";
 const STUCK_REROUTE_SECONDS = 0.65;
@@ -331,9 +331,9 @@ function createLayout() {
     cashier: { x: counter.x + counter.w - 22, y: counter.y + counter.h - 8 },
     floor: { x: room.x + 34, y: room.y + room.h - 76 },
     cleaner: { x: room.x + room.w - 34, y: room.y + room.h - 76 },
-    // Manager at far-left of counter, repairman at center — fixed pixel offsets for reliable gap.
+    // Keep manager inside the counter and repairman beside the left edge so labels do not overlap.
     manager: { x: counter.x + 14, y: counter.y + 20 },
-    repairman: { x: counter.x + 34, y: counter.y + 20 },
+    repairman: { x: counter.x - 26, y: counter.y + 46 },
     companion: { x: room.x + room.w - 70, y: room.y + 90 }
   };
 
@@ -1113,6 +1113,7 @@ function finishFloorLayoutSession() {
     state.selectedPcId = null;
     state.selectedPartitionId = null;
     state.selectedPropId = null;
+    clearAllEntityNavigation();
     markSaveDirty();
     say(summary.extraCount > 0
       ? `\u5df2\u786e\u8ba4\u94fa\u8bbe ${summary.placedCount} \u5757\u5730\u7816\uff0c\u65b0\u589e ${summary.extraCount} \u5757\uff0c\u82b1\u8d39 ${summary.cost} \u5143\u3002`
@@ -1137,6 +1138,7 @@ function finishFloorLayoutSession() {
         state.selectedPartitionId = null;
         state.selectedPropId = null;
         // Walls have just snapped back \u2014 rescue anyone that wandered into the draft area.
+        clearAllEntityNavigation();
         rescueEntitiesOutsideWalkableArea();
         say("\u5df2\u53d6\u6d88\u672c\u6b21\u94fa\u7816\uff0c\u6062\u590d\u539f\u6765\u7684\u5730\u7816\u5e03\u5c40\u3002");
       }
@@ -1162,6 +1164,7 @@ function addPublicFloor(worldX, worldY) {
   ));
   if (existingIndex >= 0) {
     state.publicFloors.splice(existingIndex, 1);
+    clearAllEntityNavigation();
     const summary = getFloorLayoutSessionCostText();
     say(`\u5df2\u79fb\u9664\u8fd9\u5757\u516c\u533a\u5730\u7816\u3002\u5f53\u524d ${summary.placedCount} \u5757\uff0c\u5f85\u652f\u4ed8 ${summary.cost} \u5143\u3002`);
     return;
@@ -1188,6 +1191,7 @@ function addPublicFloor(worldX, worldY) {
   candidate.floor.typeId = "publicFloor";
   candidate.floor.name = "\u516c\u533a\u5730\u7816";
   state.publicFloors.push(candidate.floor);
+  clearAllEntityNavigation();
   const summary = getFloorLayoutSessionCostText();
   say(candidate.hostType === "floor"
     ? `\u516c\u533a\u8fc7\u9053\u5df2\u5ef6\u5c55\u3002\u672c\u6b21\u65b0\u589e ${summary.extraCount} \u5757\uff0c\u5f85\u652f\u4ed8 ${summary.cost} \u5143\u3002`
@@ -2877,6 +2881,24 @@ function getPcSeatBounds(pc) {
   };
 }
 
+function getPcSeatMovementBounds(pc) {
+  const seat = getPcSeatBounds(pc);
+  return {
+    x: seat.x + 5,
+    y: seat.y + 6,
+    w: Math.max(8, seat.w - 10),
+    h: Math.max(12, seat.h - 12)
+  };
+}
+
+function getPcActualArea(pc) {
+  if (!pc) return null;
+  return getWalkableAreaAtPoint(pc.seatX, pc.seatY) ||
+    getWalkableAreaAtPoint(pc.x + pc.w / 2, pc.y + pc.h / 2) ||
+    getAreaById(pc.areaId) ||
+    layout.room;
+}
+
 function unionRects(a, b, padding = 0) {
   const x = Math.min(a.x, b.x) - padding;
   const y = Math.min(a.y, b.y) - padding;
@@ -3094,6 +3116,7 @@ function placePendingPcPurchase(worldX, worldY) {
   candidate.pc.areaId = owningArea ? owningArea.id : candidate.pc.areaId;
   candidate.pc.areaName = candidate.pc.areaId === 1 ? "\u5ba2\u5385" : candidate.area.name;
   layout.pcs.push(candidate.pc);
+  clearAllEntityNavigation();
   rescueEntitiesFromNewPc(candidate.pc);
   state.pendingPcPurchase = null;
   updateEquipmentLevel();
@@ -3246,8 +3269,8 @@ function getWorkerHome(worker) {
     ],
     manager: [getManagerCounterStation()],
     repairman: [
-      { x: counter.x + 34, y: counter.y + 22 },
-      { x: counter.x + 60, y: counter.y + 22 }
+      { x: counter.x - 26, y: counter.y + counter.h - 4 },
+      { x: counter.x - 48, y: counter.y + counter.h + 18 }
     ],
     companion: serviceStations.slice(2).concat(serviceStations.slice(0, 2)),
     floor: [getWorkerPatrolPoint(worker, 0)],
@@ -4413,7 +4436,7 @@ function getCenteredScaledRect(rectValue, scale) {
 }
 
 function getPcMovementBounds(pc) {
-  return getCenteredScaledRect(getPcDeskBounds(pc), SOFT_MOVEMENT_COLLISION_SCALE);
+  return getPcSeatMovementBounds(pc);
 }
 
 function getPropMovementBounds(prop) {
@@ -4465,6 +4488,18 @@ function clearEntityNavigation(entity) {
   entity.navPath = null;
   entity.navIndex = 0;
   entity.navTargetKey = null;
+}
+
+function clearAllEntityNavigation() {
+  state.guests.forEach(clearEntityNavigation);
+  state.workers.forEach((worker) => {
+    worker.detourPoint = null;
+    worker.idleTarget = null;
+    worker.idleTimer = 0;
+    worker.stuckTimer = 0;
+    clearEntityNavigation(worker);
+  });
+  _movementBlockingRectsCache = null;
 }
 
 function getNavigationTargetKey(entity, target) {
@@ -5165,11 +5200,16 @@ function moveToward(entity, target, speed, dt) {
   }
 
   if (moved) {
+    const previousTargetDistance = len;
     entity.x = movedX;
     entity.y = movedY;
-    // Any successful movement — including wall-sliding — resets the stuck timer.
-    // The old logic incremented stuckTimer even during valid slides, causing false reroutes.
-    entity.stuckTimer = 0;
+    // Sliding only resets the stuck timer when it really gets closer to the route target.
+    const nextTargetDistance = distance(entity, moveTarget);
+    if (nextTargetDistance < previousTargetDistance - 0.2) {
+      entity.stuckTimer = 0;
+    } else {
+      entity.stuckTimer = (entity.stuckTimer || 0) + dt * 0.5;
+    }
     if (entity.navPath && distance(entity, moveTarget) <= 5 && entity.navIndex < entity.navPath.length - 1) {
       entity.navIndex += 1;
     }
@@ -5224,7 +5264,7 @@ function moveToward(entity, target, speed, dt) {
 }
 
 function getPcAccessPoint(pc) {
-  const area = getAreaById(pc.areaId) || layout.room;
+  const area = getPcActualArea(pc);
   const rotation = getNormalizedRotation(pc);
   const point = { x: pc.seatX, y: pc.seatY };
   if (rotation === 90) {
@@ -5301,12 +5341,11 @@ function moveToPcSeat(entity, pc, speed, dt) {
 function isCloseEnoughToServicePc(entity, pc) {
   if (!entity || !pc) return false;
   return distance(entity, getPcAccessPoint(pc)) <= 22 ||
-    distance(entity, { x: pc.seatX, y: pc.seatY }) <= 24 ||
-    distanceToRect(entity, getPcVisualBounds(pc)) <= 8;
+    distance(entity, { x: pc.seatX, y: pc.seatY }) <= 24;
 }
 
 function getPcServicePointCandidates(pc) {
-  const area = getAreaById(pc.areaId) || layout.room;
+  const area = getPcActualArea(pc);
   const bounds = getPcVisualBounds(pc);
   const rawPoints = [
     getPcAccessPoint(pc),
@@ -5578,6 +5617,7 @@ function getGuestExitTarget(guest) {
 
 function updateLeavingGuest(guest, index, dt) {
   guest.pathTimer = (guest.pathTimer || 0) + dt;
+  guest.exitReleaseTimer = (guest.exitReleaseTimer || 0) + dt;
   const target = getGuestExitTarget(guest);
   const left = moveToward(guest, target, guest.speed + 8, dt);
 
@@ -5589,8 +5629,25 @@ function updateLeavingGuest(guest, index, dt) {
   if (left) {
     guest.exitStage = "outside";
     guest.pathTimer = 0;
+    guest.exitReleaseTimer = 0;
     guest.detourPoint = null;
     return;
+  }
+
+  const pc = layout.pcs[guest.pcId];
+  if (pc && guest.exitStage !== "outside" &&
+      guest.exitReleaseTimer > 3 &&
+      distanceToRect(guest, getPcVisualBounds(pc)) <= 70) {
+    const releasePoint = getSafePointAroundRect(guest, getPcVisualBounds(pc), getPcAccessPoint(pc));
+    if (releasePoint) {
+      guest.x = releasePoint.x;
+      guest.y = releasePoint.y;
+      guest.exitReleaseTimer = 0;
+      guest.stuckTimer = 0;
+      guest.detourPoint = null;
+      clearEntityNavigation(guest);
+      return;
+    }
   }
 
   if (guest.pathTimer > 2.4 || (guest.stuckTimer || 0) > 1.6) {
@@ -5786,6 +5843,7 @@ function finishPlaying(guest, pc) {
   guest.state = "leaving";
   guest.exitStage = "inside";
   guest.pathTimer = 0;
+  guest.exitReleaseTimer = 0;
   guest.detourPoint = null;
   state.cleanliness = Math.max(0, state.cleanliness - 3);
   markSaveDirty();
@@ -5850,10 +5908,11 @@ function assignDeliveryTask(worker) {
   return true;
 }
 
-function getGuestDeliveryPoint(guest) {
+function getGuestDeliveryPoint(guest, entity = null) {
   const pc = guest ? layout.pcs[guest.pcId] : null;
   if (pc) {
-    return getPcAccessPoint(pc);
+    const serviceEntity = entity || { x: guest.x, y: guest.y, movementIgnorePcId: pc.id };
+    return getBestPcServicePoint(serviceEntity, pc) || getPcAccessPoint(pc);
   }
   return guest ? { x: guest.x, y: guest.y + 18 } : null;
 }
@@ -5862,7 +5921,7 @@ function isWorkerCloseEnoughToDeliver(worker, guest, target) {
   if (!worker || !guest || !target) return false;
   // Removed "distance(worker, guest) <= 24" — that check triggered delivery when the
   // worker passed beside the PC without reaching the access point, causing mid-air handoffs.
-  return distance(worker, target) <= 16;
+  return distance(worker, target) <= 10;
 }
 
 function canServeDemandAutomatically(guest, worker) {
@@ -6121,7 +6180,7 @@ function updateWorkers(dt) {
     if (worker.state === "toDeliver") {
       worker.pathTimer = (worker.pathTimer || 0) + dt;
       const guest = state.guests.find((item) => item.id === worker.targetGuestId);
-      const deliveryPoint = getGuestDeliveryPoint(guest);
+      const deliveryPoint = getGuestDeliveryPoint(guest, worker);
       if (!guest || !guest.demand || guest.demand.productId !== worker.targetProductId || !deliveryPoint) {
         resetWorker(worker);
         return;
@@ -8079,10 +8138,10 @@ function drawToilet() {
   }
   roundedRect(toilet.x, toilet.y, toilet.w, toilet.h, 5, COLORS.wall);
   roundedRect(toilet.x + 4, toilet.y + 4, toilet.w - 8, 22, 4, needsCleaning ? "#b16b66" : COLORS.wallTop);
+  const toiletFloor = { x: toilet.x + 9, y: toilet.y + 32, w: toilet.w - 18, h: toilet.h - 42 };
+  drawTiledArea(toiletFloor);
   if (needsCleaning) {
-    rect(toilet.x + 9, toilet.y + 32, toilet.w - 18, toilet.h - 42, "#b58b68");
-  } else {
-    drawTiledArea({ x: toilet.x + 9, y: toilet.y + 32, w: toilet.w - 18, h: toilet.h - 42 });
+    rect(toiletFloor.x, toiletFloor.y, toiletFloor.w, toiletFloor.h, "rgba(139, 85, 43, 0.28)");
   }
   strokeRoundedRect(toilet.x, toilet.y, toilet.w, toilet.h, 5, COLORS.line, 2);
   rect(toilet.x + 12, toilet.y + 6, toilet.w - 24, 18, COLORS.line);
