@@ -36,13 +36,13 @@ const SPRITE_SCALE = {
 
 const products = [
   { id: "noodle", name: "\u6ce1\u9762", unlockLevel: 1, cost: 20, quantity: 10, sellPrice: 6 },
-  { id: "water", name: "\u77ff\u6cc9\u6c34", unlockLevel: 1, cost: 12, quantity: 12, sellPrice: 3 },
+  { id: "water", name: "\u6c34", unlockLevel: 1, cost: 12, quantity: 12, sellPrice: 3 },
   { id: "sausage", name: "\u70e4\u80a0", unlockLevel: 1, cost: 18, quantity: 10, sellPrice: 5 },
   { id: "betel", name: "\u69df\u6994", unlockLevel: 1, cost: 30, quantity: 10, sellPrice: 7 },
   { id: "cigarette", name: "\u9999\u70df", unlockLevel: 1, cost: 45, quantity: 5, sellPrice: 18 },
-  { id: "snack", name: "\u96f6\u98df\u5c0f\u5403", unlockLevel: 2, cost: 35, quantity: 10, sellPrice: 8 },
-  { id: "drink", name: "\u591a\u54c1\u79cd\u996e\u6599", unlockLevel: 2, cost: 42, quantity: 12, sellPrice: 7 },
-  { id: "meal", name: "\u9884\u5236\u5feb\u9910", unlockLevel: 3, cost: 80, quantity: 8, sellPrice: 18 },
+  { id: "snack", name: "\u96f6\u98df", unlockLevel: 2, cost: 35, quantity: 10, sellPrice: 8 },
+  { id: "drink", name: "\u996e\u6599", unlockLevel: 2, cost: 42, quantity: 12, sellPrice: 7 },
+  { id: "meal", name: "\u5feb\u9910", unlockLevel: 3, cost: 80, quantity: 8, sellPrice: 18 },
   { id: "milkTea", name: "\u5976\u8336", unlockLevel: 4, cost: 120, quantity: 10, sellPrice: 22 }
 ];
 
@@ -113,19 +113,10 @@ const partitionTypes = [
     id: "woodScreen",
     name: "\u6728\u8d28\u5c4f\u98ce",
     cost: 360,
-    w: 60,
-    h: 6,
+    w: 40,
+    h: 5,
     blockMove: true,
     desc: "\u53ef\u6a2a\u5411\u6446\u653e\u7684\u57fa\u7840\u9694\u65ad\u3002"
-  },
-  {
-    id: "soundWall",
-    name: "\u9694\u97f3\u5899",
-    cost: 680,
-    w: 72,
-    h: 7,
-    blockMove: true,
-    desc: "\u66f4\u9ad8\u7aef\u7684\u786c\u9694\u65ad\uff0c\u540e\u7eed\u63a5\u73af\u5883\u52a0\u6210\u3002"
   }
 ];
 
