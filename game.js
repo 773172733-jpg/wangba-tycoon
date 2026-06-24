@@ -19,7 +19,7 @@ const AUDIO_SOURCES = {
   click: "audio/click.wav"
 };
 const CODE_DRAWN_VISUALS_ONLY = true;
-const GAME_VERSION = "Beta06251234Ds";
+const GAME_VERSION = "Beta06250101Ds";
 const SEAT_LAYOUT_VERSION = {
   stage: "Bate",
   modifiedAt: "2026-06-24 14:02",
@@ -4501,6 +4501,7 @@ function clearEntityNavigation(entity) {
   entity.navPath = null;
   entity.navIndex = 0;
   entity.navTargetKey = null;
+  entity.detourPoint = null;
 }
 
 function clearAllEntityNavigation() {
@@ -6607,6 +6608,7 @@ function updateGuests(dt) {
         guest.state = "playing";
         guest.playTimer = guest.playDuration;
         guest.pathTimer = 0;
+        guest._navClearedOnce = false;
         clearEntityNavigation(guest);
       } else if (guest.pathTimer > 8 && distToSeat > 50) {
         if (pc) pc.occupiedBy = null;
@@ -6614,8 +6616,9 @@ function updateGuests(dt) {
         guest.state = "leaving";
         guest.pathTimer = 0;
         clearEntityNavigation(guest);
-      } else if (guest.pathTimer > 4.5 && distToSeat > 50) {
+      } else if (guest.pathTimer > 4.5 && distToSeat > 50 && !guest._navClearedOnce) {
         clearEntityNavigation(guest);
+        guest._navClearedOnce = true;
       }
       continue;
     }
@@ -6693,6 +6696,7 @@ function updateGuests(dt) {
         guest.state = "playing";
         guest.pathTimer = 0;
         guest.movementIgnorePcId = null;
+        guest._navClearedOnce = false;
         clearEntityNavigation(guest);
       } else if (guest.pathTimer > 10 && distToPc > 50) {
         if (pc) pc.occupiedBy = null;
@@ -6700,9 +6704,11 @@ function updateGuests(dt) {
         guest.state = "leaving";
         guest.pathTimer = 0;
         guest.movementIgnorePcId = null;
+        guest._navClearedOnce = false;
         clearEntityNavigation(guest);
-      } else if (guest.pathTimer > 8 && distToPc > 50) {
+      } else if (guest.pathTimer > 8 && distToPc > 50 && !guest._navClearedOnce) {
         clearEntityNavigation(guest);
+        guest._navClearedOnce = true;
       }
       continue;
     }
