@@ -19,11 +19,11 @@ const AUDIO_SOURCES = {
   click: "audio/click.wav"
 };
 const CODE_DRAWN_VISUALS_ONLY = true;
-const GAME_VERSION = "Beta06240133C";
+const GAME_VERSION = "Beta06241330G";
 const SEAT_LAYOUT_VERSION = {
   stage: "Bate",
-  modifiedAt: "2026-06-24 01:33",
-  code: "06240133"
+  modifiedAt: "2026-06-24 13:30",
+  code: "06241330"
 };
 const PLAY_PROGRESS_COLOR = "#e83f3f";
 const STUCK_REROUTE_SECONDS = 0.65;
@@ -333,7 +333,7 @@ function createLayout() {
     cleaner: { x: room.x + room.w - 34, y: room.y + room.h - 76 },
     // Manager at far-left of counter, repairman at center — fixed pixel offsets for reliable gap.
     manager: { x: counter.x + 14, y: counter.y + 20 },
-    repairman: { x: counter.x + 64, y: counter.y + 20 },
+    repairman: { x: counter.x + 34, y: counter.y + 20 },
     companion: { x: room.x + room.w - 70, y: room.y + 90 }
   };
 
@@ -2928,7 +2928,7 @@ function isPcLayoutPositionValid(area, pc, ignorePcId = null) {
   const seatBounds = getPcSeatBounds(pc);
   const coreBounds = unionRects(deskBounds, seatBounds, 0);
   if (area.id === 1) {
-    if (!isPcInsideHallNetwork(bounds)) return false;
+    if (!isPcInsideHallNetwork(coreBounds)) return false;
   } else {
     if (!isPcPositionSafeForArea(pc, area)) return false;
     const safeArea = {
@@ -2961,7 +2961,12 @@ function isPcLayoutPositionValid(area, pc, ignorePcId = null) {
 
   const fixedObstacles = area.id === 1 ? getFixedPcPlacementObstacles() : [];
   const doorObstacles = getAreaDoorPlacementObstacles(area);
-  if (hasNarrowPlacementGap(bounds, area, { pcId: ignorePcId }, { checkAreaEdges: Boolean(area.typeId !== "publicFloor") })) {
+  const isPublicFloorPlacement = area.typeId === "publicFloor" || area.isPublicFloorExtension;
+  const placementMinWidth = area.id === 1 || isPublicFloorPlacement ? 16 : PERSON_PATH_MIN_WIDTH;
+  if (hasNarrowPlacementGap(coreBounds, area, { pcId: ignorePcId }, {
+    checkAreaEdges: !isPublicFloorPlacement,
+    minWidth: placementMinWidth
+  })) {
     return false;
   }
   if (fixedObstacles.concat(doorObstacles).some((obstacle) => createsNarrowPathGap(bounds, obstacle))) {
@@ -3089,6 +3094,7 @@ function placePendingPcPurchase(worldX, worldY) {
   candidate.pc.areaId = owningArea ? owningArea.id : candidate.pc.areaId;
   candidate.pc.areaName = candidate.pc.areaId === 1 ? "\u5ba2\u5385" : candidate.area.name;
   layout.pcs.push(candidate.pc);
+  rescueEntitiesFromNewPc(candidate.pc);
   state.pendingPcPurchase = null;
   updateEquipmentLevel();
   updateCafeLevel();
@@ -3240,8 +3246,8 @@ function getWorkerHome(worker) {
     ],
     manager: [getManagerCounterStation()],
     repairman: [
-      { x: counter.x + 86, y: counter.y + 22 },
-      { x: counter.x + 112, y: counter.y + 22 }
+      { x: counter.x + 34, y: counter.y + 22 },
+      { x: counter.x + 60, y: counter.y + 22 }
     ],
     companion: serviceStations.slice(2).concat(serviceStations.slice(0, 2)),
     floor: [getWorkerPatrolPoint(worker, 0)],
@@ -3762,6 +3768,12 @@ function cancelLayoutTool() {
   say("\u5df2\u9000\u51fa\u5e03\u5c40\u64cd\u4f5c\u3002");
 }
 
+function cancelPendingPurchase() {
+  state.pendingPcPurchase = null;
+  state.pendingMahjongPurchase = false;
+  say("\u5df2\u9000\u51fa\u8d2d\u4e70\u653e\u7f6e\u3002");
+}
+
 function getUpgradeableTiers(pc) {
   return equipmentTiers.filter((tier) => tier.level > pc.equipmentLevel);
 }
@@ -4229,8 +4241,13 @@ function handleTouch(x, y) {
     return;
   }
 
-  if (state.layoutToolActive && isPointInRect(x, y, ui.cancelMoveButton)) {
-    cancelLayoutTool();
+  if ((state.layoutToolActive || state.pendingPcPurchase || state.pendingMahjongPurchase) &&
+      isPointInRect(x, y, ui.cancelMoveButton)) {
+    if (state.pendingPcPurchase || state.pendingMahjongPurchase) {
+      cancelPendingPurchase();
+    } else {
+      cancelLayoutTool();
+    }
     return;
   }
 
@@ -4363,7 +4380,7 @@ function getBlockingPartitionAtPoint(x, y, padding = 3) {
 
 function getMovementIgnoredPropIds(entity = null) {
   if (!entity || !entity.type) return [];
-  if (entity.type === "manager" || entity.type === "cashier") return ["counter"];
+  if (entity.type === "manager" || entity.type === "cashier" || entity.type === "repairman") return ["counter"];
   return [];
 }
 
@@ -4486,7 +4503,7 @@ function canTraverseMovementSegment(entity, from, to) {
 
 function getNavigationBounds(from, target) {
   const world = getExpandedWorldBounds();
-  const margin = 220;
+  const margin = 360;
   return {
     minX: Math.max(world.minX, Math.min(from.x, target.x) - margin),
     minY: Math.max(world.minY, Math.min(from.y, target.y) - margin),
@@ -4545,7 +4562,7 @@ function computeNavigationPath(entity, target) {
   ];
   let iterations = 0;
 
-  while (open.length && iterations < 1400) {
+  while (open.length && iterations < 5200) {
     iterations += 1;
     const current = open.shift(); // open is kept sorted on insert below
     if (closed.has(current.key)) continue;
@@ -5283,11 +5300,9 @@ function moveToPcSeat(entity, pc, speed, dt) {
 
 function isCloseEnoughToServicePc(entity, pc) {
   if (!entity || !pc) return false;
-  // Thresholds tightened: 44→26px (access point), 52→32px (seat).
-  // The original values let workers service PCs from nearly a full desk-width away.
-  return distance(entity, getPcAccessPoint(pc)) <= 26 ||
-    distance(entity, { x: pc.seatX, y: pc.seatY }) <= 32 ||
-    distanceToRect(entity, getPcVisualBounds(pc)) <= 18;
+  return distance(entity, getPcAccessPoint(pc)) <= 22 ||
+    distance(entity, { x: pc.seatX, y: pc.seatY }) <= 24 ||
+    distanceToRect(entity, getPcVisualBounds(pc)) <= 8;
 }
 
 function getPcServicePointCandidates(pc) {
@@ -5787,8 +5802,9 @@ function updateCleanliness(dt) {
     guest.state === "usingToilet" ||
     guest.state === "backToPc"
   )).length;
-  const toiletPenalty = isToiletNeedsCleaning() ? 0.01 : 0;
-  const decay = (0.0012 * activeGuests + 0.006 * dirtyPcCount + toiletPenalty) * dt;
+  const toiletPenalty = isToiletNeedsCleaning() ? 0.026 : 0;
+  const floorWear = activeGuests > 0 ? 0.001 + activeGuests * 0.0007 : 0;
+  const decay = (0.0015 * activeGuests + 0.012 * dirtyPcCount + toiletPenalty + floorWear) * dt;
 
   state.cleanliness = Math.max(0, state.cleanliness - decay);
 }
@@ -5922,6 +5938,8 @@ function updateWorkers(dt) {
   updateManagerRestock(dt);
 
   state.workers.forEach((worker) => {
+    if (updateWorkerEntrapment(worker, dt)) return;
+
     if (worker.state === "station") {
       if (shouldWorkerRoam(worker)) {
         worker.idleTimer = (worker.idleTimer || 0) + dt;
@@ -5984,11 +6002,7 @@ function updateWorkers(dt) {
         resetWorker(worker);
         return;
       }
-      const nearDirtyPc = distanceToRect(worker, getPcVisualBounds(pc)) <= 34 && worker.pathTimer > 1.2;
-      // Threshold reduced from 92px to 44px — 92px was so large the worker could trigger
-      // cleaning from the other side of a plant without ever reaching the PC.
-      const blockedNearDirtyPc = distanceToRect(worker, getPcVisualBounds(pc)) <= 44 && worker.pathTimer > 3.5;
-      if (nearDirtyPc || blockedNearDirtyPc || moveToPcServicePoint(worker, pc, 58, dt)) {
+      if (moveToPcServicePoint(worker, pc, 58, dt)) {
         worker.state = "cleaningPc";
         worker.pathTimer = 0;
         worker.taskTimer = 1.6;
@@ -6005,9 +6019,7 @@ function updateWorkers(dt) {
         resetWorker(worker);
         return;
       }
-      const nearBrokenPc = distanceToRect(worker, getPcVisualBounds(pc)) <= 34 && worker.pathTimer > 1.2;
-      const blockedNearBrokenPc = distanceToRect(worker, getPcVisualBounds(pc)) <= 44 && worker.pathTimer > 3.5;
-      if (nearBrokenPc || blockedNearBrokenPc || moveToPcServicePoint(worker, pc, 58, dt)) {
+      if (moveToPcServicePoint(worker, pc, 58, dt)) {
         worker.state = "repairingPc";
         worker.pathTimer = 0;
         worker.taskTimer = 1.25;
@@ -6217,6 +6229,99 @@ function rescueEntitiesOutsideWalkableArea() {
       clearEntityNavigation(guest);
     }
   });
+}
+
+function getWorkerFallbackPoint(worker) {
+  const home = getWorkerHome(worker);
+  if (home && canStandAtMovementPoint(worker, home)) return home;
+
+  const counter = layout.counter;
+  const fallback = getAreaSafePoint(layout.room, counter.x + 42, counter.y + counter.h + 34);
+  if (fallback && canStandAtMovementPoint(worker, fallback)) return fallback;
+
+  return getAreaSafePoint(layout.room, layout.room.x + layout.room.w / 2, layout.room.y + 108) ||
+    { x: layout.entrance.x + 18, y: layout.entrance.y };
+}
+
+function resetWorkerToFallback(worker) {
+  const fallback = getWorkerFallbackPoint(worker);
+  resetWorker(worker);
+  worker.x = fallback.x;
+  worker.y = fallback.y;
+  worker.trappedTimer = 0;
+  worker.stuckTimer = 0;
+  worker.detourPoint = null;
+  clearEntityNavigation(worker);
+}
+
+function getSafePointAroundRect(entity, rectValue, fallbackPoint = null) {
+  const gap = 18;
+  const candidates = [
+    { x: rectValue.x - gap, y: rectValue.y + rectValue.h / 2 },
+    { x: rectValue.x + rectValue.w + gap, y: rectValue.y + rectValue.h / 2 },
+    { x: rectValue.x + rectValue.w / 2, y: rectValue.y - gap },
+    { x: rectValue.x + rectValue.w / 2, y: rectValue.y + rectValue.h + gap },
+    { x: rectValue.x - gap, y: rectValue.y - gap },
+    { x: rectValue.x + rectValue.w + gap, y: rectValue.y - gap },
+    { x: rectValue.x - gap, y: rectValue.y + rectValue.h + gap },
+    { x: rectValue.x + rectValue.w + gap, y: rectValue.y + rectValue.h + gap }
+  ];
+  if (fallbackPoint) candidates.push(fallbackPoint);
+
+  return candidates
+    .map((point) => {
+      const area = getWalkableAreaAtPoint(point.x, point.y);
+      return area ? getAreaSafePoint(area, point.x, point.y) : point;
+    })
+    .filter((point) => point && canStandAtMovementPoint(entity, point))
+    .sort((a, b) => distance(entity, a) - distance(entity, b))[0] || fallbackPoint;
+}
+
+function rescueEntitiesFromRect(rectValue) {
+  if (!rectValue) return;
+  const padded = inflateRect(rectValue, 2);
+
+  state.workers.forEach((worker) => {
+    if (!isPointInsideRect(worker.x, worker.y, padded)) return;
+    const fallback = getWorkerFallbackPoint(worker);
+    const point = getSafePointAroundRect(worker, padded, fallback) || fallback;
+    resetWorker(worker);
+    worker.x = point.x;
+    worker.y = point.y;
+    worker.trappedTimer = 0;
+    clearEntityNavigation(worker);
+  });
+
+  state.guests.forEach((guest) => {
+    if (guest.state === "playing" || !isPointInsideRect(guest.x, guest.y, padded)) return;
+    const fallback = { x: layout.entrance.x + 18, y: layout.entrance.y };
+    const point = getSafePointAroundRect(guest, padded, fallback) || fallback;
+    guest.x = point.x;
+    guest.y = point.y;
+    guest.stuckTimer = 0;
+    guest.detourPoint = null;
+    clearEntityNavigation(guest);
+  });
+}
+
+function rescueEntitiesFromNewPc(pc) {
+  rescueEntitiesFromRect(getPcVisualBounds(pc));
+}
+
+function updateWorkerEntrapment(worker, dt) {
+  const trapped = (!getWalkableAreaAtPoint(worker.x, worker.y) && !isEntranceWalkway(worker.x, worker.y)) ||
+    isWalkBlockingPoint(worker.x, worker.y, worker);
+  if (!trapped) {
+    worker.trappedTimer = 0;
+    return false;
+  }
+
+  worker.trappedTimer = (worker.trappedTimer || 0) + dt;
+  if (worker.trappedTimer < 5) return false;
+
+  resetWorkerToFallback(worker);
+  say(`${getWorkerLabel(worker.type)}\u88ab\u5361\u4f4f\uff0c\u5df2\u56de\u5230\u5427\u53f0\u9644\u8fd1\u91cd\u65b0\u5de1\u903b\u3002`);
+  return true;
 }
 
 function resetWorker(worker) {
@@ -7501,8 +7606,11 @@ function drawPcUpgradeMenu() {
 function drawLayoutToolControls() {
   ui.cancelMoveButton = null;
   ui.rotatePartitionButton = null;
-  if (!state.layoutToolActive) return;
-  const label = state.layoutMode === "pc" ? "\u9000\u51fa\u79fb\u52a8" : state.layoutMode === "deleteArea" ? "\u9000\u51fa\u5220\u9664" : "\u9000\u51fa\u5e03\u5c40";
+  const placingPurchase = Boolean(state.pendingPcPurchase || state.pendingMahjongPurchase);
+  if (!state.layoutToolActive && !placingPurchase) return;
+  const label = placingPurchase
+    ? "\u9000\u51fa\u8d2d\u4e70"
+    : state.layoutMode === "pc" ? "\u9000\u51fa\u79fb\u52a8" : state.layoutMode === "deleteArea" ? "\u9000\u51fa\u5220\u9664" : "\u9000\u51fa\u5e03\u5c40";
   const messageY = view.height - ACTION_BAR_HEIGHT - MESSAGE_BAR_HEIGHT - 10;
   ui.cancelMoveButton = {
     x: Math.round(view.width / 2 - 58),
@@ -8752,7 +8860,7 @@ function drawSettingsPanel() {
   text(`\u5f53\u524d\uff1a${modeLabel}`, panel.x + 24, panel.y + 66, 15, COLORS.line, "bold");
   text(modeDesc, panel.x + 24, panel.y + 93, 11, "#5d4532", "bold");
 
-  const versionBox = { x: panel.x + 12, y: panel.y + 136, w: panel.w - 24, h: 88 };
+  const versionBox = { x: panel.x + 12, y: panel.y + 136, w: panel.w - 24, h: 52 };
   rect(versionBox.x, versionBox.y, versionBox.w, versionBox.h, "#f7dba5");
   strokeRect(versionBox.x, versionBox.y, versionBox.w, versionBox.h, "#9a7043", 2);
   rect(versionBox.x + 4, versionBox.y + 4, versionBox.w - 8, 18, "#8c4f35");
@@ -8765,28 +8873,11 @@ function drawSettingsPanel() {
     COLORS.line,
     "bold"
   );
-  text(
-    `\u5ea7\u4f4d\u7248\u672c\uff1a${SEAT_LAYOUT_VERSION.stage}${SEAT_LAYOUT_VERSION.code}`,
-    versionBox.x + 12,
-    versionBox.y + 50,
-    11,
-    "#5d4532",
-    "bold"
-  );
-  text(
-    `\u66f4\u65b0\u65f6\u95f4\uff1a${SEAT_LAYOUT_VERSION.modifiedAt}`,
-    versionBox.x + 12,
-    versionBox.y + 70,
-    11,
-    "#5d4532",
-    "bold"
-  );
-
-  ui.toggleTestModeButton = { x: panel.x + 18, y: panel.y + 220, w: panel.w - 36, h: 32 };
-  ui.toggleMusicButton = { x: panel.x + 18, y: panel.y + 256, w: panel.w - 36, h: 32 };
-  ui.toggleSfxButton = { x: panel.x + 18, y: panel.y + 292, w: panel.w - 36, h: 32 };
-  ui.pricingButton = { x: panel.x + 18, y: panel.y + 328, w: panel.w - 36, h: 32 };
-  ui.saveGameButton = { x: panel.x + 18, y: panel.y + 364, w: panel.w - 36, h: 32 };
+  ui.toggleTestModeButton = { x: panel.x + 18, y: panel.y + 190, w: panel.w - 36, h: 32 };
+  ui.toggleMusicButton = { x: panel.x + 18, y: panel.y + 226, w: panel.w - 36, h: 32 };
+  ui.toggleSfxButton = { x: panel.x + 18, y: panel.y + 262, w: panel.w - 36, h: 32 };
+  ui.pricingButton = { x: panel.x + 18, y: panel.y + 298, w: panel.w - 36, h: 32 };
+  ui.saveGameButton = { x: panel.x + 18, y: panel.y + 334, w: panel.w - 36, h: 32 };
   ui.clearSaveButton = { x: panel.x + 18, y: panel.y + panel.h - 42, w: panel.w - 94, h: 30 };
   ui.closeSettingsButton = { x: panel.x + panel.w - 66, y: panel.y + panel.h - 42, w: 48, h: 30 };
 

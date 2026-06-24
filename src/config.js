@@ -114,7 +114,7 @@ const partitionTypes = [
     name: "\u6728\u8d28\u5c4f\u98ce",
     cost: 360,
     w: 60,
-    h: 12,
+    h: 6,
     blockMove: true,
     desc: "\u53ef\u6a2a\u5411\u6446\u653e\u7684\u57fa\u7840\u9694\u65ad\u3002"
   },
@@ -123,7 +123,7 @@ const partitionTypes = [
     name: "\u9694\u97f3\u5899",
     cost: 680,
     w: 72,
-    h: 14,
+    h: 7,
     blockMove: true,
     desc: "\u66f4\u9ad8\u7aef\u7684\u786c\u9694\u65ad\uff0c\u540e\u7eed\u63a5\u73af\u5883\u52a0\u6210\u3002"
   }
