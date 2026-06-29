@@ -19,11 +19,12 @@ const AUDIO_SOURCES = {
   click: "audio/click.wav"
 };
 const CODE_DRAWN_VISUALS_ONLY = true;
-const GAME_VERSION = "Beta06292150Ds";
+const GAME_VERSION = "Beta06292226GPT";
 const SEAT_LAYOUT_VERSION = {
-  stage: "Bate",
-  modifiedAt: "2026-06-29 21:50",
-  code: "06292150"
+  stage: "Bate-GPT",
+  modifiedAt: "2026-06-29 22:26",
+  code: "06292226",
+  note: "GPT\u4fee\u6539"
 };
 const PLAY_PROGRESS_COLOR = "#e83f3f";
 const STUCK_REROUTE_SECONDS = 0.65;
@@ -127,6 +128,11 @@ const DECOR_SKINS = {
     { id: "classic", name: "\u7ecf\u5178\u96f6\u98df\u67dc", cost: 0, desc: "\u9ed8\u8ba4\u6a2a\u5411\u96f6\u98df\u5c55\u793a\u67dc\u3002" },
     { id: "glass", name: "\u73bb\u7483\u51b7\u5149\u96f6\u98df\u67dc", cost: 2600, desc: "\u900f\u660e\u67dc\u95e8\u52a0\u51b7\u8272\u706f\u5e26\u3002" },
     { id: "wood", name: "\u624b\u4f5c\u6728\u67b6\u96f6\u98df\u67dc", cost: 1800, desc: "\u66f4\u6e29\u6696\u7684\u6728\u8d28\u5c0f\u8d27\u67b6\u3002" }
+  ],
+  happySign: [
+    { id: "classic", name: "\u7ecf\u5178\u5feb\u4e50\u4e0a\u7f51\u724c", cost: 0, desc: "\u9ed8\u8ba4\u5976\u6cb9\u8272\u5c0f\u6302\u724c\u3002" },
+    { id: "cyber", name: "\u8d5b\u535a\u5feb\u4e50\u4e0a\u7f51\u724c", cost: 2400, desc: "\u9752\u7eff\u9713\u8679\u706f\u5e26\uff0c\u66f4\u9002\u5408\u9ad8\u914d\u533a\u3002" },
+    { id: "sunny", name: "\u6696\u9633\u5feb\u4e50\u4e0a\u7f51\u724c", cost: 1600, desc: "\u9ec4\u6a59\u8272\u590d\u53e4\u6728\u724c\uff0c\u66f4\u6e29\u6696\u3002" }
   ]
 };
 
@@ -224,11 +230,12 @@ const state = {
   purchasedFloorTileCount: 0,
   floorSkinId: "classic",
   purchasedFloorSkinIds: ["classic"],
-  decorSkinIds: { counter: "classic", shopSign: "classic", snackShelf: "classic" },
+  decorSkinIds: { counter: "classic", shopSign: "classic", snackShelf: "classic", happySign: "classic" },
   purchasedDecorSkinIds: {
     counter: ["classic"],
     shopSign: ["classic"],
-    snackShelf: ["classic"]
+    snackShelf: ["classic"],
+    happySign: ["classic"]
   },
   floorLayoutSession: null,
   partitions: [],
@@ -641,6 +648,17 @@ function pcMatchesGuest(pc, guestType) {
   const area = getAreaById(pc.areaId);
   if (!area) return false;
   if (pc.occupiedBy || pc.dirty || pc.broken) return false;
+  if (pc.equipmentLevel < guestType.minEquipmentLevel) return false;
+  if (getPcHourlyRate(pc) > guestType.maxRate) return false;
+  if (guestType.areaPreference === "hall" && !isHallArea(area)) return false;
+  if (guestType.areaPreference === "room" && !isRoomArea(area)) return false;
+  return true;
+}
+
+function pcCouldServeGuestType(pc, guestType) {
+  if (!pc || !guestType) return false;
+  const area = getAreaById(pc.areaId);
+  if (!area || pc.broken) return false;
   if (pc.equipmentLevel < guestType.minEquipmentLevel) return false;
   if (getPcHourlyRate(pc) > guestType.maxRate) return false;
   if (guestType.areaPreference === "hall" && !isHallArea(area)) return false;
@@ -5899,11 +5917,34 @@ function moveToPcServicePoint(entity, pc, speed, dt) {
 
 function findFreePc(guest = null) {
   if (guest && guest.guestType) {
-    return layout.pcs
+    const candidates = layout.pcs
       .filter((pc) => pcMatchesGuest(pc, guest.guestType))
-      .sort((a, b) => getPcPreferenceScore(b, guest.guestType) - getPcPreferenceScore(a, guest.guestType))[0] || null;
+      .sort((a, b) => getPcPreferenceScore(b, guest.guestType) - getPcPreferenceScore(a, guest.guestType));
+    const reachable = candidates.find((pc) => isPcReachableForGuest(guest, pc));
+    return reachable || candidates[0] || null;
   }
   return layout.pcs.find((pc) => !pc.occupiedBy && !pc.dirty && !pc.broken);
+}
+
+function isPcReachableForGuest(guest, pc) {
+  if (!pc) return false;
+  const accessPoint = getPcAccessPoint(pc);
+  const servicePoint = getFrontDeskServicePoint();
+  const origin = guest && getWalkableAreaAtPoint(guest.x, guest.y)
+    ? { x: guest.x, y: guest.y }
+    : { x: servicePoint.x, y: servicePoint.y };
+  const probe = {
+    x: origin.x,
+    y: origin.y,
+    type: "guest",
+    movementIgnorePcId: pc.id,
+    movementIgnorePcIds: getNearbyPcIgnoreIds(accessPoint, 80, pc.id),
+    detourPoint: null,
+    navPath: null,
+    navIndex: 0,
+    navTargetKey: null
+  };
+  return Boolean(computeNavigationPath(probe, accessPoint));
 }
 
 function getPcPreferenceScore(pc, guestType) {
@@ -6146,16 +6187,33 @@ function getActivityTrafficFactor() {
 function getGuestArrivalChance(guestType) {
   const base = guestType.areaPreference === "room" ? 0.45 : 0.62;
   const randomNoise = random(0.78, 1.18);
-  return Math.max(0.08, Math.min(0.86, base * getTrafficPower() * randomNoise));
+  return Math.max(0.03, Math.min(0.86, base * getTrafficPower() * getSeatAvailabilityTrafficFactor(guestType) * randomNoise));
 }
 
 function getNextGuestInterval() {
   const traffic = getTrafficPower();
-  return random(4.8, 8.6) / Math.max(0.6, traffic);
+  const hasFreeSeat = getFreeOperationalPcCount() > 0;
+  const fullSeatPenalty = hasFreeSeat ? 1 : random(2.7, 4.2);
+  return random(4.8, 8.6) * fullSeatPenalty / Math.max(0.6, traffic);
 }
 
 function getMaxWaitingGuests() {
+  if (getFreeOperationalPcCount() <= 0) return 1;
   return Math.max(2, Math.min(6, Math.floor(layout.pcs.length / 3) + 1));
+}
+
+function getFreeOperationalPcCount() {
+  return layout.pcs.filter((pc) => !pc.occupiedBy && !pc.dirty && !pc.broken).length;
+}
+
+function getSeatAvailabilityTrafficFactor(guestType) {
+  const freeMatchingCount = layout.pcs.filter((pc) => pcMatchesGuest(pc, guestType)).length;
+  if (freeMatchingCount > 0) return 1;
+
+  const possibleMatchingCount = layout.pcs.filter((pc) => pcCouldServeGuestType(pc, guestType)).length;
+  if (possibleMatchingCount > 0) return 0.14;
+  if (getFreeOperationalPcCount() <= 0) return 0.08;
+  return 0.24;
 }
 
 function getExitOutsidePoint() {
@@ -6946,6 +7004,11 @@ function updateWorkerSpeech(worker, dt) {
   }
   worker.speechCooldown = (worker.speechCooldown || random(5, 14)) - dt;
   if (worker.speechCooldown > 0) return;
+  const activeSpeechCount = state.workers.filter((item) => item.speechTimer > 0).length;
+  if (activeSpeechCount >= 4) {
+    worker.speechCooldown = random(3, 7);
+    return;
+  }
   const lines = STAFF_CHAT_LINES[worker.type] || STAFF_CHAT_LINES.floor;
   worker.speechText = lines[Math.floor(Math.random() * lines.length)];
   worker.speechTimer = random(2.2, 3.6);
@@ -7629,6 +7692,15 @@ function beginWorldDraw() {
 
 function endWorldDraw() {
   ctx.restore();
+}
+
+function isWorldPointVisible(x, y, padding = 80) {
+  const sx = x - state.camera.x;
+  const sy = y - state.camera.y;
+  return sx >= -padding &&
+    sx <= view.width + padding &&
+    sy >= HUD_HEIGHT - padding &&
+    sy <= view.height - ACTION_BAR_HEIGHT + padding;
 }
 
 function drawPixelFloor() {
@@ -8570,11 +8642,12 @@ function drawPcDeskNumber(pc) {
 }
 
 function drawCleanBubble(x, y, label) {
+  if (!isWorldPointVisible(x, y, 70)) return;
   const bubbleW = 44;
   rect(x - bubbleW / 2 - 1, y - 1, bubbleW + 2, 26, COLORS.line);
-  rect(x - bubbleW / 2, y, bubbleW, 24, COLORS.text);
-  text(label, x, y + 4, 12, COLORS.red, "bold", "center");
-  rect(x - 3, y + 22, 6, 6, COLORS.text);
+  rect(x - bubbleW / 2, y, bubbleW, 24, "#ffe08a");
+  text(label, x, y + 4, 12, COLORS.line, "bold", "center");
+  rect(x - 3, y + 22, 6, 6, "#ffe08a");
 }
 
 function drawPcInfoBubble() {
@@ -8873,23 +8946,25 @@ function drawSeatedGuest(guest, x, y) {
 }
 
 function drawDemandBubble(guest) {
+  if (!isWorldPointVisible(guest.x, guest.y, 80)) return;
   const x = Math.round(guest.x);
   const y = Math.round(guest.y) - 38;
   const label = getDemandBubbleLabel(guest);
   const bubbleW = Math.max(48, label.length * 15 + 14);
-  const bubbleX = Math.max(12, Math.min(view.width - bubbleW - 12, x - bubbleW / 2));
+  const bubbleX = clamp(x - bubbleW / 2, state.camera.x + 12, state.camera.x + view.width - bubbleW - 12);
   const progress = Math.max(0, guest.demand.timer / guest.demand.patience);
 
   rect(bubbleX - 1, y - 1, bubbleW + 2, 30, COLORS.line);
-  rect(bubbleX, y, bubbleW, 28, "#fff7dd");
+  rect(bubbleX, y, bubbleW, 28, "#dff5c8");
   text(label, bubbleX + bubbleW / 2, y + 4, 13, COLORS.line, "bold", "center");
   rect(bubbleX + 5, y + 22, bubbleW - 10, 3, "#8c6b4a");
   rect(bubbleX + 5, y + 22, Math.round((bubbleW - 10) * progress), 3, COLORS.red);
-  rect(x - 3, y + 26, 6, 6, "#fff7dd");
+  rect(x - 3, y + 26, 6, 6, "#dff5c8");
 }
 
 function drawGuestCheckInBubble(guest) {
   if (!guest || !["entering", "queueing", "checkingIn"].includes(guest.state)) return;
+  if (!isWorldPointVisible(guest.x, guest.y, 80)) return;
   if (guest.state === "entering" && distance(guest, getFrontDeskServicePoint()) > 76) return;
 
   const x = Math.round(guest.x);
@@ -9568,6 +9643,13 @@ function drawExpansionPanel() {
 }
 
 function getBuildOffers() {
+  const floorOffer = {
+    kind: "floor",
+    id: "floor",
+    name: "\u94fa\u8bbe\u5730\u7816",
+    cost: PUBLIC_FLOOR_COST,
+    desc: "\u5411\u5916\u6269\u5927\u5927\u5385\uff0c\u6bcf\u6b21\u94fa\u4e00\u5757\u3002"
+  };
   const floorSkinOffers = FLOOR_SKINS.map((skin) => ({
     kind: "floorSkin",
     id: skin.id,
@@ -9587,15 +9669,7 @@ function getBuildOffers() {
       desc: skin.desc
     }))
   ));
-  return floorSkinOffers.concat(decorOffers).concat([
-    {
-      kind: "floor",
-      id: "floor",
-      name: "\u94fa\u8bbe\u5730\u7816",
-      cost: PUBLIC_FLOOR_COST,
-      desc: "\u5411\u5916\u6269\u5927\u5927\u5385\uff0c\u6bcf\u6b21\u94fa\u4e00\u5757\u3002"
-    }
-  ]).concat(partitionTypes.map((type) => ({
+  return [floorOffer].concat(floorSkinOffers).concat(decorOffers).concat(partitionTypes.map((type) => ({
     kind: "partition",
     id: type.id,
     typeId: type.id,
@@ -9645,6 +9719,11 @@ function drawBuildOfferIcon(offer, x, y, dimmed) {
       rect(x - 12, y - 9, 24, 14, offer.skinId === "neon" ? "#1d2636" : "#7b563b");
       strokeRect(x - 12, y - 9, 24, 14, offer.skinId === "neon" ? "#48f0d8" : COLORS.counterEdge, 2);
       rect(x - 7, y - 4, 14, 3, offer.skinId === "retro" ? "#f0b94a" : COLORS.text);
+    } else if (offer.decorKind === "happySign") {
+      rect(x - 10, y - 12, 20, 22, COLORS.line);
+      rect(x - 7, y - 9, 14, 16, offer.skinId === "cyber" ? "#102b31" : offer.skinId === "sunny" ? "#f0b94a" : COLORS.text);
+      rect(x - 5, y - 6, 10, 3, offer.skinId === "cyber" ? "#3de0c3" : COLORS.line);
+      rect(x - 3, y, 6, 2, offer.skinId === "cyber" ? "#ef5cff" : "#8c4f35");
     } else {
       rect(x - 12, y - 10, 24, 18, offer.skinId === "glass" ? "#244653" : "#7b563b");
       rect(x - 9, y - 6, 18, 3, offer.skinId === "glass" ? "#6be7ff" : COLORS.counterEdge);
@@ -9984,7 +10063,7 @@ function drawSettingsPanel() {
   text(`\u5f53\u524d\uff1a${modeLabel}`, panel.x + 24, panel.y + 66, 15, COLORS.line, "bold");
   text(modeDesc, panel.x + 24, panel.y + 93, 11, "#5d4532", "bold");
 
-  const versionBox = { x: panel.x + 12, y: panel.y + 136, w: panel.w - 24, h: 52 };
+  const versionBox = { x: panel.x + 12, y: panel.y + 136, w: panel.w - 24, h: 66 };
   rect(versionBox.x, versionBox.y, versionBox.w, versionBox.h, "#f7dba5");
   strokeRect(versionBox.x, versionBox.y, versionBox.w, versionBox.h, "#9a7043", 2);
   rect(versionBox.x + 4, versionBox.y + 4, versionBox.w - 8, 18, "#8c4f35");
@@ -9997,11 +10076,19 @@ function drawSettingsPanel() {
     COLORS.line,
     "bold"
   );
-  ui.toggleTestModeButton = { x: panel.x + 18, y: panel.y + 190, w: panel.w - 36, h: 32 };
-  ui.toggleMusicButton = { x: panel.x + 18, y: panel.y + 226, w: panel.w - 36, h: 32 };
-  ui.toggleSfxButton = { x: panel.x + 18, y: panel.y + 262, w: panel.w - 36, h: 32 };
-  ui.pricingButton = { x: panel.x + 18, y: panel.y + 298, w: panel.w - 36, h: 32 };
-  ui.saveGameButton = { x: panel.x + 18, y: panel.y + 334, w: panel.w - 36, h: 32 };
+  text(
+    `\u5ea7\u4f4d\u7248\u672c\uff1a${SEAT_LAYOUT_VERSION.stage} ${SEAT_LAYOUT_VERSION.modifiedAt} ${SEAT_LAYOUT_VERSION.note || ""}`,
+    versionBox.x + 12,
+    versionBox.y + 46,
+    10,
+    "#5d4532",
+    "bold"
+  );
+  ui.toggleTestModeButton = { x: panel.x + 18, y: panel.y + 204, w: panel.w - 36, h: 32 };
+  ui.toggleMusicButton = { x: panel.x + 18, y: panel.y + 240, w: panel.w - 36, h: 32 };
+  ui.toggleSfxButton = { x: panel.x + 18, y: panel.y + 276, w: panel.w - 36, h: 32 };
+  ui.pricingButton = { x: panel.x + 18, y: panel.y + 312, w: panel.w - 36, h: 32 };
+  ui.saveGameButton = { x: panel.x + 18, y: panel.y + 348, w: panel.w - 36, h: 32 };
   ui.clearSaveButton = { x: panel.x + 18, y: panel.y + panel.h - 42, w: panel.w - 94, h: 30 };
   ui.closeSettingsButton = { x: panel.x + panel.w - 66, y: panel.y + panel.h - 42, w: 48, h: 30 };
 
@@ -10212,15 +10299,15 @@ function drawWorker(worker) {
 }
 
 function drawWorkerNameTag(worker, x, y, overrideLabel = null) {
+  if (!isWorldPointVisible(x, y, 60)) return;
   const label = overrideLabel || getWorkerLabel(worker.type);
-  const bubbleW = Math.max(32, label.length * 13 + 8);
-  rect(x - bubbleW / 2 - 1, y + 13, bubbleW + 2, 18, COLORS.line);
-  rect(x - bubbleW / 2, y + 14, bubbleW, 16, overrideLabel ? "#d4f0ff" : "#fff7dd");
-  text(label, x, y + 17, 10, COLORS.line, "bold", "center");
+  text(label, x + 1, y + 18, 10, "rgba(58,36,24,0.75)", "bold", "center");
+  text(label, x, y + 17, 10, overrideLabel ? "#2b6f8a" : COLORS.line, "bold", "center");
 }
 
 function drawWorkerSpeech(worker, x, y) {
   if (!worker || !worker.speechText || worker.speechTimer <= 0) return;
+  if (!isWorldPointVisible(x, y, 80)) return;
   const label = fitTextToWidth(worker.speechText, 112, 10, "bold");
   const bubbleW = Math.max(48, label.length * 10 + 12);
   const bubbleX = x - bubbleW / 2;
@@ -10247,10 +10334,7 @@ function drawIndoorDetailsModern() {
 
   const happySign = getMovablePropRect("happySign");
   if (!isMovingProp("happySign")) {
-    rect(happySign.x, happySign.y, happySign.w, happySign.h, COLORS.line);
-    rect(happySign.x + 3, happySign.y + 3, happySign.w - 6, happySign.h - 6, COLORS.text);
-    text("\u4e0a\u7f51", happySign.x + happySign.w / 2, happySign.y + 8, 11, COLORS.dimText, "bold", "center");
-    text("\u5feb\u4e50", happySign.x + happySign.w / 2, happySign.y + 21, 11, COLORS.dimText, "bold", "center");
+    drawHappySignDisplay(happySign.x, happySign.y, happySign.w, happySign.h);
   }
 
   const starterPlant = getMovablePropRect("starterPlant");
@@ -10332,6 +10416,32 @@ function drawSnackDisplay(x, y) {
   rect(x + 45, y + 12, 14, 8, COLORS.green);
   rect(x + 63, y + 12, 14, 8, COLORS.blue);
   rect(x + 81, y + 12, 14, 8, "#d98236");
+}
+
+function drawHappySignDisplay(x, y, w, h) {
+  const skin = getCurrentDecorSkin("happySign");
+  if (skin && skin.id === "cyber") {
+    rect(x - 3, y - 3, w + 6, h + 6, "#0c171f");
+    strokeRect(x - 3, y - 3, w + 6, h + 6, "#48f0d8", 2);
+    rect(x + 4, y + 4, w - 8, h - 8, "#132936");
+    text("\u4e0a\u7f51", x + w / 2, y + 7, 11, "#7fffe6", "bold", "center");
+    text("\u5feb\u4e50", x + w / 2, y + 21, 11, "#ef5cff", "bold", "center");
+    rect(x + 8, y + h - 7, w - 16, 2, "#f0b94a");
+    return;
+  }
+
+  if (skin && skin.id === "sunny") {
+    pixelPanel(x, y, w, h, "#b87333", "#ffe08a", COLORS.line);
+    rect(x + 6, y + 5, w - 12, 3, "#fff2d0");
+    text("\u4e0a\u7f51", x + w / 2, y + 8, 11, COLORS.line, "bold", "center");
+    text("\u5feb\u4e50", x + w / 2, y + 21, 11, COLORS.line, "bold", "center");
+    return;
+  }
+
+  rect(x, y, w, h, COLORS.line);
+  rect(x + 3, y + 3, w - 6, h - 6, COLORS.text);
+  text("\u4e0a\u7f51", x + w / 2, y + 8, 11, COLORS.dimText, "bold", "center");
+  text("\u5feb\u4e50", x + w / 2, y + 21, 11, COLORS.dimText, "bold", "center");
 }
 
 function drawMahjongTables() {
