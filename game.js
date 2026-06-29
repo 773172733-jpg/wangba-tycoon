@@ -19,11 +19,11 @@ const AUDIO_SOURCES = {
   click: "audio/click.wav"
 };
 const CODE_DRAWN_VISUALS_ONLY = true;
-const GAME_VERSION = "Beta06292226GPT";
+const GAME_VERSION = "Beta06292255GPT";
 const SEAT_LAYOUT_VERSION = {
   stage: "Bate-GPT",
-  modifiedAt: "2026-06-29 22:26",
-  code: "06292226",
+  modifiedAt: "2026-06-29 22:55",
+  code: "06292255",
   note: "GPT\u4fee\u6539"
 };
 const PLAY_PROGRESS_COLOR = "#e83f3f";
@@ -4964,6 +4964,7 @@ function getPropMovementBounds(prop) {
 // Per-frame cache for the default (no entity overrides) movement blocking rects.
 // Cleared at the top of update() each frame to stay consistent.
 let _movementBlockingRectsCache = null;
+const _pcReachabilityCache = new Map();
 
 function getMovementBlockingRects(entity = null) {
   const ignoredProps = getMovementIgnoredPropIds(entity);
@@ -5016,11 +5017,52 @@ function clearAllEntityNavigation() {
     clearEntityNavigation(worker);
   });
   _movementBlockingRectsCache = null;
+  _pcReachabilityCache.clear();
 }
 
 function getNavigationTargetKey(entity, target) {
   const ignoredPcs = Array.from(getMovementIgnoredPcIds(entity)).sort((a, b) => a - b).join(",");
   return `${Math.round(target.x)}:${Math.round(target.y)}:${ignoredPcs || "none"}`;
+}
+
+function getRouteTimeout(entity, target, minimum = 8, maximum = 34) {
+  if (!entity || !target) return minimum;
+  const estimated = minimum + distance(entity, target) / 55 * 1.55;
+  return Math.max(minimum, Math.min(maximum, estimated));
+}
+
+function refreshRouteProgress(entity, target, dt, clearAfter = 2.6) {
+  if (!entity || !target) return false;
+  const key = getNavigationTargetKey(entity, target);
+  const currentDistance = distance(entity, target);
+  if (entity.routeProgressKey !== key || !Number.isFinite(entity.routeBestDistance)) {
+    entity.routeProgressKey = key;
+    entity.routeBestDistance = currentDistance;
+    entity.routeNoProgressTimer = 0;
+    return false;
+  }
+
+  if (currentDistance < entity.routeBestDistance - 5) {
+    entity.routeBestDistance = currentDistance;
+    entity.routeNoProgressTimer = 0;
+    return false;
+  }
+
+  entity.routeNoProgressTimer = (entity.routeNoProgressTimer || 0) + dt;
+  if (entity.routeNoProgressTimer >= clearAfter) {
+    entity.routeNoProgressTimer = 0;
+    entity.routeBestDistance = currentDistance;
+    clearEntityNavigation(entity);
+    return true;
+  }
+  return false;
+}
+
+function resetRouteProgress(entity) {
+  if (!entity) return;
+  entity.routeProgressKey = null;
+  entity.routeBestDistance = null;
+  entity.routeNoProgressTimer = 0;
 }
 
 function canStandAtMovementPoint(entity, point) {
@@ -5933,6 +5975,21 @@ function isPcReachableForGuest(guest, pc) {
   const origin = guest && getWalkableAreaAtPoint(guest.x, guest.y)
     ? { x: guest.x, y: guest.y }
     : { x: servicePoint.x, y: servicePoint.y };
+  const cacheKey = [
+    pc.id,
+    Math.round(origin.x / 6),
+    Math.round(origin.y / 6),
+    Math.round(accessPoint.x / 6),
+    Math.round(accessPoint.y / 6),
+    layout.pcs.length,
+    state.rentedAreas.length,
+    state.publicFloors.length,
+    state.partitions.length,
+    state.mahjongTables.length
+  ].join(":");
+  const cached = _pcReachabilityCache.get(cacheKey);
+  if (cached && state.time - cached.time < 0.8) return cached.value;
+
   const probe = {
     x: origin.x,
     y: origin.y,
@@ -5944,7 +6001,10 @@ function isPcReachableForGuest(guest, pc) {
     navIndex: 0,
     navTargetKey: null
   };
-  return Boolean(computeNavigationPath(probe, accessPoint));
+  const value = Boolean(computeNavigationPath(probe, accessPoint));
+  if (_pcReachabilityCache.size > 240) _pcReachabilityCache.clear();
+  _pcReachabilityCache.set(cacheKey, { time: state.time, value });
+  return value;
 }
 
 function getPcPreferenceScore(pc, guestType) {
@@ -6731,8 +6791,11 @@ function updateWorkers(dt) {
   assignWorkerTasks();
   updateManagerRestock(dt);
 
+  const speechContext = {
+    activeCount: state.workers.reduce((count, worker) => count + (worker.speechTimer > 0 ? 1 : 0), 0)
+  };
   state.workers.forEach((worker) => {
-    updateWorkerSpeech(worker, dt);
+    updateWorkerSpeech(worker, dt, speechContext);
     if (updateWorkerEntrapment(worker, dt)) return;
 
     if (worker.state === "station") {
@@ -6762,12 +6825,7 @@ function updateWorkers(dt) {
         }
       } else {
         const home = getWorkerHome(worker);
-        // Validate home: standable AND reachable via navigation
-        const homeStandable = canStandAtMovementPoint(worker, home) && !isWalkBlockingPoint(home.x, home.y, worker);
-        const homeReachable = homeStandable && computeNavigationPath(worker, home) !== null;
-        const effectiveHome = homeReachable
-          ? home
-          : getWorkerFallbackPoint(worker);
+        const effectiveHome = getCachedEffectiveWorkerHome(worker, home, dt);
         // If already at effective home, stay still
         if (distance(worker, effectiveHome) <= 6) {
           worker.x = effectiveHome.x;
@@ -6821,9 +6879,14 @@ function updateWorkers(dt) {
       if (arrived) {
         worker.state = "cleaningPc";
         worker.pathTimer = 0;
+        resetRouteProgress(worker);
         worker.taskTimer = 1.6;
-      } else if (worker.pathTimer > 5) {
-        resetWorker(worker);
+      } else {
+        const target = cleanTarget || getBestPcServicePoint(worker, pc) || getPcAccessPoint(pc);
+        refreshRouteProgress(worker, target, dt, 2.6);
+        if (worker.pathTimer > getRouteTimeout(worker, target, 9, 32)) {
+          retryWorkerRoute(worker, 2);
+        }
       }
       return;
     }
@@ -6838,9 +6901,14 @@ function updateWorkers(dt) {
       if (moveToPcServicePoint(worker, pc, 58, dt)) {
         worker.state = "repairingPc";
         worker.pathTimer = 0;
+        resetRouteProgress(worker);
         worker.taskTimer = 1.25;
-      } else if (worker.pathTimer > 5) {
-        resetWorker(worker);
+      } else {
+        const target = getBestPcServicePoint(worker, pc) || getPcAccessPoint(pc);
+        refreshRouteProgress(worker, target, dt, 2.6);
+        if (worker.pathTimer > getRouteTimeout(worker, target, 9, 32)) {
+          retryWorkerRoute(worker, 2);
+        }
       }
       return;
     }
@@ -6912,15 +6980,22 @@ function updateWorkers(dt) {
 
     if (worker.state === "toMopFloor") {
       worker.pathTimer = (worker.pathTimer || 0) + dt;
-      if (state.cleanliness >= 99 || worker.pathTimer > 5) {
+      if (state.cleanliness >= 99) {
         resetWorker(worker);
         return;
       }
-      const arrived = runWithIgnoredPcs(worker, getWorkerFreeMovePcIds(worker), () => moveToward(worker, getFloorMopPoint(worker), 38, dt));
+      const mopPoint = getFloorMopPoint(worker);
+      const arrived = runWithIgnoredPcs(worker, getWorkerFreeMovePcIds(worker), () => moveToward(worker, mopPoint, 38, dt));
       if (arrived) {
         worker.state = "moppingFloor";
         worker.pathTimer = 0;
+        resetRouteProgress(worker);
         worker.taskTimer = 1.4;
+      } else {
+        refreshRouteProgress(worker, mopPoint, dt, 3.0);
+        if (worker.pathTimer > getRouteTimeout(worker, mopPoint, 10, 34)) {
+          retryWorkerRoute(worker, 1);
+        }
       }
       return;
     }
@@ -6955,15 +7030,26 @@ function updateWorkers(dt) {
         }
         worker.state = "delivering";
         worker.pathTimer = 0;
+        resetRouteProgress(worker);
         worker.taskTimer = 0.7;
-      } else if (worker.pathTimer > 5) {
-        const failedGuest = state.guests.find((item) => item.id === worker.targetGuestId);
-        if (failedGuest && failedGuest.demand) {
-          if (!failedGuest.demand.blockedWorkerIds) failedGuest.demand.blockedWorkerIds = [];
-          failedGuest.demand.blockedWorkerIds.push(worker.id);
-          failedGuest.demand.assignedWorkerId = null;
+      } else {
+        refreshRouteProgress(worker, deliveryPoint, dt, 2.8);
+        const routeTimeout = getRouteTimeout(worker, deliveryPoint, 11, 38);
+        if (worker.pathTimer > routeTimeout) {
+          worker.routeRetryCount = (worker.routeRetryCount || 0) + 1;
+          worker.pathTimer = 0;
+          resetRouteProgress(worker);
+          clearEntityNavigation(worker);
+          if (worker.routeRetryCount > 2) {
+            const failedGuest = state.guests.find((item) => item.id === worker.targetGuestId);
+            if (failedGuest && failedGuest.demand) {
+              if (!failedGuest.demand.blockedWorkerIds) failedGuest.demand.blockedWorkerIds = [];
+              failedGuest.demand.blockedWorkerIds.push(worker.id);
+              failedGuest.demand.assignedWorkerId = null;
+            }
+            resetWorker(worker);
+          }
         }
-        resetWorker(worker);
       }
       return;
     }
@@ -6996,15 +7082,16 @@ function updateWorkers(dt) {
   });
 }
 
-function updateWorkerSpeech(worker, dt) {
+function updateWorkerSpeech(worker, dt, context = null) {
   if (!worker) return;
   if (worker.speechTimer > 0) {
     worker.speechTimer = Math.max(0, worker.speechTimer - dt);
+    if (worker.speechTimer <= 0 && context) context.activeCount = Math.max(0, context.activeCount - 1);
     return;
   }
   worker.speechCooldown = (worker.speechCooldown || random(5, 14)) - dt;
   if (worker.speechCooldown > 0) return;
-  const activeSpeechCount = state.workers.filter((item) => item.speechTimer > 0).length;
+  const activeSpeechCount = context ? context.activeCount : state.workers.filter((item) => item.speechTimer > 0).length;
   if (activeSpeechCount >= 4) {
     worker.speechCooldown = random(3, 7);
     return;
@@ -7013,6 +7100,7 @@ function updateWorkerSpeech(worker, dt) {
   worker.speechText = lines[Math.floor(Math.random() * lines.length)];
   worker.speechTimer = random(2.2, 3.6);
   worker.speechCooldown = random(12, 24);
+  if (context) context.activeCount += 1;
 }
 
 function cleanPcByWorker(pc) {
@@ -7108,6 +7196,33 @@ function getWorkerFallbackPoint(worker, allowHome = true) {
 
   return getAreaSafePoint(layout.room, layout.room.x + layout.room.w / 2, layout.room.y + 108) ||
     { x: layout.entrance.x + 18, y: layout.entrance.y };
+}
+
+function getWorkerHomeReachabilityKey(worker, home) {
+  return [
+    worker.type,
+    worker.homeIndex || 0,
+    Math.round(home.x),
+    Math.round(home.y),
+    layout.pcs.length,
+    state.rentedAreas.length,
+    state.publicFloors.length,
+    state.partitions.length,
+    state.mahjongTables.length
+  ].join(":");
+}
+
+function getCachedEffectiveWorkerHome(worker, home, dt) {
+  const key = getWorkerHomeReachabilityKey(worker, home);
+  worker.homeReachabilityTimer = Math.max(0, (worker.homeReachabilityTimer || 0) - dt);
+  if (worker.homeReachabilityKey !== key || worker.homeReachabilityTimer <= 0 || !worker.cachedEffectiveHome) {
+    const homeStandable = canStandAtMovementPoint(worker, home) && !isWalkBlockingPoint(home.x, home.y, worker);
+    const homeReachable = homeStandable && computeNavigationPath(worker, home) !== null;
+    worker.homeReachabilityKey = key;
+    worker.homeReachabilityTimer = random(1.4, 2.4);
+    worker.cachedEffectiveHome = homeReachable ? home : getWorkerFallbackPoint(worker, false);
+  }
+  return worker.cachedEffectiveHome || home;
 }
 
 function resetWorkerToFallback(worker) {
@@ -7244,8 +7359,22 @@ function resetWorker(worker) {
   worker.detourPoint = null;
   worker.movementIgnorePcId = null;
   worker.movementIgnorePcIds = null;
+  worker.routeRetryCount = 0;
+  resetRouteProgress(worker);
   clearEntityNavigation(worker);
   worker.state = "station";
+}
+
+function retryWorkerRoute(worker, maxRetries = 2) {
+  worker.routeRetryCount = (worker.routeRetryCount || 0) + 1;
+  worker.pathTimer = 0;
+  resetRouteProgress(worker);
+  clearEntityNavigation(worker);
+  if (worker.routeRetryCount > maxRetries) {
+    resetWorker(worker);
+    return true;
+  }
+  return false;
 }
 
 function updateManagerRestock(dt) {
@@ -7267,8 +7396,6 @@ function updateManagerRestock(dt) {
 }
 
 function updateGuests(dt) {
-  updateQueueTargets();
-
   for (let index = state.guests.length - 1; index >= 0; index -= 1) {
     const guest = state.guests[index];
     sanitizeGuestDemandState(guest);
@@ -7312,16 +7439,27 @@ function updateGuests(dt) {
         guest.playTimer = guest.playDuration;
         guest.pathTimer = 0;
         guest._navClearedOnce = false;
+        resetRouteProgress(guest);
         clearEntityNavigation(guest);
-      } else if (guest.pathTimer > 8 && distToSeat > 50) {
-        if (pc) pc.occupiedBy = null;
-        guest.pcId = null;
-        guest.state = "leaving";
-        guest.pathTimer = 0;
-        clearEntityNavigation(guest);
-      } else if (guest.pathTimer > 4.5 && distToSeat > 50 && !guest._navClearedOnce) {
-        clearEntityNavigation(guest);
-        guest._navClearedOnce = true;
+      } else if (pc) {
+        const seatTarget = { x: pc.seatX, y: pc.seatY };
+        refreshRouteProgress(guest, seatTarget, dt, 2.4);
+        const routeTimeout = getRouteTimeout(guest, seatTarget, 10, 38);
+        if (guest.pathTimer > routeTimeout && distToSeat > 50) {
+          const accessPoint = getPcAccessPoint(pc);
+          const recovery = getEmergencyReroutePoint(guest, accessPoint, accessPoint) ||
+            getSafePointAroundRect(guest, getPcVisualBounds(pc), accessPoint);
+          if (recovery && canStandAtMovementPoint(guest, recovery)) {
+            guest.x = recovery.x;
+            guest.y = recovery.y;
+          }
+          guest.pathTimer = 0;
+          resetRouteProgress(guest);
+          clearEntityNavigation(guest);
+        } else if (guest.pathTimer > 5.5 && distToSeat > 50 && !guest._navClearedOnce) {
+          clearEntityNavigation(guest);
+          guest._navClearedOnce = true;
+        }
       }
       continue;
     }
@@ -7400,18 +7538,29 @@ function updateGuests(dt) {
         guest.pathTimer = 0;
         guest.movementIgnorePcId = null;
         guest._navClearedOnce = false;
+        resetRouteProgress(guest);
         clearEntityNavigation(guest);
-      } else if (guest.pathTimer > 10 && distToPc > 50) {
-        if (pc) pc.occupiedBy = null;
-        guest.pcId = null;
-        guest.state = "leaving";
-        guest.pathTimer = 0;
-        guest.movementIgnorePcId = null;
-        guest._navClearedOnce = false;
-        clearEntityNavigation(guest);
-      } else if (guest.pathTimer > 8 && distToPc > 50 && !guest._navClearedOnce) {
-        clearEntityNavigation(guest);
-        guest._navClearedOnce = true;
+      } else {
+        const seatTarget = { x: pc.seatX, y: pc.seatY };
+        refreshRouteProgress(guest, seatTarget, dt, 2.4);
+        const routeTimeout = getRouteTimeout(guest, seatTarget, 12, 40);
+        if (guest.pathTimer > routeTimeout && distToPc > 50) {
+          const accessPoint = getPcAccessPoint(pc);
+          const recovery = getEmergencyReroutePoint(guest, accessPoint, accessPoint) ||
+            getSafePointAroundRect(guest, getPcVisualBounds(pc), accessPoint);
+          if (recovery && canStandAtMovementPoint(guest, recovery)) {
+            guest.x = recovery.x;
+            guest.y = recovery.y;
+          }
+          guest.pathTimer = 0;
+          guest.movementIgnorePcId = null;
+          guest._navClearedOnce = false;
+          resetRouteProgress(guest);
+          clearEntityNavigation(guest);
+        } else if (guest.pathTimer > 8 && distToPc > 50 && !guest._navClearedOnce) {
+          clearEntityNavigation(guest);
+          guest._navClearedOnce = true;
+        }
       }
       continue;
     }
@@ -10301,8 +10450,7 @@ function drawWorker(worker) {
 function drawWorkerNameTag(worker, x, y, overrideLabel = null) {
   if (!isWorldPointVisible(x, y, 60)) return;
   const label = overrideLabel || getWorkerLabel(worker.type);
-  text(label, x + 1, y + 18, 10, "rgba(58,36,24,0.75)", "bold", "center");
-  text(label, x, y + 17, 10, overrideLabel ? "#2b6f8a" : COLORS.line, "bold", "center");
+  text(label, x, y + 18, 10, overrideLabel ? "#2b6f8a" : COLORS.line, "bold", "center");
 }
 
 function drawWorkerSpeech(worker, x, y) {
