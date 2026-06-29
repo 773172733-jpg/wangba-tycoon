@@ -101,22 +101,44 @@ const equipmentTiers = [
 
 const partitionTypes = [
   {
-    id: "plant",
-    name: "\u76c6\u683d\u9694\u65ad",
-    cost: 160,
+    id: "plantMini",
+    name: "\u8ff7\u4f60\u7eff\u841d",
+    cost: 180,
     w: 24,
-    h: 24,
+    h: 28,
     blockMove: false,
-    desc: "\u4fbf\u5b9c\u7eff\u5316\uff0c\u7528\u6765\u5207\u51fa\u5c0f\u533a\u57df\u3002"
+    plantStyle: "mini",
+    desc: "\u5c0f\u578b\u684c\u8fb9\u7eff\u690d\uff0c\u4e0d\u963b\u6321\u4eba\u5458\u884c\u8d70\u3002"
   },
   {
-    id: "woodScreen",
-    name: "\u6728\u8d28\u5c4f\u98ce",
-    cost: 360,
-    w: 40,
-    h: 5,
-    blockMove: true,
-    desc: "\u53ef\u6a2a\u5411\u6446\u653e\u7684\u57fa\u7840\u9694\u65ad\u3002"
+    id: "plantTall",
+    name: "\u9ad8\u76c6\u7eff\u690d",
+    cost: 320,
+    w: 30,
+    h: 48,
+    blockMove: false,
+    plantStyle: "tall",
+    desc: "\u9ad8\u4e00\u70b9\u7684\u7eff\u690d\uff0c\u9002\u5408\u653e\u5728\u5899\u89d2\u70b9\u7f00\u3002"
+  },
+  {
+    id: "plantFlower",
+    name: "\u5f00\u82b1\u76c6\u683d",
+    cost: 380,
+    w: 32,
+    h: 36,
+    blockMove: false,
+    plantStyle: "flower",
+    desc: "\u5e26\u5c0f\u82b1\u7684\u6696\u8272\u76c6\u683d\uff0c\u7a0d\u5fae\u63d0\u4eae\u89d2\u843d\u3002"
+  },
+  {
+    id: "plantBroad",
+    name: "\u5bbd\u53f6\u76c6\u683d",
+    cost: 460,
+    w: 42,
+    h: 42,
+    blockMove: false,
+    plantStyle: "broad",
+    desc: "\u5bbd\u53f6\u5927\u76c6\u683d\uff0c\u89c6\u89c9\u66f4\u9971\u6ee1\uff0c\u4e0d\u4f1a\u5361\u4eba\u3002"
   }
 ];
 
@@ -197,7 +219,7 @@ const guestTypes = [
     areaPreference: "hall",
     maxRate: 8,
     minEquipmentLevel: 1,
-    spendChance: 0.22,
+    spendChance: 0.18,
     weight: 5
   },
   {
@@ -206,7 +228,7 @@ const guestTypes = [
     areaPreference: "hall",
     maxRate: 12,
     minEquipmentLevel: 1,
-    spendChance: 0.36,
+    spendChance: 0.32,
     weight: 4
   },
   {
@@ -215,7 +237,7 @@ const guestTypes = [
     areaPreference: "any",
     maxRate: 22,
     minEquipmentLevel: 1,
-    spendChance: 0.46,
+    spendChance: 0.48,
     weight: 3.8
   },
   {
@@ -223,8 +245,8 @@ const guestTypes = [
     name: "\u9ad8\u6d88\u4f11\u95f2\u5ba2",
     areaPreference: "any",
     maxRate: 30,
-    minEquipmentLevel: 1,
-    spendChance: 0.5,
+    minEquipmentLevel: 2,
+    spendChance: 0.58,
     weight: 1.8
   },
   {
@@ -232,9 +254,9 @@ const guestTypes = [
     name: "\u914d\u7f6e\u515a",
     areaPreference: "any",
     maxRate: 32,
-    minEquipmentLevel: 3,
-    spendChance: 0.55,
-    weight: 1.4
+    minEquipmentLevel: 4,
+    spendChance: 0.72,
+    weight: 1.55
   }
 ];
 

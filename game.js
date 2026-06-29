@@ -19,14 +19,15 @@ const AUDIO_SOURCES = {
   click: "audio/click.wav"
 };
 const CODE_DRAWN_VISUALS_ONLY = true;
-const GAME_VERSION = "Beta06250101Ds";
+const GAME_VERSION = "Beta06292150Ds";
 const SEAT_LAYOUT_VERSION = {
   stage: "Bate",
-  modifiedAt: "2026-06-24 14:02",
-  code: "06241402"
+  modifiedAt: "2026-06-29 21:50",
+  code: "06292150"
 };
 const PLAY_PROGRESS_COLOR = "#e83f3f";
 const STUCK_REROUTE_SECONDS = 0.65;
+const MAX_UPDATE_STEP = 1 / 45;
 const PERSON_PATH_MIN_WIDTH = 24;
 const NAV_GRID_SIZE = 12;
 const SOFT_MOVEMENT_COLLISION_SCALE = 2 / 3;
@@ -34,6 +35,9 @@ const PERSON_VISUAL_SCALE = 2 / 3;
 const PC_AUTO_ALIGN_DISTANCE = 18;
 const MANUAL_CHECKIN_DURATION = 1.25;
 const DEMAND_WAIT_SECONDS = 60;
+const QUEUE_ABANDON_MIN_SECONDS = 10;
+const QUEUE_ABANDON_MAX_SECONDS = 25;
+const COMPANION_PLAY_TIME_MULTIPLIER = 3;
 const BASE_OPERATIONAL_PCS = 4;
 const MAX_OPERATIONAL_PCS = 96;
 const WORLD_EXPANSION_MARGIN = 620;
@@ -80,6 +84,51 @@ const {
 } = require("./src/config");
 
 const assets = {};
+
+const FLOOR_SKINS = [
+  {
+    id: "classic",
+    name: "\u521d\u59cb\u6728\u5730\u677f",
+    cost: 0,
+    desc: "\u5f53\u524d\u9ed8\u8ba4\u7684\u6696\u8272\u6728\u5730\u677f\u3002"
+  },
+  {
+    id: "herringbone",
+    name: "\u9c7c\u9aa8\u62fc\u5730\u677f",
+    cost: 3600,
+    desc: "\u66f4\u6709\u88c5\u4fee\u611f\u7684\u9c7c\u9aa8\u62fc\u6728\u5730\u677f\uff0c\u8d2d\u4e70\u540e\u53ef\u968f\u65f6\u5207\u6362\u3002"
+  },
+  {
+    id: "slab",
+    name: "\u5927\u5757\u5ca9\u677f",
+    cost: 8200,
+    desc: "\u5927\u5c3a\u5bf8\u5ca9\u677f\u8d28\u611f\uff0c\u989c\u8272\u6c89\u7a33\uff0c\u4ef7\u683c\u8f83\u9ad8\u3002"
+  },
+  {
+    id: "jade",
+    name: "\u6696\u7389\u77f3\u7816",
+    cost: 5800,
+    desc: "\u7389\u77f3\u7eb9\u7406\u5730\u7816\uff0c\u6bd4\u666e\u901a\u6728\u5730\u677f\u66f4\u663e\u7cbe\u81f4\u3002"
+  }
+];
+
+const DECOR_SKINS = {
+  counter: [
+    { id: "classic", name: "\u7ecf\u5178\u6728\u5427\u53f0", cost: 0, desc: "\u9ed8\u8ba4\u6696\u8272\u6728\u8d28\u5427\u53f0\u3002" },
+    { id: "cyber", name: "\u8d5b\u535a\u5149\u5e26\u5427\u53f0", cost: 5200, desc: "\u6df1\u8272\u5427\u53f0\u52a0\u9752\u7eff\u706f\u5e26\uff0c\u66f4\u6709\u672a\u6765\u611f\u3002" },
+    { id: "cream", name: "\u5976\u6cb9\u6728\u7eb9\u5427\u53f0", cost: 3600, desc: "\u66f4\u660e\u4eae\u7684\u6728\u5c4b\u98ce\u5427\u53f0\u76ae\u80a4\u3002" }
+  ],
+  shopSign: [
+    { id: "classic", name: "\u7ecf\u5178\u5e97\u62db", cost: 0, desc: "\u9ed8\u8ba4\u5c0f\u9ed1\u7f51\u5427\u6728\u724c\u3002" },
+    { id: "neon", name: "\u9713\u8679\u5e97\u62db", cost: 2800, desc: "\u5e26\u4e00\u70b9\u8d5b\u535a\u9713\u8679\u7684\u95e8\u5934\u62db\u724c\u3002" },
+    { id: "retro", name: "\u590d\u53e4\u5c0f\u9ed1\u62db\u724c", cost: 2200, desc: "\u66f4\u50cf\u8001\u5e97\u95e8\u5934\u7684\u6696\u8272\u6728\u724c\u3002" }
+  ],
+  snackShelf: [
+    { id: "classic", name: "\u7ecf\u5178\u96f6\u98df\u67dc", cost: 0, desc: "\u9ed8\u8ba4\u6a2a\u5411\u96f6\u98df\u5c55\u793a\u67dc\u3002" },
+    { id: "glass", name: "\u73bb\u7483\u51b7\u5149\u96f6\u98df\u67dc", cost: 2600, desc: "\u900f\u660e\u67dc\u95e8\u52a0\u51b7\u8272\u706f\u5e26\u3002" },
+    { id: "wood", name: "\u624b\u4f5c\u6728\u67b6\u96f6\u98df\u67dc", cost: 1800, desc: "\u66f4\u6e29\u6696\u7684\u6728\u8d28\u5c0f\u8d27\u67b6\u3002" }
+  ]
+};
 
 const layout = createLayout();
 const state = {
@@ -173,6 +222,14 @@ const state = {
   mahjongTables: [],
   publicFloors: [],
   purchasedFloorTileCount: 0,
+  floorSkinId: "classic",
+  purchasedFloorSkinIds: ["classic"],
+  decorSkinIds: { counter: "classic", shopSign: "classic", snackShelf: "classic" },
+  purchasedDecorSkinIds: {
+    counter: ["classic"],
+    shopSign: ["classic"],
+    snackShelf: ["classic"]
+  },
   floorLayoutSession: null,
   partitions: [],
   propPositions: {},
@@ -203,6 +260,69 @@ const guestPalettes = [
   { shirt: "#f0b94a", accent: "#c85a43", pants: "#2f4156", hair: "#302017", skin: "#f1bd8d" },
   { shirt: "#e66b9a", accent: "#fff2d0", pants: "#2b4054", hair: "#442316", skin: "#f0c49a" }
 ];
+
+const STAFF_CHAT_LINES = {
+  cashier: [
+    "\u4eca\u5929\u5f00\u5361\u633a\u5fd9\u7684",
+    "\u96f6\u98df\u522b\u65ad\u8d27\u554a",
+    "\u8001\u677f\u8bb0\u5f97\u627e\u96f6",
+    "\u524d\u53f0\u4ea4\u7ed9\u6211",
+    "\u8fd9\u4f4d\u5145\u503c\u4e0d\u5c11",
+    "\u5feb\u70b9\u6765\u4e0b\u4e00\u4f4d",
+    "\u6211\u773c\u795e\u8d85\u5feb",
+    "\u4eca\u5929\u8425\u4e1a\u989d\u4e0d\u9519"
+  ],
+  floor: [
+    "\u5fd9\u6b7b\u6211\u5566",
+    "\u54ea\u53f0\u53c8\u8981\u6e05\u7406",
+    "\u8d70\u4e00\u5708\u770b\u770b",
+    "\u8fd9\u8fb9\u901a\u9053\u522b\u5835",
+    "\u4e0d\u77e5\u9053\u8001\u677f\u4ec0\u4e48\u65f6\u5019\u53d1\u5de5\u8d44",
+    "\u5ba2\u4eba\u4e0b\u673a\u6211\u6765",
+    "\u573a\u5b50\u8d8a\u6765\u8d8a\u5927\u4e86",
+    "\u6211\u817f\u90fd\u8dd1\u9178\u4e86"
+  ],
+  cleaner: [
+    "\u5730\u677f\u8981\u4fdd\u6301\u5e72\u51c0",
+    "\u5395\u6240\u6211\u53bb\u770b\u770b",
+    "\u8fd9\u91cc\u6709\u70b9\u810f",
+    "\u62d6\u628a\u5728\u54ea\u5462",
+    "\u8ba9\u4e00\u4e0b\u6211\u8981\u6253\u626b",
+    "\u5e72\u51c0\u5ea6\u5f88\u91cd\u8981",
+    "\u4eca\u5929\u4e5f\u8981\u6e05\u6e05\u723d\u723d",
+    "\u8fd9\u76c6\u683d\u522b\u6321\u8def"
+  ],
+  repairman: [
+    "\u663e\u5361\u6e29\u5ea6\u6709\u70b9\u9ad8",
+    "\u54ea\u53f0\u673a\u5668\u53c8\u574f\u4e86",
+    "\u6211\u5e26\u4e86\u87ba\u4e1d\u5200",
+    "\u7f51\u7ebf\u5148\u68c0\u67e5",
+    "\u98ce\u6247\u8be5\u6e05\u7070\u4e86",
+    "\u8fd9\u914d\u7f6e\u8fd8\u80fd\u6253",
+    "\u4fee\u597d\u4e86\u53eb\u6211",
+    "\u522b\u6025\uff0c\u6211\u5728\u8def\u4e0a"
+  ],
+  manager: [
+    "\u8d26\u672c\u6211\u770b\u7740\u5462",
+    "\u5e93\u5b58\u8981\u63d0\u524d\u8865",
+    "\u5927\u5bb6\u8f9b\u82e6\u4e86",
+    "\u4eca\u5929\u7ffb\u53f0\u7387\u4e0d\u9519",
+    "\u524d\u53f0\u79e9\u5e8f\u522b\u4e71",
+    "\u9ad8\u7aef\u5ba2\u8981\u7167\u987e\u597d",
+    "\u8001\u677f\u8fd9\u5e03\u5c40\u6709\u60f3\u6cd5",
+    "\u8be5\u8865\u8d27\u6211\u6765\u5b89\u6392"
+  ],
+  companion: [
+    "\u8fd9\u5c40\u6211\u5e26\u4f60",
+    "\u8981\u4e0d\u8981\u6765\u4e00\u628a\u53cc\u6392",
+    "\u9ad8\u7aef\u673a\u624d\u6709\u624b\u611f",
+    "\u4eca\u5929\u72b6\u6001\u4e0d\u9519",
+    "\u6211\u4e0a\u5206\u5f88\u7a33",
+    "\u8fd9\u5957\u5916\u8bbe\u53ef\u4ee5",
+    "\u522b\u6025\uff0c\u6211\u6765\u4e86",
+    "\u8001\u677f\u7ed9\u6211\u52a0\u4e2a\u9e21\u817f"
+  ]
+};
 
 const ui = {
   procurementButton: null,
@@ -335,7 +455,7 @@ function createLayout() {
     // Keep manager inside the counter and repairman beside the left edge so labels do not overlap.
     manager: { x: counter.x + 14, y: counter.y + 20 },
     repairman: { x: counter.x - 26, y: counter.y + 46 },
-    companion: { x: room.x + room.w - 70, y: room.y + 90 }
+    companion: { x: counter.x - 54, y: counter.y + 46 }
   };
 
   return { room, counter, entrance, entranceCorridor, queue, pcs, toilet, staffHome };
@@ -523,6 +643,8 @@ function pcMatchesGuest(pc, guestType) {
   if (pc.occupiedBy || pc.dirty || pc.broken) return false;
   if (pc.equipmentLevel < guestType.minEquipmentLevel) return false;
   if (getPcHourlyRate(pc) > guestType.maxRate) return false;
+  if (guestType.areaPreference === "hall" && !isHallArea(area)) return false;
+  if (guestType.areaPreference === "room" && !isRoomArea(area)) return false;
   return true;
 }
 
@@ -1202,13 +1324,13 @@ function addPublicFloor(worldX, worldY) {
 function addPartition(worldX, worldY) {
   const type = getPartitionType(state.pendingPartitionTypeId);
   if (!type) {
-    say("\u5148\u5728\u5efa\u8bbe\u9762\u677f\u91cc\u9009\u62e9\u8981\u6446\u653e\u7684\u9694\u65ad\u3002");
+    say("\u5148\u5728\u573a\u666f\u9762\u677f\u91cc\u9009\u62e9\u8981\u6446\u653e\u7684\u690d\u7269\u3002");
     return;
   }
 
   const partition = getPartitionCandidate(type, worldX, worldY);
   if (!isPartitionPlacementValid(partition)) {
-    say("\u8fd9\u91cc\u6446\u4e0d\u4e0b\u9694\u65ad\uff0c\u9700\u8981\u5728\u5df2\u94fa\u5730\u7816\u7684\u5ba4\u5185\u7a7a\u5730\u3002");
+    say("\u8fd9\u91cc\u6446\u4e0d\u4e0b\u690d\u7269\uff0c\u9700\u8981\u5728\u5df2\u94fa\u5730\u7816\u7684\u5ba4\u5185\u7a7a\u5730\u3002");
     return;
   }
   if (state.cash < type.cost) {
@@ -1299,11 +1421,26 @@ function isPartitionPlacementValid(partition, ignorePartitionId = null) {
   const center = { x: partition.x + partition.w / 2, y: partition.y + partition.h / 2 };
   const area = getWalkableAreaAtPoint(center.x, center.y);
   if (!area || area.typeId === "toiletRoom") return false;
-  if (layout.pcs.some((pc) => rectanglesOverlap(partition, getPcVisualBounds(pc), 2))) return false;
-  if (state.mahjongTables.some((table) => rectanglesOverlap(partition, table, 2))) return false;
-  if (state.partitions.some((item) => item.id !== ignorePartitionId && rectanglesOverlap(partition, item, 2))) return false;
-  if (getMovablePropDefinitions().some((prop) => rectanglesOverlap(partition, getMovablePropHitBounds(getMovablePropRect(prop.id)), 2))) return false;
+  const placementBounds = getPartitionPlacementBounds(partition);
+  if (!isRectInsideBuildableFloorNetwork(placementBounds)) return false;
+  if (layout.pcs.some((pc) => rectanglesOverlap(placementBounds, getPcVisualBounds(pc), -6))) return false;
+  if (state.mahjongTables.some((table) => rectanglesOverlap(placementBounds, table, -6))) return false;
+  if (state.partitions.some((item) => item.id !== ignorePartitionId && rectanglesOverlap(placementBounds, getPartitionPlacementBounds(item), -4))) return false;
+  if (getMovablePropDefinitions().some((prop) => rectanglesOverlap(placementBounds, getMovablePropHitBounds(getMovablePropRect(prop.id)), -6))) return false;
   return true;
+}
+
+function getPartitionPlacementBounds(partition) {
+  const type = partition ? getPartitionType(partition.typeId) : null;
+  if (!partition || !type || type.blockMove !== false) return partition;
+  const shrinkX = Math.min(10, partition.w * 0.28);
+  const shrinkY = Math.min(10, partition.h * 0.28);
+  return {
+    x: partition.x + shrinkX,
+    y: partition.y + shrinkY,
+    w: Math.max(8, partition.w - shrinkX * 2),
+    h: Math.max(8, partition.h - shrinkY * 2)
+  };
 }
 
 function isRectInsideBuildableFloorNetwork(rectValue) {
@@ -1960,6 +2097,116 @@ function say(text) {
   state.messageTimer = 4;
 }
 
+function getFloorSkinById(id) {
+  return FLOOR_SKINS.find((skin) => skin.id === id) || null;
+}
+
+function getCurrentFloorSkin() {
+  return getFloorSkinById(state.floorSkinId) || FLOOR_SKINS[0];
+}
+
+function normalizePurchasedFloorSkinIds(ids) {
+  const values = Array.isArray(ids) ? ids : [];
+  const knownIds = FLOOR_SKINS.map((skin) => skin.id);
+  const result = new Set(["classic"]);
+  values.forEach((id) => {
+    if (knownIds.includes(id)) result.add(id);
+  });
+  return Array.from(result);
+}
+
+function getPurchasedFloorSkinIds() {
+  state.purchasedFloorSkinIds = normalizePurchasedFloorSkinIds(state.purchasedFloorSkinIds);
+  return state.purchasedFloorSkinIds.slice();
+}
+
+function isFloorSkinPurchased(skinId) {
+  return getPurchasedFloorSkinIds().includes(skinId);
+}
+
+function useOrBuyFloorSkin(skinId) {
+  const skin = getFloorSkinById(skinId);
+  if (!skin) return;
+
+  const purchased = isFloorSkinPurchased(skin.id);
+  if (!purchased) {
+    if (state.cash < skin.cost) {
+      say(`\u73b0\u91d1\u4e0d\u8db3\uff0c${skin.name}\u9700\u8981 ${skin.cost} \u5143\u3002`);
+      return;
+    }
+    state.cash -= skin.cost;
+    state.purchasedFloorSkinIds.push(skin.id);
+  }
+
+  state.floorSkinId = skin.id;
+  markSaveDirty();
+  say(purchased
+    ? `\u5df2\u5207\u6362\u4e3a ${skin.name}\u3002`
+    : `\u5df2\u8d2d\u4e70\u5e76\u4f7f\u7528 ${skin.name}\uff0c\u82b1\u8d39 ${skin.cost} \u5143\u3002`);
+}
+
+function getDecorSkinById(kind, skinId) {
+  const skins = DECOR_SKINS[kind] || [];
+  return skins.find((skin) => skin.id === skinId) || null;
+}
+
+function getCurrentDecorSkin(kind) {
+  return getDecorSkinById(kind, state.decorSkinIds[kind]) || (DECOR_SKINS[kind] || [])[0] || null;
+}
+
+function normalizeDecorSkinState(ids) {
+  const result = {};
+  Object.keys(DECOR_SKINS).forEach((kind) => {
+    const selected = ids && getDecorSkinById(kind, ids[kind]) ? ids[kind] : "classic";
+    result[kind] = selected;
+  });
+  return result;
+}
+
+function normalizePurchasedDecorSkinIds(ids) {
+  const result = {};
+  Object.keys(DECOR_SKINS).forEach((kind) => {
+    const known = DECOR_SKINS[kind].map((skin) => skin.id);
+    const values = ids && Array.isArray(ids[kind]) ? ids[kind] : [];
+    const set = new Set(["classic"]);
+    values.forEach((id) => {
+      if (known.includes(id)) set.add(id);
+    });
+    result[kind] = Array.from(set);
+  });
+  return result;
+}
+
+function getPurchasedDecorSkinIds(kind) {
+  state.purchasedDecorSkinIds = normalizePurchasedDecorSkinIds(state.purchasedDecorSkinIds);
+  return (state.purchasedDecorSkinIds[kind] || ["classic"]).slice();
+}
+
+function isDecorSkinPurchased(kind, skinId) {
+  return getPurchasedDecorSkinIds(kind).includes(skinId);
+}
+
+function useOrBuyDecorSkin(kind, skinId) {
+  const skin = getDecorSkinById(kind, skinId);
+  if (!skin) return;
+
+  const purchased = isDecorSkinPurchased(kind, skin.id);
+  if (!purchased) {
+    if (state.cash < skin.cost) {
+      say(`\u73b0\u91d1\u4e0d\u8db3\uff0c${skin.name}\u9700\u8981 ${skin.cost} \u5143\u3002`);
+      return;
+    }
+    state.cash -= skin.cost;
+    state.purchasedDecorSkinIds[kind].push(skin.id);
+  }
+
+  state.decorSkinIds[kind] = skin.id;
+  markSaveDirty();
+  say(purchased
+    ? `\u5df2\u5207\u6362\u4e3a ${skin.name}\u3002`
+    : `\u5df2\u8d2d\u4e70\u5e76\u4f7f\u7528 ${skin.name}\uff0c\u82b1\u8d39 ${skin.cost} \u5143\u3002`);
+}
+
 function markSaveDirty() {
   state.saveDirty = true;
 }
@@ -2138,6 +2385,10 @@ function buildSaveData() {
     rentedAreas: state.rentedAreas.map((area) => Object.assign({}, area)),
     publicFloors: savedPublicFloors.map((floor) => Object.assign({}, floor)),
     purchasedFloorTileCount: Math.max(state.purchasedFloorTileCount || 0, savedPublicFloors.length),
+    floorSkinId: getCurrentFloorSkin().id,
+    purchasedFloorSkinIds: getPurchasedFloorSkinIds(),
+    decorSkinIds: normalizeDecorSkinState(state.decorSkinIds),
+    purchasedDecorSkinIds: normalizePurchasedDecorSkinIds(state.purchasedDecorSkinIds),
     partitions: state.partitions.map((partition) => Object.assign({}, partition)),
     propPositions: Object.assign({}, state.propPositions),
     mahjongTables: state.mahjongTables.map((table) => Object.assign({}, table)),
@@ -2235,6 +2486,17 @@ function restoreGame() {
   state.purchasedFloorTileCount = Number.isFinite(data.purchasedFloorTileCount)
     ? Math.max(data.purchasedFloorTileCount, state.publicFloors.length)
     : state.publicFloors.length;
+  state.purchasedFloorSkinIds = normalizePurchasedFloorSkinIds(data.purchasedFloorSkinIds);
+  state.floorSkinId = getFloorSkinById(data.floorSkinId) && state.purchasedFloorSkinIds.includes(data.floorSkinId)
+    ? data.floorSkinId
+    : "classic";
+  state.purchasedDecorSkinIds = normalizePurchasedDecorSkinIds(data.purchasedDecorSkinIds);
+  state.decorSkinIds = normalizeDecorSkinState(data.decorSkinIds);
+  Object.keys(state.decorSkinIds).forEach((kind) => {
+    if (!state.purchasedDecorSkinIds[kind].includes(state.decorSkinIds[kind])) {
+      state.decorSkinIds[kind] = "classic";
+    }
+  });
   state.partitions = Array.isArray(data.partitions)
     ? data.partitions.map(normalizePartition).filter(Boolean)
     : [];
@@ -2389,23 +2651,60 @@ function createDemand(guest) {
   };
 }
 
+function clearGuestDemand(guest) {
+  if (!guest || !guest.demand) return;
+  cancelAssignedDemandWorker(guest);
+  guest.demand = null;
+}
+
+function sanitizeGuestDemandState(guest) {
+  if (!guest || !guest.demand) return;
+  if (guest.state !== "playing") {
+    clearGuestDemand(guest);
+    return;
+  }
+  const pc = Number.isFinite(guest.pcId) ? layout.pcs[guest.pcId] : null;
+  if (!pc || pc.occupiedBy !== guest.id) {
+    clearGuestDemand(guest);
+  }
+}
+
+function getGuestMachineLabel(guest) {
+  return Number.isFinite(guest && guest.pcId)
+    ? `${guest.pcId + 1}\u53f7\u673a\u5668\u7684\u987e\u5ba2`
+    : "\u8fd9\u4f4d\u987e\u5ba2";
+}
+
 function tryCreateDemand(guest, dt) {
+  if (!guest || guest.state !== "playing") return;
   if (guest.demand || guest.demandDone || guest.playTimer > guest.playDuration * 0.67) return;
 
   guest.demandRollTimer -= dt;
   if (guest.demandRollTimer > 0) return;
 
   guest.demandRollTimer = random(4, 7);
-  const demandChance = guest.guestType ? guest.guestType.spendChance : 0.4;
+  const pc = Number.isFinite(guest.pcId) ? layout.pcs[guest.pcId] : null;
+  const demandChance = getGuestDemandChance(guest, pc);
   if (Math.random() < demandChance) {
     guest.demand = createDemand(guest);
-    guest.demandDone = true;
-    say(`\u987e\u5ba2 ${guest.id} \u60f3\u8981 ${guest.demand.productName}\uff0c\u70b9\u4ed6\u624b\u52a8\u9001\u8d27\u3002`);
+    guest.demandDone = !canGuestMakeMultipleDemands(guest, pc);
+    say(`${getGuestMachineLabel(guest)}\u8981${guest.demand.productName}\uff0c\u70b9\u6c14\u6ce1\u53ef\u624b\u52a8\u9001\u8d27\u3002`);
   }
 }
 
+function canGuestMakeMultipleDemands(guest, pc) {
+  if (!guest || !pc) return false;
+  if (pc.equipmentLevel >= 5 && guest.guestType && guest.guestType.id === "highSpec") return true;
+  if (pc.equipmentLevel >= 4 && guest.rechargeAmount >= 500) return true;
+  return false;
+}
+
 function updateDemand(guest, dt) {
-  if (!guest.demand) return;
+  if (!guest || !guest.demand) return;
+  if (guest.state !== "playing") {
+    clearGuestDemand(guest);
+    return;
+  }
 
   guest.demand.timer -= dt;
   if (guest.demand.timer > 0) return;
@@ -2413,7 +2712,7 @@ function updateDemand(guest, dt) {
   const satisfaction = Number.isFinite(state.satisfaction) ? state.satisfaction : 100;
   state.satisfaction = Math.max(0, satisfaction - 5);
   markSaveDirty();
-  say(`\u987e\u5ba2 ${guest.id} \u7b49 ${guest.demand.productName} \u592a\u4e45\uff0c\u4e0d\u6ee1\u610f\u5730\u653e\u5f03\u4e86\u3002`);
+  say(`${getGuestMachineLabel(guest)}\u7b49${guest.demand.productName}\u592a\u4e45\uff0c\u653e\u5f03\u4e86\u3002`);
   guest.demand = null;
 }
 
@@ -2429,7 +2728,7 @@ function tryStartToiletEvent(guest, dt) {
   if (Math.random() < 0.32) {
     state.toilet.busyGuestId = guest.id;
     guest.state = "toToilet";
-    say(`\u987e\u5ba2 ${guest.id} \u53bb\u4e0a\u5395\u6240\u4e86\u3002`);
+    say(`${getGuestMachineLabel(guest)}\u53bb\u4e0a\u5395\u6240\u4e86\u3002`);
   }
 }
 
@@ -2443,9 +2742,8 @@ function cancelAssignedDemandWorker(guest) {
 }
 
 function serveGuestDemand(guest) {
-  if (!guest || !guest.demand) return false;
+  if (!guest || guest.state !== "playing" || !guest.demand) return false;
   if (isCompanionDemand(guest.demand)) {
-    cancelAssignedDemandWorker(guest);
     return serveCompanionDemand(guest, false);
   }
 
@@ -2454,7 +2752,7 @@ function serveGuestDemand(guest) {
 
   if (state.cafeLevel < product.unlockLevel) {
     say(`${product.name} \u9700\u8981\u7f51\u5427 Lv.${product.unlockLevel}\uff0c\u76ee\u524d\u65e0\u6cd5\u63d0\u4f9b\u3002`);
-    guest.demand = null;
+    clearGuestDemand(guest);
     return true;
   }
 
@@ -2469,7 +2767,7 @@ function serveGuestDemand(guest) {
   state.cash += product.sellPrice;
   recordDailyRevenue("product", product.sellPrice, product.id);
   markSaveDirty();
-  say(`\u9001\u51fa ${product.name}\uff0c\u989d\u5916\u6536\u5165 ${product.sellPrice} \u5143\u3002`);
+  say(`${getGuestMachineLabel(guest)}\u6536\u5230${product.name}\uff0c\u989d\u5916\u6536\u5165 ${product.sellPrice} \u5143\u3002`);
   guest.demand = null;
   return true;
 }
@@ -2479,27 +2777,88 @@ function getCompanionDemandRevenue(guest) {
   return pc && pc.equipmentLevel >= 5 ? 138 : 88;
 }
 
+function findAvailableCompanionWorker() {
+  return state.workers.find((worker) => worker.type === "companion" && worker.state === "station") || null;
+}
+
 function serveCompanionDemand(guest, byWorker) {
+  if (!guest || guest.state !== "playing" || !guest.demand || !isCompanionDemand(guest.demand)) return false;
+  const companion = byWorker
+    ? state.workers.find((worker) => worker.id === guest.demand.assignedWorkerId && worker.type === "companion")
+    : findAvailableCompanionWorker();
+
   if (state.employees.companion < 1) {
     say("\u5e97\u91cc\u8fd8\u6ca1\u6709\u966a\u73a9\u5458\uff0c\u8fd9\u5355\u6682\u65f6\u63a5\u4e0d\u4e86\u3002");
     return true;
   }
+  if (!companion) {
+    say("\u966a\u73a9\u5458\u6b63\u5728\u670d\u52a1\u5176\u4ed6\u5ba2\u4eba\uff0c\u8fd9\u4e2a\u9700\u6c42\u53ef\u80fd\u4f1a\u8d85\u65f6\u3002");
+    return true;
+  }
 
+  if (!byWorker) {
+    guest.demand.assignedWorkerId = companion.id;
+    companion.state = "toDeliver";
+    companion.targetGuestId = guest.id;
+    companion.targetProductId = guest.demand.productId;
+    companion.targetPcId = Number.isFinite(guest.pcId) ? guest.pcId : null;
+    companion.pathTimer = 0;
+    clearEntityNavigation(companion);
+    say(`\u966a\u73a9\u5458\u6b63\u5728\u524d\u5f80${getGuestMachineLabel(guest)}\u7684\u5ea7\u4f4d\u65c1\u3002`);
+    return true;
+  }
+
+  startCompanionSession(guest, companion);
+  return true;
+}
+
+function startCompanionSession(guest, worker) {
+  if (!guest || !worker) return false;
   const revenue = getCompanionDemandRevenue(guest);
   state.cash += revenue;
   recordDailyRevenue("companion", revenue);
+  if (!guest.companionUsed) {
+    guest.playDuration *= COMPANION_PLAY_TIME_MULTIPLIER;
+    guest.playTimer = Math.max(guest.playTimer, Math.max(45, guest.playTimer * COMPANION_PLAY_TIME_MULTIPLIER));
+  }
+  guest.companionUsed = true;
+  guest.companionWorkerId = worker.id;
+  guest.companionTimer = guest.playTimer;
+  worker.state = "companionSitting";
+  worker.targetGuestId = guest.id;
+  worker.targetPcId = guest.pcId;
+  worker.targetProductId = null;
+  worker.taskTimer = guest.companionTimer;
+  positionCompanionBesideGuest(worker, guest);
   markSaveDirty();
-  say(`${byWorker ? "\u966a\u73a9\u5458" : "\u5df2"}\u5b8c\u6210\u966a\u73a9\u670d\u52a1\uff0c\u989d\u5916\u6536\u5165 ${revenue} \u5143\u3002`);
+  say(`\u966a\u73a9\u5458\u5df2\u966a\u5750${getGuestMachineLabel(guest)}\uff0c\u4f1a\u966a\u5230\u4e0b\u673a\uff0c\u6536\u5165 ${revenue} \u5143\u3002`);
   guest.demand = null;
   return true;
 }
 
+function getCompanionSeatPoint(guest) {
+  const pc = guest ? layout.pcs[guest.pcId] : null;
+  if (!pc) return guest ? { x: guest.x + 16, y: guest.y } : null;
+  const area = getPcActualArea(pc);
+  return {
+    x: clamp(pc.seatX + 16, area.x + 12, area.x + area.w - 12),
+    y: clamp(pc.seatY, area.y + 36, area.y + area.h - 12)
+  };
+}
+
+function positionCompanionBesideGuest(worker, guest) {
+  const point = getCompanionSeatPoint(guest);
+  if (!worker || !point) return;
+  worker.x = point.x;
+  worker.y = point.y;
+  worker.pathTimer = 0;
+  worker.stuckTimer = 0;
+  worker.detourPoint = null;
+  clearEntityNavigation(worker);
+}
+
 function findTappedGuest(x, y) {
-  const demandGuest = state.guests.find((guest) => (
-    guest.state === "playing" &&
-    guest.demand &&
-    isPointInsideRect(x, y, getGuestDemandHitBounds(guest), 0)
-  ));
+  const demandGuest = findTappedDemandGuest(x, y);
   if (demandGuest) return demandGuest;
 
   return state.guests.find((guest) => (
@@ -2509,6 +2868,14 @@ function findTappedGuest(x, y) {
     y >= guest.y - 64 &&
     y <= guest.y + 26
   ));
+}
+
+function findTappedDemandGuest(x, y) {
+  return state.guests.find((guest) => (
+    guest.state === "playing" &&
+    guest.demand &&
+    isPointInsideRect(x, y, getGuestDemandHitBounds(guest), 0)
+  )) || null;
 }
 
 function getGuestDemandHitBounds(guest) {
@@ -2620,20 +2987,23 @@ function startGuestUsingToilet(guest) {
 
 function pickWeightedDemandProductId(guest, pc) {
   const level = pc ? pc.equipmentLevel : state.equipmentLevel;
-  const premiumBias = level >= 5 ? 3.3 : level >= 4 ? 2.4 : level >= 3 ? 1.45 : 1;
+  const typeId = guest && guest.guestType ? guest.guestType.id : "";
+  const premiumBias = level >= 5 ? 4.2 : level >= 4 ? 2.8 : level >= 3 ? 1.45 : 1;
   const budgetBias = guest && guest.guestType && guest.guestType.id === "budgetHall" ? 1.6 : 1;
   const weights = {
     noodle: Math.max(1, 3.1 / premiumBias) * budgetBias,
     water: Math.max(1, 2.8 / premiumBias) * budgetBias,
-    sausage: Math.max(1, 2.3 / premiumBias),
+    sausage: Math.max(1, 2.3 / premiumBias) * (typeId === "budgetHall" ? 1.15 : 1),
     betel: Math.max(0.7, 1.7 / premiumBias),
     cigarette: Math.max(0.6, 1.4 / premiumBias),
     snack: level >= 2 ? 1.4 * premiumBias : 0.4,
     drink: level >= 2 ? 1.5 * premiumBias : 0.5,
-    meal: level >= 3 ? 1.15 * premiumBias : 0.25,
-    milkTea: level >= 4 ? 1.25 * premiumBias : 0.15
+    meal: level >= 3 ? 1.15 * premiumBias * (typeId === "highSpec" ? 1.35 : 1) : 0.25,
+    milkTea: level >= 4 ? 1.25 * premiumBias * (typeId === "highSpec" ? 1.55 : 1) : 0.15
   };
+  const allowedIds = getDemandProductPoolForGuest(guest, pc);
   const candidates = demandProductIds
+    .filter((id) => allowedIds.includes(id))
     .map((id) => ({ id, product: getProductById(id), weight: weights[id] || 1 }))
     .filter((item) => item.product && state.cafeLevel >= item.product.unlockLevel && item.weight > 0);
   const pool = candidates.length
@@ -2648,11 +3018,44 @@ function pickWeightedDemandProductId(guest, pc) {
   return pool[0].id;
 }
 
+function getGuestDemandChance(guest, pc) {
+  const base = guest && guest.guestType ? guest.guestType.spendChance : 0.4;
+  const level = pc ? pc.equipmentLevel : 1;
+  let bonus = 0;
+  if (level >= 5) bonus += 0.16;
+  else if (level >= 4) bonus += 0.09;
+  else if (level <= 1 && guest && guest.guestType && guest.guestType.id === "budgetHall") bonus -= 0.04;
+  if (guest && guest.rechargeAmount >= 600) bonus += 0.09;
+  else if (guest && guest.rechargeAmount >= 300) bonus += 0.04;
+  return clamp(base + bonus, 0.1, 0.92);
+}
+
+function getDemandProductPoolForGuest(guest, pc) {
+  const typeId = guest && guest.guestType ? guest.guestType.id : "";
+  const level = pc ? pc.equipmentLevel : 1;
+  if (typeId === "budgetHall") return ["noodle", "water", "sausage"];
+  if (typeId === "regularHall") {
+    return level >= 3
+      ? ["noodle", "water", "sausage", "betel", "cigarette", "snack", "drink"]
+      : ["noodle", "water", "sausage", "betel", "snack", "drink"];
+  }
+  if (typeId === "highSpec" || level >= 4) {
+    return ["snack", "drink", "meal", "milkTea", "cigarette", "betel", "sausage"];
+  }
+  if (typeId === "privateRoom") {
+    return ["sausage", "betel", "cigarette", "snack", "drink", "meal", "milkTea"];
+  }
+  return demandProductIds.slice();
+}
+
 function shouldCreateCompanionDemand(guest, pc) {
   if (!guest || !pc || pc.equipmentLevel < 4 || state.employees.companion < 1) return false;
-  const chance = pc.equipmentLevel >= 5 ? 0.34 : 0.18;
-  const guestBonus = guest.guestType && guest.guestType.id === "highSpec" ? 0.08 : 0;
-  return Math.random() < chance + guestBonus;
+  if (guest.companionUsed || Number.isFinite(guest.companionWorkerId)) return false;
+  const chance = pc.equipmentLevel >= 5 ? 0.48 : 0.24;
+  const guestBonus = guest.guestType && guest.guestType.id === "highSpec" ? 0.14 :
+    guest.guestType && guest.guestType.id === "privateRoom" ? 0.06 : 0;
+  const rechargeBonus = guest.rechargeAmount >= 600 ? 0.08 : 0;
+  return Math.random() < chance + guestBonus + rechargeBonus;
 }
 
 function isCompanionDemand(demand) {
@@ -3223,7 +3626,11 @@ function createWorker(type) {
     targetGuestId: null,
     targetProductId: null,
     idleTarget: null,
-    idleTimer: Math.random() * 6
+    idleTimer: Math.random() * 6,
+    speechText: "",
+    speechTimer: 0,
+    speechCooldown: random(5, 14),
+    stationSeed: Math.floor(random(0, 100000))
   };
   const home = getWorkerHome(worker);
   worker.x = home.x;
@@ -3247,7 +3654,12 @@ function getWorkerHome(worker) {
       { x: room.x + room.w * 0.3, y: room.y + room.h - 60 },
       { x: room.x + room.w * 0.7, y: room.y + room.h - 60 }
     ];
-    return walls[offsetIndex % walls.length];
+    const base = walls[offsetIndex % walls.length];
+    const jitterSeed = Number.isFinite(worker.stationSeed) ? worker.stationSeed : worker.id * 97 + offsetIndex * 31;
+    const offsetX = ((jitterSeed % 5) - 2) * 8;
+    const offsetY = ((Math.floor(jitterSeed / 5) % 5) - 2) * 8;
+    const safe = getAreaSafePoint(room, base.x + offsetX, base.y + offsetY);
+    return safe || base;
   }
 
   const stationSets = {
@@ -3260,15 +3672,9 @@ function getWorkerHome(worker) {
       { x: counter.x - 26, y: counter.y + counter.h - 4 },
       { x: counter.x - 48, y: counter.y + counter.h + 18 }
     ],
-    companion: [
-      { x: room.x + room.w - 64, y: room.y + 58 }
-    ],
-    cleaner: index === 0
-      ? [{ x: counter.x + counter.w + 10, y: counter.y + counter.h + 24 }]
-      : [getWallPosition(index)],
-    floor: index === 0
-      ? [{ x: counter.x + counter.w + 54, y: counter.y + counter.h + 24 }]
-      : [getWallPosition(index + 4)]
+    cleaner: [getWallPosition(index * 2 + 1)],
+    floor: [getWallPosition(index * 2 + 4)],
+    companion: [getWallPosition(index * 2 + 2)]
   };
   const stations = stationSets[worker.type] || [{ x: counter.x + counter.w + 12, y: counter.y + counter.h - 8 }];
   const safeStations = stations.filter((station) => !isStationTooCloseToToilet(station));
@@ -3321,7 +3727,7 @@ function getWorkerPatrolPoints() {
 }
 
 function shouldWorkerRoam(worker) {
-  return worker && ["companion"].includes(worker.type);
+  return false;
 }
 
 function getWorkerRoamTarget(worker) {
@@ -3471,9 +3877,50 @@ function hireStaff(staff) {
   state.cash -= totalCost;
   state.employees[staff.id] += 1;
   state.workers.push(createWorker(staff.id));
+  reindexWorkersOfType(staff.id);
   updateCafeLevel();
   markSaveDirty();
   say(`\u5df2\u62db\u8058 ${staff.name}\uff0c\u5df2\u9884\u53d1\u9996\u6708\u5de5\u8d44\u3002`);
+}
+
+function canFireStaff(staff) {
+  return staff && (state.employees[staff.id] || 0) > 0;
+}
+
+function fireStaff(staff) {
+  if (!canFireStaff(staff)) {
+    say(`\u5f53\u524d\u6ca1\u6709\u53ef\u8f9e\u9000\u7684 ${staff ? staff.name : "\u5458\u5de5"}\u3002`);
+    return;
+  }
+
+  const candidates = state.workers
+    .filter((worker) => worker.type === staff.id)
+    .sort((a, b) => (a.state === "station" ? -1 : 1) - (b.state === "station" ? -1 : 1));
+  const worker = candidates[0];
+  if (worker) {
+    resetWorker(worker);
+    state.workers = state.workers.filter((item) => item.id !== worker.id);
+  }
+
+  state.employees[staff.id] = Math.max(0, (state.employees[staff.id] || 0) - 1);
+  reindexWorkersOfType(staff.id);
+  updateCafeLevel();
+  markSaveDirty();
+  say(`\u5df2\u8f9e\u9000 1 \u540d ${staff.name}\uff0c\u5de5\u8d44\u4e0d\u9000\u8fd8\u3002`);
+}
+
+function reindexWorkersOfType(type) {
+  state.workers
+    .filter((worker) => worker.type === type)
+    .forEach((worker, index) => {
+      worker.homeIndex = index;
+      if (worker.state === "station") {
+        const home = getWorkerHome(worker);
+        worker.x = home.x;
+        worker.y = home.y;
+        clearEntityNavigation(worker);
+      }
+    });
 }
 
 function isPointInRect(x, y, button) {
@@ -3833,6 +4280,14 @@ function handleBuildOffer(offer) {
   state.selectedAreaId = null;
   state.selectedPcId = null;
   state.pendingPartitionTypeId = null;
+  if (offer.kind === "floorSkin") {
+    useOrBuyFloorSkin(offer.skinId);
+    return;
+  }
+  if (offer.kind === "decorSkin") {
+    useOrBuyDecorSkin(offer.decorKind, offer.skinId);
+    return;
+  }
   if (offer.kind === "floor") {
     enterFloorLayoutMode();
     say(`\u5df2\u8fdb\u5165\u94fa\u5730\u7816\u6a21\u5f0f\uff0c\u6bcf\u5757 ${PUBLIC_FLOOR_COST} \u5143\uff0c\u70b9\u51fb\u5730\u56fe\u94fa\u8bbe\u3002`);
@@ -3845,7 +4300,7 @@ function handleBuildOffer(offer) {
     state.pendingPartitionOrientation = "horizontal";
     state.layoutToolActive = true;
     state.layoutMode = "partition";
-    say(`\u5df2\u9009\u62e9 ${type.name}\uff0c\u53ef\u70b9\u51fb\u65cb\u8f6c 90\u00b0 \u5207\u6362\u6a2a\u7ad6\uff0c\u5bf9\u51c6\u540e\u70b9\u51fb\u6446\u653e\u3002`);
+    say(`\u5df2\u9009\u62e9 ${type.name}\uff0c\u5bf9\u51c6\u540e\u70b9\u51fb\u6446\u653e\u3002`);
   }
 }
 
@@ -3955,6 +4410,13 @@ function handleTouch(x, y) {
   }
 
   if (state.pcActionMenu) {
+    const menuWorldPoint = screenToWorld(x, y);
+    const demandGuest = findTappedDemandGuest(menuWorldPoint.x, menuWorldPoint.y);
+    if (demandGuest && serveGuestDemand(demandGuest)) {
+      state.pcActionMenu = null;
+      return;
+    }
+
     const pcActionButton = ui.pcActionButtons.find((button) => isPointInRect(x, y, button));
     if (pcActionButton) {
       handlePcActionMenuButton(pcActionButton);
@@ -4175,6 +4637,18 @@ function handleTouch(x, y) {
     const hireButton = ui.hireButtons.find((button) => isPointInRect(x, y, button));
     if (hireButton) {
       const staff = hireButton.staff;
+      if (hireButton.action === "fire") {
+        if (!canFireStaff(staff)) {
+          fireStaff(staff);
+          return;
+        }
+        openConfirmDialog(
+          "\u786e\u8ba4\u8f9e\u9000",
+          `\u786e\u5b9a\u8f9e\u9000 1 \u540d ${staff.name} \u5417\uff1f\u5df2\u53d1\u5de5\u8d44\u4e0d\u9000\u8fd8\u3002`,
+          () => fireStaff(staff)
+        );
+        return;
+      }
       if (!canHireStaff(staff)) {
         hireStaff(staff);
         return;
@@ -4316,6 +4790,11 @@ function handleTouch(x, y) {
     return;
   }
 
+  const demandGuest = findTappedDemandGuest(worldPoint.x, worldPoint.y);
+  if (demandGuest && serveGuestDemand(demandGuest)) {
+    return;
+  }
+
   const brokenPc = findTappedBrokenPc(worldPoint.x, worldPoint.y);
   if (brokenPc) {
     repairPc(brokenPc, false);
@@ -4419,8 +4898,13 @@ function getBlockingPartitionAtPoint(x, y, padding = 3) {
 
 function getMovementIgnoredPropIds(entity = null) {
   if (!entity || !entity.type) return [];
+  if (entity.type === "companion") return getMovablePropDefinitions().map((prop) => prop.id);
   if (entity.type === "manager" || entity.type === "cashier" || entity.type === "repairman") return ["counter"];
   return [];
+}
+
+function isCompanionFreeMoveEntity(entity = null) {
+  return Boolean(entity && entity.type === "companion");
 }
 
 function getMovementIgnoredPcIds(entity = null) {
@@ -4471,7 +4955,7 @@ function getMovementBlockingRects(entity = null) {
   if (!hasOverrides && _movementBlockingRectsCache) return _movementBlockingRectsCache;
 
   const result = []
-    .concat((state.mahjongTables || []).map((table) => Object.assign({ blockType: "mahjong" }, table)))
+    .concat(isCompanionFreeMoveEntity(entity) ? [] : (state.mahjongTables || []).map((table) => Object.assign({ blockType: "mahjong" }, table)))
     .concat((state.partitions || [])
       .filter(isBlockingPartition)
       .map((partition) => Object.assign({ blockType: "partition", blockId: partition.id }, partition)))
@@ -5415,9 +5899,35 @@ function moveToPcServicePoint(entity, pc, speed, dt) {
 
 function findFreePc(guest = null) {
   if (guest && guest.guestType) {
-    return layout.pcs.find((pc) => pcMatchesGuest(pc, guest.guestType));
+    return layout.pcs
+      .filter((pc) => pcMatchesGuest(pc, guest.guestType))
+      .sort((a, b) => getPcPreferenceScore(b, guest.guestType) - getPcPreferenceScore(a, guest.guestType))[0] || null;
   }
   return layout.pcs.find((pc) => !pc.occupiedBy && !pc.dirty && !pc.broken);
+}
+
+function getPcPreferenceScore(pc, guestType) {
+  const area = getAreaById(pc.areaId);
+  const rate = getPcHourlyRate(pc);
+  const isHall = isHallArea(area);
+  if (!guestType) return pc.equipmentLevel * 10 - rate;
+
+  if (guestType.id === "budgetHall") {
+    return (isHall ? 80 : -80) - pc.equipmentLevel * 12 - rate;
+  }
+  if (guestType.id === "regularHall") {
+    return (isHall ? 70 : -60) - Math.abs(pc.equipmentLevel - 2) * 8 - rate * 0.5;
+  }
+  if (guestType.id === "highSpec") {
+    return pc.equipmentLevel * 36 + (pc.equipmentLevel >= 5 ? 38 : 0) + (isHall ? -8 : 10) - rate * 0.25;
+  }
+  if (guestType.id === "privateRoom") {
+    return pc.equipmentLevel * 20 + (isHall ? -18 : 18) - rate * 0.2;
+  }
+  if (guestType.id === "roomDuo") {
+    return pc.equipmentLevel * 12 + (isHall ? -8 : 12) - rate * 0.25;
+  }
+  return pc.equipmentLevel * 10 - rate;
 }
 
 function getGuestPlayDuration(guestType) {
@@ -5447,11 +5957,17 @@ function spawnGuest(guestType) {
     demandRollTimer: random(5, 9),
     demand: null,
     demandDone: false,
+    companionUsed: false,
+    companionWorkerId: null,
+    companionTimer: 0,
+    queueWaitTimer: 0,
+    queueWaitLimit: random(QUEUE_ABANDON_MIN_SECONDS, QUEUE_ABANDON_MAX_SECONDS),
     toiletRollTimer: random(8, 15),
     toiletTimer: 0,
     toiletDone: false,
     stuckTimer: 0,
     guestType,
+    rechargeAmount: 0,
     speed: random(44, 58),
     palette
   });
@@ -5479,7 +5995,7 @@ function updateSpawn() {
     guest.state === "checkingIn"
   )).length;
 
-  if (Math.random() < spawnChance && waitingGuests < getMaxWaitingGuests() && hasPcForGuestType(guestType)) {
+  if (Math.random() < spawnChance && waitingGuests < getMaxWaitingGuests()) {
     spawnGuest(guestType);
   } else {
     if (Math.random() < 0.35) state.lost += 1;
@@ -5620,7 +6136,7 @@ function getTrafficPower() {
   const cleanlinessFactor = 0.35 + state.cleanliness / 100 * 0.75;
   const equipmentFactor = 0.65 + equipmentAverage * 0.18;
   const scaleFactor = 0.62 + Math.min(layout.pcs.length, 12) * 0.05;
-  return cleanlinessFactor * equipmentFactor * scaleFactor * getTimeTrafficFactor() * getActivityTrafficFactor();
+  return cleanlinessFactor * equipmentFactor * scaleFactor * getTimeTrafficFactor() * getActivityTrafficFactor() * 1.05;
 }
 
 function getActivityTrafficFactor() {
@@ -5765,14 +6281,22 @@ function getFrontDeskServicePoint() {
 function assignGuestToPc(guest, pc, manual = false) {
   if (!guest || !pc) return false;
   pc.occupiedBy = guest.id;
+  const recharge = Number.isFinite(guest.rechargeAmount) ? guest.rechargeAmount : 0;
+  if (recharge > 0) {
+    state.cash += recharge;
+    recordDailyRevenue("internet", recharge);
+  }
   guest.pcId = pc.id;
   guest.state = "toPc";
   guest.pathTimer = 0;
   guest.queueIndex = -1;
+  guest.queueWaitTimer = 0;
   guest.manualCheckInPrompted = false;
   guest.detourPoint = null;
   guest.stuckTimer = 0;
-  say(`顾客 ${guest.id} ${manual ? "已手动开卡" : "已开卡"}，分配到 ${pc.id + 1} 号机。`);
+  const checkInText = manual ? "\u5df2\u624b\u52a8\u5f00\u5361" : "\u5df2\u5f00\u5361";
+  const rechargeText = recharge > 0 ? `\uff0c\u5145\u503c ${recharge} \u5143` : "";
+  say(`${checkInText}${rechargeText}\uff0c\u5206\u914d\u5230 ${pc.id + 1} \u53f7\u673a\u3002`);
   return true;
 }
 
@@ -5799,6 +6323,7 @@ function startFrontDeskCheckIn(guest, manual = false, reservedPc = null) {
   if (!pc) return false;
   const duration = manual ? MANUAL_CHECKIN_DURATION : getFrontDeskDuration();
   if (duration <= 0) return false;
+  guest.rechargeAmount = chooseGuestRechargeAmount(guest, pc);
   guest.state = "checkingIn";
   guest.pathTimer = 0;
   guest.detourPoint = null;
@@ -5811,34 +6336,73 @@ function startFrontDeskCheckIn(guest, manual = false, reservedPc = null) {
   return true;
 }
 
+function chooseGuestRechargeAmount(guest, pc) {
+  const typeId = guest && guest.guestType ? guest.guestType.id : "";
+  const level = pc ? pc.equipmentLevel : 1;
+  let chance = 0.12;
+  let min = 100;
+  let max = 300;
+
+  if (typeId === "budgetHall") {
+    chance = 0.06;
+    max = 200;
+  } else if (typeId === "regularHall") {
+    chance = 0.12;
+    max = 400;
+  } else if (typeId === "roomDuo") {
+    chance = 0.18;
+    max = 600;
+  } else if (typeId === "privateRoom") {
+    chance = level >= 4 ? 0.34 : 0.22;
+    max = level >= 4 ? 800 : 600;
+  } else if (typeId === "highSpec") {
+    chance = level >= 5 ? 0.58 : 0.44;
+    min = level >= 4 ? 300 : 200;
+    max = level >= 4 ? 1000 : 600;
+  }
+
+  if (level >= 5) chance += 0.08;
+  else if (level >= 4) chance += 0.04;
+  if (Math.random() > chance) return 0;
+
+  const amounts = [];
+  for (let amount = min; amount <= max; amount += 100) {
+    if (amount >= 900 && level < 4) continue;
+    amounts.push(amount);
+  }
+  if (!amounts.length) return 0;
+  return Math.random() > 0.82
+    ? amounts[amounts.length - 1]
+    : amounts[Math.floor(Math.random() * amounts.length)];
+}
+
 function tryManualCheckInGuest(guest) {
   if (!guest || (guest.state !== "queueing" && guest.state !== "entering")) return false;
 
   const frontGuest = getFirstWaitingCheckInGuest();
   if (frontGuest && frontGuest.id !== guest.id) {
-    say("先给排在最前面的顾客开卡。");
+    say("\u5148\u7ed9\u6392\u5728\u6700\u524d\u9762\u7684\u987e\u5ba2\u5f00\u5361\u3002");
     return true;
   }
 
   const servicePoint = layout.queue[guest.queueIndex] || getFrontDeskServicePoint();
   if (guest.state === "entering" && distance(guest, servicePoint) > 36) {
-    say("等顾客走到前台后，再点击开卡。");
+    say("\u7b49\u987e\u5ba2\u8d70\u5230\u524d\u53f0\u540e\uff0c\u518d\u70b9\u51fb\u5f00\u5361\u3002");
     return true;
   }
 
   const manual = !hasFrontDeskStaff();
   const pc = findFreePc(guest);
   if (!pc) {
-    say("没有符合这位顾客要求的空机器。");
+    say("\u6ca1\u6709\u7b26\u5408\u8fd9\u4f4d\u987e\u5ba2\u8981\u6c42\u7684\u7a7a\u673a\u5668\u3002");
     return true;
   }
 
   if (!startFrontDeskCheckIn(guest, manual, pc)) {
-    say("前台正在处理上一位顾客。");
+    say("\u524d\u53f0\u6b63\u5728\u5904\u7406\u4e0a\u4e00\u4f4d\u987e\u5ba2\u3002");
   }
   return true;
 }
-
 function updateFrontDesk(dt) {
   if (!state.frontDesk.busyGuestId) {
     state.frontDesk.duration = getFrontDeskDuration();
@@ -5913,11 +6477,11 @@ function finishPlaying(guest, pc) {
   if (state.toilet.busyGuestId === guest.id) {
     state.toilet.busyGuestId = null;
   }
+  endCompanionSessionForGuest(guest);
   guest.state = "leaving";
   guest.exitStage = "inside";
   if (guest.demand) {
-    cancelAssignedDemandWorker(guest);
-    guest.demand = null;
+    clearGuestDemand(guest);
   }
   guest.pathTimer = 0;
   guest.exitReleaseTimer = 0;
@@ -5925,7 +6489,17 @@ function finishPlaying(guest, pc) {
   state.cleanliness = Math.max(0, state.cleanliness - 3);
   markSaveDirty();
   if (!maybeBreakPc(pc)) {
-    say("顾客 " + guest.id + " 下机结账，收入 " + income + " 元。机位需要清理。");
+    say(`${pc.id + 1}\u53f7\u673a\u5668\u7684\u987e\u5ba2\u4e0b\u673a\u7ed3\u8d26\uff0c\u6536\u5165 ${income} \u5143\u3002\u673a\u4f4d\u9700\u8981\u6e05\u7406\u3002`);
+  }
+}
+
+function endCompanionSessionForGuest(guest) {
+  if (!guest || !Number.isFinite(guest.companionWorkerId)) return;
+  const worker = state.workers.find((item) => item.id === guest.companionWorkerId);
+  guest.companionWorkerId = null;
+  guest.companionTimer = 0;
+  if (worker && worker.state === "companionSitting") {
+    resetWorker(worker);
   }
 }
 
@@ -5977,8 +6551,11 @@ function assignDeliveryTask(worker) {
   if (!guest) return false;
 
   const deliveryPoint = getGuestDeliveryPoint(guest, worker);
-  if (!deliveryPoint || !canStandAtMovementPoint(worker, deliveryPoint) ||
-      isWalkBlockingPoint(deliveryPoint.x, deliveryPoint.y, worker)) {
+  const deliveryStandable = deliveryPoint && runWithIgnoredPcs(worker, [guest.pcId], () => (
+    canStandAtMovementPoint(worker, deliveryPoint) &&
+    !isWalkBlockingPoint(deliveryPoint.x, deliveryPoint.y, worker)
+  ));
+  if (!deliveryStandable) {
     return false;
   }
 
@@ -5995,17 +6572,26 @@ function assignDeliveryTask(worker) {
 function getGuestDeliveryPoint(guest, entity = null) {
   const pc = guest ? layout.pcs[guest.pcId] : null;
   if (pc) {
-    const worker = entity;
-    const servicePoint = worker ? getBestPcServicePoint(worker, pc) : null;
-    const accessPoint = getPcAccessPoint(pc);
-    const candidate = servicePoint || accessPoint;
-    if (candidate && canStandAtMovementPoint(worker || guest, candidate) &&
-        !isWalkBlockingPoint(candidate.x, candidate.y, worker || guest)) {
-      return candidate;
+    const chairRight = getPcChairRightServicePoint(pc);
+    const standable = chairRight && runWithIgnoredPcs(entity || guest, [pc.id], () => (
+      canStandAtMovementPoint(entity || guest, chairRight) &&
+        !isWalkBlockingPoint(chairRight.x, chairRight.y, entity || guest)
+    ));
+    if (standable) {
+      return chairRight;
     }
-    return accessPoint;
+    return null;
   }
   return guest ? { x: guest.x, y: guest.y + 18 } : null;
+}
+
+function getPcChairRightServicePoint(pc) {
+  if (!pc) return null;
+  const area = getPcActualArea(pc);
+  return getAreaSafePoint(area, pc.seatX + 24, pc.seatY) || {
+    x: clamp(pc.seatX + 24, area.x + 12, area.x + area.w - 12),
+    y: clamp(pc.seatY, area.y + 36, area.y + area.h - 12)
+  };
 }
 
 function isWorkerCloseEnoughToDeliver(worker, guest, target) {
@@ -6088,6 +6674,7 @@ function updateWorkers(dt) {
   updateManagerRestock(dt);
 
   state.workers.forEach((worker) => {
+    updateWorkerSpeech(worker, dt);
     if (updateWorkerEntrapment(worker, dt)) return;
 
     if (worker.state === "station") {
@@ -6304,6 +6891,10 @@ function updateWorkers(dt) {
       const arrived = runWithIgnoredPcs(worker, ignoreIds, () => moveToward(worker, deliveryPoint, 62, dt));
 
       if (arrived || isWorkerCloseEnoughToDeliver(worker, guest, deliveryPoint)) {
+        if (isCompanionDemand(guest.demand)) {
+          serveGuestDemandByWorker(guest);
+          return;
+        }
         worker.state = "delivering";
         worker.pathTimer = 0;
         worker.taskTimer = 0.7;
@@ -6319,6 +6910,21 @@ function updateWorkers(dt) {
       return;
     }
 
+    if (worker.state === "companionSitting") {
+      const guest = state.guests.find((item) => item.id === worker.targetGuestId);
+      if (!guest || guest.state !== "playing") {
+        resetWorker(worker);
+        return;
+      }
+      positionCompanionBesideGuest(worker, guest);
+      worker.taskTimer = Math.max(0, worker.taskTimer - dt);
+      guest.companionTimer = worker.taskTimer;
+      if (worker.taskTimer <= 0 || guest.playTimer <= 0) {
+        endCompanionSessionForGuest(guest);
+      }
+      return;
+    }
+
     if (worker.state === "delivering") {
       worker.taskTimer -= dt;
       if (worker.taskTimer <= 0) {
@@ -6330,6 +6936,20 @@ function updateWorkers(dt) {
       }
     }
   });
+}
+
+function updateWorkerSpeech(worker, dt) {
+  if (!worker) return;
+  if (worker.speechTimer > 0) {
+    worker.speechTimer = Math.max(0, worker.speechTimer - dt);
+    return;
+  }
+  worker.speechCooldown = (worker.speechCooldown || random(5, 14)) - dt;
+  if (worker.speechCooldown > 0) return;
+  const lines = STAFF_CHAT_LINES[worker.type] || STAFF_CHAT_LINES.floor;
+  worker.speechText = lines[Math.floor(Math.random() * lines.length)];
+  worker.speechTimer = random(2.2, 3.6);
+  worker.speechCooldown = random(12, 24);
 }
 
 function cleanPcByWorker(pc) {
@@ -6357,6 +6977,7 @@ function cleanFloorByWorker() {
 }
 
 function serveGuestDemandByWorker(guest) {
+  if (!guest || guest.state !== "playing" || !guest.demand) return false;
   if (isCompanionDemand(guest.demand)) {
     return serveCompanionDemand(guest, true);
   }
@@ -6371,7 +6992,7 @@ function serveGuestDemandByWorker(guest) {
   state.cash += product.sellPrice;
   recordDailyRevenue("product", product.sellPrice, product.id);
   markSaveDirty();
-  say(`\u5458\u5de5\u9001\u51fa ${product.name}\uff0c\u989d\u5916\u6536\u5165 ${product.sellPrice} \u5143\u3002`);
+  say(`\u5458\u5de5\u5df2\u7ed9${getGuestMachineLabel(guest)}\u9001\u51fa${product.name}\uff0c\u989d\u5916\u6536\u5165 ${product.sellPrice} \u5143\u3002`);
   guest.demand = null;
   return true;
 }
@@ -6546,6 +7167,10 @@ function resetWorker(worker) {
   if (guest && guest.demand && guest.demand.assignedWorkerId === worker.id) {
     guest.demand.assignedWorkerId = null;
   }
+  if (guest && guest.companionWorkerId === worker.id) {
+    guest.companionWorkerId = null;
+    guest.companionTimer = 0;
+  }
 
   worker.targetPcId = null;
   worker.targetGuestId = null;
@@ -6583,8 +7208,23 @@ function updateGuests(dt) {
 
   for (let index = state.guests.length - 1; index >= 0; index -= 1) {
     const guest = state.guests[index];
+    sanitizeGuestDemandState(guest);
 
     if (guest.state === "entering" || guest.state === "queueing") {
+      guest.queueWaitTimer = (guest.queueWaitTimer || 0) + dt;
+      const waitLimit = Number.isFinite(guest.queueWaitLimit)
+        ? guest.queueWaitLimit
+        : QUEUE_ABANDON_MAX_SECONDS;
+      if (guest.queueWaitTimer >= waitLimit) {
+        guest.state = "leaving";
+        guest.exitStage = "inside";
+        guest.pathTimer = 0;
+        guest.detourPoint = null;
+        guest.manualCheckInPrompted = false;
+        clearEntityNavigation(guest);
+        say("\u6709\u987e\u5ba2\u7b49\u4e86\u4e00\u4f1a\u8fd8\u6ca1\u5f00\u5361\uff0c\u79bb\u5f00\u4e86\u3002");
+        continue;
+      }
       const target = layout.queue[guest.queueIndex] || layout.queue[layout.queue.length - 1];
       moveToward(guest, target, guest.speed, dt);
       continue;
@@ -6851,7 +7491,6 @@ function drawGlobalWoodPlanks(area) {
   for (let rowY = startRow; rowY < endY; rowY += plankH) {
     drawWoodPlankRow(area.x, rowY, area.w, plankH, rowY, plankH, boardW);
   }
-  rect(area.x, area.y + area.h - 2, area.w, 2, "rgba(113, 73, 38, 0.32)");
 }
 
 function drawWoodPlankRow(x, y, w, h, rowSeed, plankH, boardW = 96) {
@@ -6882,6 +7521,37 @@ function drawTinyPlant(x, y, scale = 1) {
   rect(x - 12 * s, y - 5 * s, 10 * s, 9 * s, "#4d7b31");
   rect(x + 2 * s, y - 7 * s, 12 * s, 10 * s, "#76a94f");
   rect(x - 7 * s, y - 15 * s, 14 * s, 8 * s, "#5f8f3b");
+}
+
+function drawScenePlant(typeId, x, y, scale = 1) {
+  const s = scale;
+  if (typeId === "plantTall") {
+    rect(x - 7 * s, y + 2 * s, 14 * s, 16 * s, "#7a4a24");
+    rect(x - 4 * s, y - 22 * s, 8 * s, 28 * s, "#4d7b31");
+    rect(x - 11 * s, y - 17 * s, 10 * s, 16 * s, "#5f8f3b");
+    rect(x + 1 * s, y - 19 * s, 12 * s, 18 * s, "#76a94f");
+    rect(x - 7 * s, y - 30 * s, 14 * s, 12 * s, "#6faf45");
+    return;
+  }
+  if (typeId === "plantFlower") {
+    rect(x - 9 * s, y + 5 * s, 18 * s, 13 * s, "#8b552b");
+    rect(x - 5 * s, y - 10 * s, 10 * s, 16 * s, "#5f8f3b");
+    rect(x - 15 * s, y - 5 * s, 12 * s, 10 * s, "#76a94f");
+    rect(x + 3 * s, y - 7 * s, 13 * s, 11 * s, "#4d7b31");
+    rect(x - 3 * s, y - 16 * s, 6 * s, 6 * s, COLORS.red);
+    rect(x + 8 * s, y - 11 * s, 5 * s, 5 * s, COLORS.yellow);
+    return;
+  }
+  if (typeId === "plantBroad") {
+    rect(x - 11 * s, y + 4 * s, 22 * s, 14 * s, "#7a4a24");
+    rect(x - 6 * s, y - 4 * s, 12 * s, 10 * s, "#b87333");
+    rect(x - 18 * s, y - 12 * s, 16 * s, 14 * s, "#5f8f3b");
+    rect(x + 2 * s, y - 14 * s, 18 * s, 15 * s, "#6faf45");
+    rect(x - 9 * s, y - 22 * s, 18 * s, 15 * s, "#76a94f");
+    rect(x - 4 * s, y - 31 * s, 10 * s, 18 * s, "#4d7b31");
+    return;
+  }
+  drawTinyPlant(x, y, s);
 }
 
 function isAssetReady(name) {
@@ -7024,10 +7694,98 @@ function drawTiledArea(area) {
   ctx.beginPath();
   ctx.rect(Math.round(area.x), Math.round(area.y), Math.round(area.w), Math.round(area.h));
   ctx.clip();
+  drawFloorSkin(area);
+  ctx.restore();
+}
+
+function drawFloorSkin(area) {
+  const skin = getCurrentFloorSkin();
+  if (skin.id === "herringbone") {
+    drawHerringboneFloor(area);
+    return;
+  }
+  if (skin.id === "slab") {
+    drawSlabFloor(area);
+    return;
+  }
+  if (skin.id === "jade") {
+    drawJadeFloor(area);
+    return;
+  }
   rect(area.x, area.y, area.w, area.h, COLORS.floor);
   drawGlobalWoodPlanks(area);
-  rect(area.x, area.y, area.w, Math.min(10, area.h), "rgba(255, 242, 208, 0.1)");
-  ctx.restore();
+}
+
+function drawSlabFloor(area) {
+  rect(area.x, area.y, area.w, area.h, "#b8aa91");
+  const tileW = 96;
+  const tileH = 72;
+  const startX = Math.floor(area.x / tileW) * tileW;
+  const startY = Math.floor(area.y / tileH) * tileH;
+  for (let y = startY; y < area.y + area.h; y += tileH) {
+    for (let x = startX; x < area.x + area.w; x += tileW) {
+      const tone = seededUnit(Math.floor(x / tileW) * 83 + Math.floor(y / tileH) * 47);
+      const fill = tone > 0.62 ? "#c6bca5" : tone < 0.3 ? "#a99980" : "#b8aa91";
+      rect(x, y, tileW, tileH, fill);
+      rect(x, y, tileW, 2, "rgba(69, 55, 42, 0.25)");
+      rect(x, y, 2, tileH, "rgba(69, 55, 42, 0.2)");
+      if (tone > 0.42) {
+        rect(x + 16, y + 18, tileW - 32, 2, "rgba(255, 245, 220, 0.11)");
+        rect(x + 34, y + 44, tileW - 46, 2, "rgba(77, 63, 49, 0.12)");
+      }
+    }
+  }
+}
+
+function drawJadeFloor(area) {
+  rect(area.x, area.y, area.w, area.h, "#d7c68e");
+  const tile = 48;
+  const startX = Math.floor(area.x / tile) * tile;
+  const startY = Math.floor(area.y / tile) * tile;
+  for (let y = startY; y < area.y + area.h; y += tile) {
+    for (let x = startX; x < area.x + area.w; x += tile) {
+      const tone = seededUnit(Math.floor(x / tile) * 59 + Math.floor(y / tile) * 101);
+      const fill = tone > 0.65 ? "#e3d39d" : tone < 0.28 ? "#c6b67f" : "#d7c68e";
+      rect(x, y, tile, tile, fill);
+      rect(x, y, tile, 2, "rgba(99, 82, 45, 0.22)");
+      rect(x, y, 2, tile, "rgba(99, 82, 45, 0.16)");
+      rect(x + 8, y + 12, tile - 16, 2, "rgba(255, 249, 220, 0.18)");
+      if (tone > 0.48) rect(x + 18, y + 28, tile - 24, 2, "rgba(114, 93, 51, 0.14)");
+    }
+  }
+}
+
+function drawHerringboneFloor(area) {
+  rect(area.x, area.y, area.w, area.h, "#c99655");
+  const tile = 18;
+  const startX = Math.floor(area.x / (tile * 2)) * tile * 2 - tile * 2;
+  const startY = Math.floor(area.y / tile) * tile - tile;
+  for (let y = startY; y < area.y + area.h + tile; y += tile) {
+    for (let x = startX; x < area.x + area.w + tile * 2; x += tile * 2) {
+      const row = Math.floor(y / tile);
+      const col = Math.floor(x / tile);
+      const tone = seededUnit(row * 73 + col * 41);
+      const fillA = tone > 0.58 ? "#d0a05a" : "#bd8848";
+      const fillB = tone < 0.36 ? "#b77f43" : "#d7aa63";
+      drawHerringboneBlock(x + (row % 2) * tile, y, tile, fillA, true);
+      drawHerringboneBlock(x + tile + (row % 2) * tile, y, tile, fillB, false);
+    }
+  }
+}
+
+function drawHerringboneBlock(x, y, size, fill, leaningRight) {
+  rect(x, y, size, size, fill);
+  rect(x, y, size, 2, "rgba(96, 58, 31, 0.24)");
+  rect(x, y, 2, size, "rgba(96, 58, 31, 0.18)");
+  if (leaningRight) {
+    for (let i = 0; i < size; i += 6) {
+      rect(x + i, y + i, 2, Math.max(3, size - i), "rgba(96, 58, 31, 0.16)");
+    }
+  } else {
+    for (let i = 0; i < size; i += 6) {
+      rect(x + size - i - 2, y + i, 2, Math.max(3, size - i), "rgba(96, 58, 31, 0.16)");
+    }
+  }
 }
 
 function drawPublicFloors() {
@@ -7476,8 +8234,7 @@ function drawLayoutSelection() {
   if (state.layoutMode === "partition") {
     drawPartitionPlacementHint();
     const type = getPartitionType(state.pendingPartitionTypeId);
-    const direction = state.pendingPartitionOrientation === "vertical" ? "\u7ad6\u5411" : "\u6a2a\u5411";
-    text(`\u5efa\u8bbe\uff1a${type ? type.name : "\u9694\u65ad"} ${direction}\uff0c\u70b9\u51fb\u653e\u7f6e`, state.camera.x + view.width / 2, state.camera.y + HUD_HEIGHT + 8, 12, COLORS.yellow, "bold", "center");
+    text(`\u573a\u666f\uff1a${type ? type.name : "\u690d\u7269"}\uff0c\u70b9\u51fb\u653e\u7f6e`, state.camera.x + view.width / 2, state.camera.y + HUD_HEIGHT + 8, 12, COLORS.yellow, "bold", "center");
   }
 
   if (state.layoutMode === "partitionMove" && state.selectedPartitionId) {
@@ -7586,6 +8343,7 @@ function drawIndoorDetails() {
 function drawCounter() {
   if (isMovingProp("counter")) return;
   const c = layout.counter;
+  const skin = getCurrentDecorSkin("counter");
   const assetW = (c.w + 92) * SPRITE_SCALE.counter;
   const assetH = assetW * 424 / 541;
   if (drawAsset("counter", c.x - 34, c.y - 38, assetW, assetH)) {
@@ -7597,10 +8355,22 @@ function drawCounter() {
     return;
   }
 
+  const isCyber = skin && skin.id === "cyber";
+  const isCream = skin && skin.id === "cream";
+  const main = isCyber ? "#17313a" : isCream ? "#b97635" : "#9a642f";
+  const top = isCyber ? "#22576a" : isCream ? "#d9a35b" : COLORS.counterTop;
+  const trim = isCyber ? "#46e6c8" : isCream ? "#f0c77a" : COLORS.counterEdge;
   rect(c.x - 6, c.y + 10, c.w + 12, c.h - 2, COLORS.line);
-  rect(c.x, c.y + 14, c.w, c.h - 10, "#9a642f");
-  rect(c.x + 6, c.y + 18, c.w - 12, 6, COLORS.counterTop);
-  rect(c.x + 10, c.y + c.h - 6, c.w - 20, 8, "#6b3f24");
+  rect(c.x, c.y + 14, c.w, c.h - 10, main);
+  rect(c.x + 6, c.y + 18, c.w - 12, 6, top);
+  rect(c.x + 10, c.y + c.h - 6, c.w - 20, 8, isCyber ? "#0f2028" : "#6b3f24");
+  if (isCyber) {
+    rect(c.x + 10, c.y + c.h - 13, c.w - 20, 3, trim);
+    rect(c.x + 18, c.y + 24, c.w - 36, 2, "rgba(70, 230, 200, 0.45)");
+  } else if (isCream) {
+    rect(c.x + 12, c.y + 27, c.w - 24, 4, "#8b552b");
+    rect(c.x + 16, c.y + 35, c.w - 32, 3, "#e8c97a");
+  }
   rect(c.x + 18, c.y - 13, 24, 30, COLORS.line);
   rect(c.x + 21, c.y - 10, 18, 24, "#fff2d0");
   rect(c.x + 24, c.y - 8, 12, 3, "#c5833d");
@@ -7609,8 +8379,8 @@ function drawCounter() {
   rect(c.x + 22, c.y + 16, 16, 4, COLORS.line);
 
   rect(c.x + c.w - 39, c.y - 8, 30, 21, COLORS.line);
-  rect(c.x + c.w - 35, c.y - 4, 22, 13, COLORS.pcScreen);
-  rect(c.x + c.w - 32, c.y - 1, 16, 7, COLORS.pcGlow);
+  rect(c.x + c.w - 35, c.y - 4, 22, 13, isCyber ? "#0f2229" : COLORS.pcScreen);
+  rect(c.x + c.w - 32, c.y - 1, 16, 7, isCyber ? "#46e6c8" : COLORS.pcGlow);
   rect(c.x + c.w - 28, c.y + 13, 8, 4, COLORS.line);
 
   if (state.frontDesk.busyGuestId) {
@@ -7890,7 +8660,7 @@ function drawLayoutToolControls() {
     text(`\u672c\u6b21\u65b0\u589e ${summary.extraCount} \u5757  \u5f85\u652f\u4ed8 ${summary.cost} \u5143`, boxX + boxW / 2, boxY + 19, 11, summary.cost > state.cash ? COLORS.red : COLORS.text, "bold", "center");
   }
 
-  if (state.layoutMode === "partition") {
+  if (state.layoutMode === "partition" && getPartitionType(state.pendingPartitionTypeId) && getPartitionType(state.pendingPartitionTypeId).blockMove !== false) {
     ui.rotatePartitionButton = {
       x: Math.round(view.width / 2 - 58),
       y: messageY - 84,
@@ -8044,9 +8814,7 @@ function drawGuest(guest) {
   const assetW = 31 * PERSON_VISUAL_SCALE;
   const assetH = 50 * PERSON_VISUAL_SCALE;
   if (drawAsset("guest", x - assetW / 2, y - assetH, assetW, assetH)) {
-    if (guest.state === "queueing") {
-      text("...", x, y - 42, 11, COLORS.text, "bold", "center");
-    }
+    drawGuestCheckInBubble(guest);
     if (guest.state === "playing" && guest.demand) {
       drawDemandBubble(guest);
     }
@@ -8076,9 +8844,7 @@ function drawGuest(guest) {
     circle(x + 3, y - 14, 1, "#203544");
   });
 
-  if (guest.state === "queueing") {
-    text("...", x, y - 26, 11, COLORS.text, "bold", "center");
-  }
+  drawGuestCheckInBubble(guest);
 
   if (guest.state === "playing" && guest.demand) {
     drawDemandBubble(guest);
@@ -8120,6 +8886,23 @@ function drawDemandBubble(guest) {
   rect(bubbleX + 5, y + 22, bubbleW - 10, 3, "#8c6b4a");
   rect(bubbleX + 5, y + 22, Math.round((bubbleW - 10) * progress), 3, COLORS.red);
   rect(x - 3, y + 26, 6, 6, "#fff7dd");
+}
+
+function drawGuestCheckInBubble(guest) {
+  if (!guest || !["entering", "queueing", "checkingIn"].includes(guest.state)) return;
+  if (guest.state === "entering" && distance(guest, getFrontDeskServicePoint()) > 76) return;
+
+  const x = Math.round(guest.x);
+  const y = Math.round(guest.y) - 43;
+  const recharge = Number.isFinite(guest.rechargeAmount) ? guest.rechargeAmount : 0;
+  const label = guest.state === "checkingIn" && recharge > 0
+    ? `\u5145\u503c${recharge}\u5143`
+    : "\u5f00\u5361";
+  const bubbleW = Math.max(46, label.length * 13 + 14);
+  rect(x - bubbleW / 2 - 1, y - 1, bubbleW + 2, 24, COLORS.line);
+  rect(x - bubbleW / 2, y, bubbleW, 22, "#fff7dd");
+  text(label, x, y + 4, 12, COLORS.line, "bold", "center");
+  rect(x - 3, y + 20, 6, 6, "#fff7dd");
 }
 
 function drawHud() {
@@ -8226,9 +9009,9 @@ function drawActionBar() {
   ui.dailyGroupButton = { x: 31, y: groupY, w: groupW, h: 24 };
   ui.buildGroupButton = { x: 31 + (groupW + groupGap), y: groupY, w: groupW, h: 24 };
   ui.systemGroupButton = { x: 31 + (groupW + groupGap) * 2, y: groupY, w: groupW, h: 24 };
-  drawActionButton(ui.dailyGroupButton, "\u65e5", state.actionGroup === "daily");
-  drawActionButton(ui.buildGroupButton, "\u5efa", state.actionGroup === "build");
-  drawActionButton(ui.systemGroupButton, "\u7cfb", state.actionGroup === "system");
+  drawActionButton(ui.dailyGroupButton, "\u65e5\u5e38", state.actionGroup === "daily");
+  drawActionButton(ui.buildGroupButton, "\u5efa\u8bbe", state.actionGroup === "build");
+  drawActionButton(ui.systemGroupButton, "\u7cfb\u7edf", state.actionGroup === "system");
 
   const buttonW = view.width < 350 ? 38 : 48;
   const gap = view.width < 350 ? 6 : 12;
@@ -8241,7 +9024,7 @@ function drawActionBar() {
     ],
     build: [
       ["equipmentButton", "\u8bbe\u5907"],
-      ["expansionButton", "\u5efa\u8bbe"],
+      ["expansionButton", "\u573a\u666f"],
       ["layoutButton", "\u5e03\u5c40", state.layoutToolActive]
     ],
     system: [
@@ -8291,7 +9074,7 @@ function drawActionIcon(label, x, y, active) {
     rect(x - 10, y - 4, 20, 13, dark);
     rect(x - 7, y - 1, 14, 7, COLORS.pcGlow);
     rect(x - 4, y + 10, 8, 3, dark);
-  } else if (label === "\u6269\u79df" || label === "\u5efa\u8bbe") {
+  } else if (label === "\u6269\u79df" || label === "\u5efa\u8bbe" || label === "\u573a\u666f") {
     rect(x - 10, y - 4, 17, 17, dark);
     rect(x - 7, y - 1, 11, 11, COLORS.floor);
     rect(x + 6, y + 2, 6, 3, light);
@@ -8637,15 +9420,20 @@ function drawHiringPanel() {
     const count = state.employees[staff.id];
     const requirement = getStaffRequirement(staff);
     const canHire = canHireStaff(staff);
+    const canFire = canFireStaff(staff);
     rect(panel.x + 10, y, panel.w - 20, cardH, requirement ? "#c5a575" : "#f7dba5");
     strokeRect(panel.x + 10, y, panel.w - 20, cardH, "#9a7043", 2);
     drawStaffIcon(staff, panel.x + 22, y + 17, Boolean(requirement));
     text(`${staff.name} x${count}`, panel.x + 62, y + 7, 14, COLORS.line, "bold");
     text(`\u5165\u804c ${getStaffHireTotal(staff)}  \u6708\u85aa ${staff.salary}`, panel.x + 62, y + 26, 10, "#5d4532", "bold");
-    const button = { x: panel.x + panel.w - 54, y: y + 10, w: 38, h: 24, staff };
-    const desc = fitTextToWidth(requirement || staff.desc, button.x - (panel.x + 62) - 8, 9);
+    const fireButton = { x: panel.x + panel.w - 92, y: y + 10, w: 34, h: 24, staff, action: "fire" };
+    const button = { x: panel.x + panel.w - 54, y: y + 10, w: 38, h: 24, staff, action: "hire" };
+    const desc = fitTextToWidth(requirement || staff.desc, fireButton.x - (panel.x + 62) - 8, 9);
     text(desc, panel.x + 62, y + 42, 9, requirement ? COLORS.red : "#5d4532");
-    ui.hireButtons.push(button);
+    ui.hireButtons.push(fireButton, button);
+    rect(fireButton.x, fireButton.y, fireButton.w, fireButton.h, canFire ? "#9a553a" : "#9a6b55");
+    strokeRect(fireButton.x, fireButton.y, fireButton.w, fireButton.h, COLORS.line, 2);
+    text("\u8f9e", fireButton.x + fireButton.w / 2, fireButton.y + 5, 14, COLORS.text, "bold", "center");
     rect(button.x, button.y, button.w, button.h, canHire ? "#4e8f4f" : "#9a6b55");
     strokeRect(button.x, button.y, button.w, button.h, COLORS.line, 2);
     text("\u62db", button.x + button.w / 2, button.y + 5, 14, COLORS.text, "bold", "center");
@@ -8718,11 +9506,11 @@ function drawExpansionPanel() {
   rect(panel.x, panel.y, panel.w, panel.h, "#f0c98a");
   strokeRect(panel.x, panel.y, panel.w, panel.h, COLORS.wallDark, 4);
   rect(panel.x, panel.y, panel.w, 42, "#8c4f35");
-  text("\u81ea\u7531\u5efa\u8bbe", panel.x + 16, panel.y + 11, 18, COLORS.text, "bold");
+  text("\u573a\u666f", panel.x + 16, panel.y + 11, 18, COLORS.text, "bold");
   text(`\u5730\u7816 ${state.publicFloors.length}`, panel.x + panel.w - 88, panel.y + 14, 12, COLORS.text, "bold");
 
   rect(panel.x + 10, panel.y + 48, panel.w - 20, 38, "#e3b86f");
-  text(`\u5730\u7816\u6bcf\u5757 ${PUBLIC_FLOOR_COST}\u5143\uff0c\u7528\u9694\u65ad\u81ea\u7531\u505a\u5305\u95f4`, panel.x + 18, panel.y + 56, 11, "#5d4532", "bold");
+  text(`\u5730\u7816\u6bcf\u5757 ${PUBLIC_FLOOR_COST}\u5143\uff0c\u7528\u5730\u7816\u6269\u5927\u516c\u5171\u8d70\u9053`, panel.x + 18, panel.y + 56, 11, "#5d4532", "bold");
   text("\u4e0a\u673a\u6536\u8d39\u7531\u7535\u8111\u914d\u7f6e\u51b3\u5b9a\uff0c\u4e0d\u518d\u6309\u5305\u95f4\u533a\u5206", panel.x + 18, panel.y + 72, 10, "#5d4532");
 
   const offers = getBuildOffers();
@@ -8737,19 +9525,39 @@ function drawExpansionPanel() {
     const y = startY + index * (cardH + 6);
     if (y + cardH > panel.y + panel.h - 42) return;
 
-    const affordable = state.cash >= offer.cost;
+    const currentSkin = (offer.kind === "floorSkin" && state.floorSkinId === offer.skinId) ||
+      (offer.kind === "decorSkin" && state.decorSkinIds[offer.decorKind] === offer.skinId);
+    const purchasedSkin = (offer.kind === "floorSkin" && isFloorSkinPurchased(offer.skinId)) ||
+      (offer.kind === "decorSkin" && isDecorSkinPurchased(offer.decorKind, offer.skinId));
+    const affordable = currentSkin || purchasedSkin || state.cash >= offer.cost;
     rect(panel.x + 10, y, panel.w - 20, cardH, affordable ? "#f7dba5" : "#c5a575");
     strokeRect(panel.x + 10, y, panel.w - 20, cardH, "#9a7043", 2);
     drawBuildOfferIcon(offer, panel.x + 30, y + 26, !affordable);
     text(offer.name, panel.x + 58, y + 7, 13, COLORS.line, "bold");
-    text(`\u82b1\u8d39 ${offer.cost}`, panel.x + 58, y + 24, 10, "#5d4532", "bold");
+    const costText = currentSkin
+      ? "\u5df2\u4f7f\u7528"
+      : purchasedSkin
+        ? "\u5df2\u8d2d\u4e70"
+        : offer.cost > 0
+          ? `\u82b1\u8d39 ${offer.cost}`
+          : "\u514d\u8d39";
+    text(costText, panel.x + 58, y + 24, 10, currentSkin ? COLORS.green : "#5d4532", "bold");
     text(fitTextToWidth(offer.desc, panel.w - 138, 9), panel.x + 58, y + 38, 9, "#5d4532");
 
     const button = { x: panel.x + panel.w - 52, y: y + 13, w: 34, h: 26, offer };
     ui.rentAreaButtons.push(button);
     rect(button.x, button.y, button.w, button.h, affordable ? "#4e8f4f" : "#9a6b55");
     strokeRect(button.x, button.y, button.w, button.h, COLORS.line, 2);
-    text("\u5efa", button.x + button.w / 2, button.y + 6, 12, COLORS.text, "bold", "center");
+    const buttonLabel = currentSkin
+      ? "\u5df2\u7528"
+      : purchasedSkin
+        ? "\u4f7f\u7528"
+        : offer.kind === "floorSkin" || offer.kind === "decorSkin"
+          ? "\u4e70"
+          : offer.kind === "floor"
+            ? "\u94fa"
+            : "\u6446";
+    text(buttonLabel, button.x + button.w / 2, button.y + 6, buttonLabel.length > 1 ? 10 : 12, COLORS.text, "bold", "center");
   });
 
   ui.closeExpansionButton = { x: panel.x + panel.w - 50, y: panel.y + panel.h - 34, w: 38, h: 24 };
@@ -8760,7 +9568,26 @@ function drawExpansionPanel() {
 }
 
 function getBuildOffers() {
-  return [
+  const floorSkinOffers = FLOOR_SKINS.map((skin) => ({
+    kind: "floorSkin",
+    id: skin.id,
+    skinId: skin.id,
+    name: skin.name,
+    cost: skin.cost,
+    desc: skin.desc
+  }));
+  const decorOffers = Object.keys(DECOR_SKINS).flatMap((kind) => (
+    DECOR_SKINS[kind].map((skin) => ({
+      kind: "decorSkin",
+      id: `${kind}-${skin.id}`,
+      decorKind: kind,
+      skinId: skin.id,
+      name: skin.name,
+      cost: skin.cost,
+      desc: skin.desc
+    }))
+  ));
+  return floorSkinOffers.concat(decorOffers).concat([
     {
       kind: "floor",
       id: "floor",
@@ -8768,7 +9595,7 @@ function getBuildOffers() {
       cost: PUBLIC_FLOOR_COST,
       desc: "\u5411\u5916\u6269\u5927\u5927\u5385\uff0c\u6bcf\u6b21\u94fa\u4e00\u5757\u3002"
     }
-  ].concat(partitionTypes.map((type) => ({
+  ]).concat(partitionTypes.map((type) => ({
     kind: "partition",
     id: type.id,
     typeId: type.id,
@@ -8787,8 +9614,48 @@ function drawBuildOfferIcon(offer, x, y, dimmed) {
     rect(x - 3, y - 8, 2, 18, COLORS.floorLine);
     return;
   }
-  if (offer.typeId === "plant") {
-    drawTinyPlant(x, y + 4, dimmed ? 0.55 : 0.65);
+  if (offer.kind === "floorSkin") {
+    if (offer.skinId === "herringbone") {
+      rect(x - 10, y - 10, 20, 20, dimmed ? "#8c755f" : "#c49350");
+      for (let i = -8; i <= 8; i += 8) {
+        rect(x + i - 1, y - 8, 2, 16, COLORS.floorLine);
+        rect(x - 8, y + i - 1, 16, 2, "rgba(96, 58, 31, 0.34)");
+      }
+    } else if (offer.skinId === "slab") {
+      rect(x - 12, y - 10, 24, 20, dimmed ? "#8c755f" : "#b8aa91");
+      rect(x - 12, y - 1, 24, 2, "rgba(69, 55, 42, 0.28)");
+      rect(x, y - 10, 2, 20, "rgba(69, 55, 42, 0.22)");
+    } else if (offer.skinId === "jade") {
+      rect(x - 10, y - 10, 20, 20, dimmed ? "#8c755f" : "#d7c68e");
+      rect(x - 10, y, 20, 2, "rgba(99, 82, 45, 0.2)");
+      rect(x, y - 10, 2, 20, "rgba(99, 82, 45, 0.16)");
+      rect(x - 6, y - 4, 12, 2, "rgba(255, 249, 220, 0.32)");
+    } else {
+      rect(x - 10, y - 10, 20, 20, dimmed ? "#8c755f" : COLORS.floor);
+      rect(x - 10, y - 2, 20, 2, COLORS.floorLine);
+      rect(x - 2, y - 10, 2, 20, COLORS.floorLine);
+    }
+    return;
+  }
+  if (offer.kind === "decorSkin") {
+    if (offer.decorKind === "counter") {
+      rect(x - 11, y - 3, 22, 10, offer.skinId === "cyber" ? "#16353b" : offer.skinId === "cream" ? "#d8a45e" : "#9a642f");
+      rect(x - 8, y - 8, 16, 4, offer.skinId === "cyber" ? "#3de0c3" : COLORS.counterEdge);
+    } else if (offer.decorKind === "shopSign") {
+      rect(x - 12, y - 9, 24, 14, offer.skinId === "neon" ? "#1d2636" : "#7b563b");
+      strokeRect(x - 12, y - 9, 24, 14, offer.skinId === "neon" ? "#48f0d8" : COLORS.counterEdge, 2);
+      rect(x - 7, y - 4, 14, 3, offer.skinId === "retro" ? "#f0b94a" : COLORS.text);
+    } else {
+      rect(x - 12, y - 10, 24, 18, offer.skinId === "glass" ? "#244653" : "#7b563b");
+      rect(x - 9, y - 6, 18, 3, offer.skinId === "glass" ? "#6be7ff" : COLORS.counterEdge);
+      rect(x - 8, y, 5, 5, COLORS.red);
+      rect(x - 1, y, 5, 5, COLORS.yellow);
+      rect(x + 6, y, 5, 5, COLORS.green);
+    }
+    return;
+  }
+  if (offer.kind === "partition") {
+    drawScenePlant(offer.typeId, x, y + 7, dimmed ? 0.55 : 0.65);
     return;
   }
   const fill = dimmed ? "#8c755f" : offer.typeId === "soundWall" ? "#6f6657" : COLORS.pcDesk;
@@ -8894,7 +9761,7 @@ function drawLayoutPanel() {
       w: halfW,
       mode: "deleteArea",
       label: "\u5220\u9664\u88c5\u4fee",
-      message: "\u5e03\u5c40\uff1a\u70b9\u9694\u65ad\u53ef\u5220\u9664\uff0c\u65e7\u5305\u95f4\u4e5f\u53ef\u517c\u5bb9\u5220\u9664\u3002"
+      message: "\u5e03\u5c40\uff1a\u70b9\u690d\u7269\u6216\u65e7\u5305\u95f4\u53ef\u5220\u9664\u3002"
     },
     {
       x: fullX,
@@ -8938,8 +9805,6 @@ function getLayoutModeLabel(mode) {
     deleteArea: "\u5220\u9664\u88c5\u4fee",
     pc: "\u79fb\u52a8\u7535\u8111",
     floor: "\u94fa\u516c\u533a\u5730\u7816",
-    partition: "\u6446\u653e\u9694\u65ad",
-    partitionMove: "\u79fb\u52a8\u9694\u65ad",
     propMove: "\u79fb\u52a8\u9053\u5177",
     toiletMove: "\u79fb\u52a8\u5395\u6240"
   }[mode] || "\u672a\u5f00\u542f";
@@ -9307,11 +10172,8 @@ function drawWorker(worker) {
   const assetW = (worker.type === "cleaner" ? 28 : 27) * PERSON_VISUAL_SCALE;
   const assetH = (worker.type === "cleaner" ? 50 : 49) * PERSON_VISUAL_SCALE;
   if (workerAsset && drawAsset(workerAsset, x - assetW / 2, y - assetH, assetW, assetH)) {
-    const label = getWorkerLabel(worker.type);
-    const bubbleW = Math.max(32, label.length * 13 + 8);
-    roundedRect(x - bubbleW / 2, y - 50, bubbleW, 17, 5, "#fff7dd");
-    strokeRoundedRect(x - bubbleW / 2, y - 50, bubbleW, 17, 5, "rgba(25, 36, 43, 0.28)", 1);
-    text(label, x, y - 48, 10, COLORS.line, "bold", "center");
+    drawWorkerSpeech(worker, x, y);
+    drawWorkerNameTag(worker, x, y);
     return;
   }
 
@@ -9331,14 +10193,11 @@ function drawWorker(worker) {
     roundedRect(x + 1, y + 6, 6, 10, 3, "#24384a");
 
     if (isMopping) {
-      // Mop handle: oscillates left-right using state.time
       const swing = Math.sin(state.time * 5) * 5;
       const hx = x + 12 + swing;
       rect(hx - 1, y - 22, 2, 30, "#8b6c45");
-      // Mop head (wider wet strip at bottom)
       rect(hx - 8, y + 7, 16, 5, "#7fc4de");
       rect(hx - 6, y + 10, 12, 2, "#aadff5");
-      // Water sparkle dots
       if (Math.sin(state.time * 7 + 1) > 0.3) {
         circle(hx - 10 + Math.abs(swing), y + 14, 2, "rgba(100,200,240,0.7)");
       }
@@ -9348,13 +10207,29 @@ function drawWorker(worker) {
     }
   });
 
-  const label = isMopping ? "拖地中" : getWorkerLabel(worker.type);
-  const bubbleW = Math.max(32, label.length * 13 + 8);
-  rect(x - bubbleW / 2 - 1, y - 35, bubbleW + 2, 19, COLORS.line);
-  rect(x - bubbleW / 2, y - 34, bubbleW, 17, isMopping ? "#d4f0ff" : "#fff7dd");
-  text(label, x, y - 32, 10, COLORS.line, "bold", "center");
+  drawWorkerSpeech(worker, x, y);
+  drawWorkerNameTag(worker, x, y, isMopping ? "\u62d6\u5730\u4e2d" : null);
 }
 
+function drawWorkerNameTag(worker, x, y, overrideLabel = null) {
+  const label = overrideLabel || getWorkerLabel(worker.type);
+  const bubbleW = Math.max(32, label.length * 13 + 8);
+  rect(x - bubbleW / 2 - 1, y + 13, bubbleW + 2, 18, COLORS.line);
+  rect(x - bubbleW / 2, y + 14, bubbleW, 16, overrideLabel ? "#d4f0ff" : "#fff7dd");
+  text(label, x, y + 17, 10, COLORS.line, "bold", "center");
+}
+
+function drawWorkerSpeech(worker, x, y) {
+  if (!worker || !worker.speechText || worker.speechTimer <= 0) return;
+  const label = fitTextToWidth(worker.speechText, 112, 10, "bold");
+  const bubbleW = Math.max(48, label.length * 10 + 12);
+  const bubbleX = x - bubbleW / 2;
+  const bubbleY = y - 54;
+  rect(bubbleX - 1, bubbleY - 1, bubbleW + 2, 20, COLORS.line);
+  rect(bubbleX, bubbleY, bubbleW, 18, "#fff7dd");
+  text(label, x, bubbleY + 4, 10, COLORS.line, "bold", "center");
+  rect(x - 3, bubbleY + 16, 6, 6, "#fff7dd");
+}
 function drawLegend() {
   // 暂不显示入口标注。
 }
@@ -9364,8 +10239,7 @@ function drawIndoorDetailsModern() {
   drawWallPattern(room.x + 8, room.y + 8, room.w - 16, 54);
   const shopSign = getMovablePropRect("shopSign");
   if (!isMovingProp("shopSign")) {
-    pixelPanel(shopSign.x, shopSign.y, shopSign.w, shopSign.h, COLORS.counter, COLORS.counterEdge, COLORS.line);
-    text("\u5c0f\u9ed1\u7f51\u5427", shopSign.x + shopSign.w / 2, shopSign.y + 7, 13, COLORS.text, "bold", "center");
+    drawShopSignDisplay(shopSign.x, shopSign.y, shopSign.w, shopSign.h);
   }
 
   const snackShelf = getMovablePropRect("snackShelf");
@@ -9395,7 +10269,58 @@ function drawFloorLamp(x, y) {
   rect(x - 4, y + 16, 8, 5, "#8b552b");
 }
 
+function drawShopSignDisplay(x, y, w, h) {
+  const skin = getCurrentDecorSkin("shopSign");
+  if (skin && skin.id === "neon") {
+    rect(x - 3, y - 3, w + 6, h + 6, "#101c28");
+    strokeRect(x - 3, y - 3, w + 6, h + 6, "#48f0d8", 2);
+    rect(x + 4, y + 4, w - 8, h - 8, "#1b2638");
+    text("\u5c0f\u9ed1\u7f51\u5427", x + w / 2, y + 7, 13, "#7fffe6", "bold", "center");
+    rect(x + 10, y + h - 6, w - 20, 2, "#ef5cff");
+    return;
+  }
+  if (skin && skin.id === "retro") {
+    pixelPanel(x, y, w, h, "#6b3f24", "#f0b94a", COLORS.line);
+    rect(x + 8, y + 5, w - 16, 3, "#c5833d");
+    text("\u5c0f\u9ed1\u7f51\u5427", x + w / 2, y + 8, 13, "#fff2d0", "bold", "center");
+    return;
+  }
+  pixelPanel(x, y, w, h, COLORS.counter, COLORS.counterEdge, COLORS.line);
+  text("\u5c0f\u9ed1\u7f51\u5427", x + w / 2, y + 7, 13, COLORS.text, "bold", "center");
+}
+
 function drawSnackDisplay(x, y) {
+  const skin = getCurrentDecorSkin("snackShelf");
+  if (skin && skin.id === "glass") {
+    rect(x - 3, y - 13, 30, 16, COLORS.line);
+    rect(x, y - 10, 24, 10, "#dff7ff");
+    text("\u96f6\u98df", x + 12, y - 10, 9, "#17313a", "bold", "center");
+    rect(x, y, 108, 28, COLORS.line);
+    rect(x + 3, y + 3, 102, 22, "#244653");
+    rect(x + 6, y + 6, 96, 3, "#6be7ff");
+    rect(x + 7, y + 11, 92, 10, "rgba(170, 235, 255, 0.25)");
+    rect(x + 9, y + 13, 14, 7, COLORS.red);
+    rect(x + 27, y + 13, 14, 7, COLORS.yellow);
+    rect(x + 45, y + 13, 14, 7, COLORS.green);
+    rect(x + 63, y + 13, 14, 7, COLORS.blue);
+    rect(x + 81, y + 13, 14, 7, "#d98236");
+    return;
+  }
+  if (skin && skin.id === "wood") {
+    rect(x - 3, y - 13, 30, 16, COLORS.line);
+    rect(x, y - 10, 24, 10, "#f0c77a");
+    text("\u96f6\u98df", x + 12, y - 10, 9, COLORS.line, "bold", "center");
+    rect(x, y, 108, 28, COLORS.line);
+    rect(x + 3, y + 3, 102, 22, "#9a642f");
+    rect(x + 5, y + 9, 98, 3, "#6b3f24");
+    rect(x + 5, y + 20, 98, 3, "#6b3f24");
+    rect(x + 9, y + 13, 14, 7, COLORS.red);
+    rect(x + 28, y + 13, 14, 7, COLORS.yellow);
+    rect(x + 47, y + 13, 14, 7, COLORS.green);
+    rect(x + 66, y + 13, 14, 7, COLORS.blue);
+    rect(x + 85, y + 13, 10, 7, "#d98236");
+    return;
+  }
   rect(x - 3, y - 13, 30, 16, COLORS.line);
   rect(x, y - 10, 24, 10, COLORS.text);
   text("\u96f6\u98df", x + 12, y - 10, 9, COLORS.line, "bold", "center");
@@ -9429,8 +10354,8 @@ function drawPartitions() {
   state.partitions.forEach((partition) => {
     const type = getPartitionType(partition.typeId);
     ellipse(partition.x + partition.w / 2, partition.y + partition.h, Math.max(10, partition.w / 2), 5, "rgba(58, 36, 24, 0.18)");
-    if (partition.typeId === "plant") {
-      drawTinyPlant(partition.x + partition.w / 2, partition.y + partition.h - 12, 0.95);
+    if (type && type.blockMove === false) {
+      drawScenePlant(partition.typeId, partition.x + partition.w / 2, partition.y + partition.h - 8, 0.95);
       return;
     }
     const fill = partition.typeId === "soundWall" ? "#6f6657" : "#9a642f";
@@ -9491,7 +10416,12 @@ function loop() {
   const dt = Math.min(0.1, (now - lastFrameAt) / 1000);
   lastFrameAt = now;
 
-  update(dt);
+  let remaining = dt;
+  while (remaining > 0) {
+    const step = Math.min(MAX_UPDATE_STEP, remaining);
+    update(step);
+    remaining -= step;
+  }
   render();
   raf(loop);
 }
