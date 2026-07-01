@@ -7865,6 +7865,124 @@ function woodPanel(x, y, w, h, fill = COLORS.counter, light = COLORS.counterEdge
   rect(x + 8, y + h - 13, w - 16, 2, "rgba(42, 19, 13, 0.28)");
 }
 
+function parchmentPanel(x, y, w, h) {
+  rect(x + 5, y + 5, w, h, "rgba(38, 23, 17, 0.34)");
+  rect(x, y, w, h, "#3a2115");
+  rect(x + 4, y + 4, w - 8, h - 8, "#b87536");
+  rect(x + 8, y + 8, w - 16, h - 16, "#f5dfac");
+  rect(x + 12, y + 12, w - 24, 4, "#fff4cb");
+  rect(x + 12, y + h - 16, w - 24, 3, "rgba(126, 79, 35, 0.2)");
+  rect(x + 8, y + 8, 12, 12, "#e4b56d");
+  rect(x + w - 20, y + 8, 12, 12, "#e4b56d");
+  rect(x + 8, y + h - 20, 12, 12, "#d19b55");
+  rect(x + w - 20, y + h - 20, 12, 12, "#d19b55");
+  rect(x + 14, y + 14, 5, 5, "rgba(107, 63, 36, 0.28)");
+  rect(x + w - 19, y + 14, 5, 5, "rgba(107, 63, 36, 0.22)");
+}
+
+function drawWoodSign(x, y, w, h, label, size = 14) {
+  rect(x + 4, y + 4, w, h, "rgba(38, 23, 17, 0.38)");
+  rect(x, y, w, h, "#2b160d");
+  rect(x + 4, y + 4, w - 8, h - 8, "#7a451f");
+  rect(x + 8, y + 8, w - 16, h - 16, "#5a321b");
+  rect(x + 8, y + 8, w - 16, 4, "#b87536");
+  rect(x + 8, y + h - 12, w - 16, 4, "#2d180f");
+  rect(x + 4, y + 4, 8, 8, "#c7833f");
+  rect(x + w - 12, y + 4, 8, 8, "#c7833f");
+  rect(x + 4, y + h - 12, 8, 8, "#8b552b");
+  rect(x + w - 12, y + h - 12, 8, 8, "#8b552b");
+  text(label, x + w / 2, y + Math.max(6, h / 2 - size / 2 - 1), size, "#fff2d0", "bold", "center");
+}
+
+function drawWoodProgressBar(x, y, w, h, ratio, fillColor = COLORS.green) {
+  const clamped = Math.max(0, Math.min(1, ratio));
+  rect(x + 2, y + 2, w, h, "rgba(38, 23, 17, 0.28)");
+  rect(x, y, w, h, "#32190e");
+  rect(x + 3, y + 3, w - 6, h - 6, "#7a451f");
+  rect(x + 5, y + 5, w - 10, h - 10, "#1f2715");
+  const fillW = Math.max(0, Math.round((w - 12) * clamped));
+  rect(x + 6, y + 6, fillW, Math.max(2, h - 12), fillColor);
+  rect(x + 6, y + 6, fillW, 2, "rgba(255, 255, 255, 0.34)");
+  rect(x + 5, y + h - 7, w - 10, 2, "rgba(42, 19, 13, 0.34)");
+}
+
+function drawCalendarIcon(x, y, scale = 1) {
+  const s = scale;
+  rect(x, y + 2 * s, 22 * s, 20 * s, "#3a2115");
+  rect(x + 2 * s, y + 5 * s, 18 * s, 15 * s, "#fff2d0");
+  rect(x + 2 * s, y + 5 * s, 18 * s, 5 * s, "#d98236");
+  rect(x + 5 * s, y, 3 * s, 7 * s, "#3a2115");
+  rect(x + 14 * s, y, 3 * s, 7 * s, "#3a2115");
+  rect(x + 5 * s, y + 12 * s, 3 * s, 3 * s, "#caa66a");
+  rect(x + 10 * s, y + 12 * s, 3 * s, 3 * s, "#caa66a");
+  rect(x + 15 * s, y + 12 * s, 3 * s, 3 * s, "#caa66a");
+  rect(x + 5 * s, y + 17 * s, 3 * s, 2 * s, "#caa66a");
+  rect(x + 10 * s, y + 17 * s, 3 * s, 2 * s, "#caa66a");
+}
+
+function drawSpeakerIcon(x, y, scale = 1) {
+  const s = scale;
+  rect(x + 2 * s, y + 12 * s, 8 * s, 10 * s, "#5a321b");
+  rect(x + 9 * s, y + 9 * s, 8 * s, 16 * s, "#8b552b");
+  ctx.fillStyle = "#5a321b";
+  ctx.beginPath();
+  ctx.moveTo(x + 17 * s, y + 9 * s);
+  ctx.lineTo(x + 30 * s, y + 4 * s);
+  ctx.lineTo(x + 30 * s, y + 30 * s);
+  ctx.lineTo(x + 17 * s, y + 25 * s);
+  ctx.closePath();
+  ctx.fill();
+  rect(x + 28 * s, y + 8 * s, 3 * s, 18 * s, "#fff2d0");
+  rect(x + 33 * s, y + 10 * s, 3 * s, 3 * s, "#8b552b");
+  rect(x + 34 * s, y + 17 * s, 4 * s, 3 * s, "#8b552b");
+  rect(x + 33 * s, y + 24 * s, 3 * s, 3 * s, "#8b552b");
+}
+
+function drawSnackBottle(x, y, color) {
+  rect(x + 2, y - 3, 8, 3, "#3a2115");
+  rect(x, y, 12, 16, "#3a2115");
+  rect(x + 2, y + 2, 8, 12, color);
+  rect(x + 3, y + 4, 6, 2, "rgba(255,255,255,0.24)");
+  rect(x + 3, y + 10, 6, 3, "rgba(58,36,24,0.18)");
+}
+
+function drawCoinIcon(x, y, radius = 10) {
+  circle(x, y, radius + 3, "#3a2115");
+  circle(x, y, radius + 1, "#b87517");
+  circle(x, y, radius - 1, "#f0b94a");
+  circle(x - radius * 0.32, y - radius * 0.34, Math.max(2, radius * 0.22), "#ffe08a");
+  rect(x - radius * 0.5, y - 1, radius, 2, "#7a451f");
+  rect(x - 1, y - radius * 0.45, 2, radius * 0.9, "#7a451f");
+}
+
+function drawLevelStar(x, y, radius = 9) {
+  ctx.fillStyle = "#3a2115";
+  ctx.beginPath();
+  for (let point = 0; point < 10; point += 1) {
+    const angle = -Math.PI / 2 + point * Math.PI / 5;
+    const r = point % 2 === 0 ? radius + 2 : radius * 0.46 + 2;
+    const px = x + Math.cos(angle) * r;
+    const py = y + Math.sin(angle) * r;
+    if (point === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = "#f0b94a";
+  ctx.beginPath();
+  for (let point = 0; point < 10; point += 1) {
+    const angle = -Math.PI / 2 + point * Math.PI / 5;
+    const r = point % 2 === 0 ? radius : radius * 0.46;
+    const px = x + Math.cos(angle) * r;
+    const py = y + Math.sin(angle) * r;
+    if (point === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+  ctx.fill();
+  circle(x - radius * 0.22, y - radius * 0.18, Math.max(2, radius * 0.16), "#ffe08a");
+}
+
 function drawWoodPlanks(x, y, w, h, plankH = 18) {
   for (let row = 0; row < h; row += plankH) {
     drawWoodPlankRow(x, y + row, w, Math.min(plankH, h - row), row, plankH);
@@ -8005,14 +8123,14 @@ function drawAssetTiled(name, area, tileW, tileH) {
 
 function text(value, x, y, size, color, weight = "normal", align = "left") {
   ctx.fillStyle = color;
-  ctx.font = `${weight} ${size}px "SimHei", "Microsoft YaHei", monospace`;
+  ctx.font = `${weight} ${size}px "Microsoft YaHei", "SimHei", "KaiTi", monospace`;
   ctx.textAlign = align;
   ctx.textBaseline = "top";
   ctx.fillText(value, x, y);
 }
 
 function inlineText(parts, x, y, size, weight = "normal", align = "left") {
-  ctx.font = `${weight} ${size}px "SimHei", "Microsoft YaHei", monospace`;
+  ctx.font = `${weight} ${size}px "Microsoft YaHei", "SimHei", "KaiTi", monospace`;
   const widths = parts.map((part) => ctx.measureText(String(part.value)).width);
   const totalW = widths.reduce((sum, width) => sum + width, 0);
   let cursorX = x;
@@ -8799,6 +8917,11 @@ function drawCounter() {
   rect(c.x - 6, c.y + 10, c.w + 12, c.h - 2, COLORS.line);
   rect(c.x, c.y + 14, c.w, c.h - 10, main);
   rect(c.x + 6, c.y + 18, c.w - 12, 6, top);
+  rect(c.x + 10, c.y + 26, c.w - 20, 3, "rgba(255, 242, 208, 0.22)");
+  rect(c.x + 14, c.y + 34, c.w - 28, 2, "rgba(58, 36, 24, 0.36)");
+  rect(c.x + 14, c.y + 44, c.w - 28, 2, "rgba(58, 36, 24, 0.28)");
+  rect(c.x + 36, c.y + 28, 2, c.h - 42, "rgba(58, 36, 24, 0.28)");
+  rect(c.x + c.w - 38, c.y + 28, 2, c.h - 42, "rgba(58, 36, 24, 0.28)");
   rect(c.x + 10, c.y + c.h - 6, c.w - 20, 8, isCyber ? "#0f2028" : "#6b3f24");
   if (isCyber) {
     rect(c.x + 10, c.y + c.h - 13, c.w - 20, 3, trim);
@@ -8813,6 +8936,10 @@ function drawCounter() {
   text("\u5427", c.x + 30, c.y - 5, 10, COLORS.line, "bold", "center");
   text("\u53f0", c.x + 30, c.y + 5, 10, COLORS.line, "bold", "center");
   rect(c.x + 22, c.y + 16, 16, 4, COLORS.line);
+  rect(c.x + 48, c.y + 15, 14, 9, COLORS.line);
+  rect(c.x + 50, c.y + 17, 10, 5, "#d99b45");
+  rect(c.x + 65, c.y + 15, 10, 8, COLORS.line);
+  rect(c.x + 67, c.y + 17, 6, 4, "#fff2d0");
 
   rect(c.x + c.w - 39, c.y - 8, 30, 21, COLORS.line);
   rect(c.x + c.w - 35, c.y - 4, 22, 13, isCyber ? "#0f2229" : COLORS.pcScreen);
@@ -9369,93 +9496,74 @@ function drawGuestCheckInBubble(guest) {
 }
 
 function drawHud() {
-  rect(0, 0, view.width, HUD_HEIGHT, "#261711");
-  rect(0, HUD_HEIGHT - 4, view.width, 4, COLORS.counterEdge);
+  rect(0, 0, view.width, HUD_HEIGHT, "#102018");
+  rect(0, HUD_HEIGHT - 5, view.width, 5, "#7a451f");
 
   const panel = {
-    x: 18,
-    y: SAFE_TOP + 24,
-    w: Math.min(view.width - 114, 286),
-    h: 78
+    x: 14,
+    y: SAFE_TOP + 12,
+    w: view.width - 28,
+    h: HUD_HEIGHT - SAFE_TOP - 24
   };
-  pixelPanel(panel.x, panel.y, panel.w, panel.h, COLORS.uiDark, COLORS.counterEdge, COLORS.line);
+  parchmentPanel(panel.x, panel.y, panel.w, panel.h);
 
-  const titleW = Math.min(118, Math.max(98, panel.w * 0.44));
-  const cleanLabelX = panel.x + titleW + 18;
-  const cleanBarX = cleanLabelX + 46;
-  const cleanBarW = Math.max(20, panel.x + panel.w - cleanBarX - 12);
-  rect(panel.x + 10, panel.y + 10, titleW, 22, "#2f1d14");
-  strokeRect(panel.x + 10, panel.y + 10, titleW, 22, COLORS.text, 2);
-  text("\u5c0f\u9ed1\u7f51\u5427", panel.x + 10 + titleW / 2, panel.y + 13, 15, COLORS.text, "bold", "center");
+  const titleW = Math.min(136, Math.max(112, panel.w * 0.36));
+  drawWoodSign(panel.x + 16, panel.y + 18, titleW, 36, "\u5c0f\u9ed1\u7f51\u5427", 17);
 
-  text("\u6e05\u6d01", cleanLabelX, panel.y + 13, 13, COLORS.red, "bold");
-  drawCleanlinessThermometer(cleanBarX, panel.y + 14, cleanBarW, 17);
+  const cleanLabelX = panel.x + titleW + 34;
+  const cleanY = panel.y + 18;
+  const cleanBarX = cleanLabelX + 52;
+  const cleanBarW = Math.max(76, panel.x + panel.w - cleanBarX - 18);
+  text("\u6e05\u6d01\u5ea6", cleanLabelX, cleanY + 6, 14, COLORS.line, "bold");
+  drawCleanlinessThermometer(cleanBarX, cleanY + 5, cleanBarW, 18);
 
-  drawCashHud(panel.x + 14, panel.y + 45);
-  const calendarW = Math.min(130, Math.max(82, panel.w * 0.43));
-  drawCalendarHud(panel.x + panel.w - calendarW - 10, panel.y + 45, calendarW);
+  drawCashHud(panel.x + 22, panel.y + 62);
+  const calendarW = Math.min(148, Math.max(118, panel.w * 0.42));
+  drawCalendarHud(panel.x + panel.w - calendarW - 16, panel.y + 60, calendarW);
 }
 
 function drawCashHud(x, y) {
-  circle(x + 10, y + 10, 14, COLORS.line);
-  circle(x + 10, y + 10, 11, COLORS.yellow);
-  circle(x + 7, y + 7, 3, "#ffe08a");
-  text("$", x + 10, y + 1, 16, COLORS.line, "bold", "center");
-  text("\u8d44\u4ea7", x + 32, y - 3, 10, COLORS.text, "bold");
-  text(fitTextToWidth(`${state.cash}`, 92, 15, "bold"), x + 32, y + 9, 15, COLORS.green, "bold");
+  drawCoinIcon(x + 10, y + 10, 10);
+  text("\u8d44\u4ea7", x + 32, y - 3, 10, COLORS.line, "bold");
+  text(fitTextToWidth(`\u00a5 ${state.cash}`, 98, 15, "bold"), x + 32, y + 9, 15, "#4a2a1d", "bold");
 }
 
 function drawCalendarHud(x, y, w) {
   const fullLabel = `${getWeekdayName()}  ${getCurrentMonth()}\u6708${getCurrentDayOfMonth()}\u65e5`;
   const shortLabel = `${getWeekdayName()} ${getCurrentDayOfMonth()}\u65e5`;
   const dayLabel = w < 118 ? shortLabel : fullLabel;
-  const iconColor = isLateNight() ? COLORS.blue : COLORS.yellow;
 
-  rect(x, y, w, 24, COLORS.text);
-  strokeRect(x, y, w, 24, COLORS.line, 2);
-  if (isLateNight()) {
-    circle(x + 13, y + 12, 6, iconColor);
-    rect(x + 14, y + 6, 6, 12, COLORS.text);
-  } else {
-    circle(x + 13, y + 12, 5, iconColor);
-    rect(x + 12, y + 4, 2, 4, iconColor);
-    rect(x + 12, y + 18, 2, 4, iconColor);
-    rect(x + 5, y + 11, 4, 2, iconColor);
-    rect(x + 18, y + 11, 4, 2, iconColor);
-  }
-  text(fitTextToWidth(dayLabel, w - 30, 13, "bold"), x + 26, y + 5, 13, COLORS.red, "bold");
+  rect(x + 3, y + 3, w, 28, "rgba(58, 36, 24, 0.25)");
+  rect(x, y, w, 28, "#7a451f");
+  rect(x + 3, y + 3, w - 6, 22, "#fff2d0");
+  rect(x + 3, y + 3, w - 6, 3, "#fff9df");
+  drawCalendarIcon(x + 8, y + 3, 0.86);
+  text(fitTextToWidth(dayLabel, w - 36, 13, "bold"), x + 34, y + 7, 13, COLORS.line, "bold");
 }
 
 function drawCleanlinessThermometer(x, y, w, h) {
   const ratio = Math.max(0, Math.min(1, state.cleanliness / 100));
   const fillColor = ratio > 0.55 ? COLORS.green : ratio > 0.3 ? COLORS.yellow : COLORS.red;
-  const bulbR = Math.max(6, Math.floor(h / 2));
-  const tubeX = x + bulbR + 2;
-  const tubeY = y + 4;
-  const tubeW = Math.max(18, w - bulbR - 2);
-  const tubeH = Math.max(6, h - 8);
-  const fillW = Math.max(0, Math.round((tubeW - 6) * ratio));
-
-  circle(x + bulbR, y + bulbR, bulbR + 2, COLORS.line);
-  circle(x + bulbR, y + bulbR, bulbR - 1, COLORS.text);
-  rect(tubeX - 2, tubeY - 2, tubeW + 4, tubeH + 4, COLORS.line);
-  rect(tubeX, tubeY, tubeW, tubeH, COLORS.text);
-  circle(x + bulbR, y + bulbR, Math.max(3, bulbR - 4), fillColor);
-  rect(tubeX + 3, tubeY + 2, fillW, Math.max(2, tubeH - 4), fillColor);
-  rect(tubeX + 3, tubeY + 2, Math.max(4, tubeW - 8), 2, "rgba(255,255,255,0.2)");
+  drawWoodProgressBar(x, y, w, h, ratio, fillColor);
 }
 
 function drawSystemMessageBar() {
   const y = view.height - ACTION_BAR_HEIGHT - MESSAGE_BAR_HEIGHT - 10;
-  const x = 20;
-  const w = view.width - 40;
-  rect(0, y - 12, view.width, MESSAGE_BAR_HEIGHT + 22, "#261711");
-  rect(x + 4, y + 4, w, 42, "rgba(58, 36, 24, 0.36)");
-  rect(x, y, w, 42, COLORS.text);
-  strokeRect(x, y, w, 42, COLORS.wallDark, 4);
-  rect(x + 6, y + 6, w - 12, 2, "#fff9df");
+  const x = 26;
+  const w = view.width - 52;
+  rect(0, y - 14, view.width, MESSAGE_BAR_HEIGHT + 24, "#102018");
+  rect(x + 5, y + 5, w, 44, "rgba(38, 23, 17, 0.34)");
+  rect(x, y, w, 44, "#3a2115");
+  rect(x + 5, y + 5, w - 10, 34, "#f0d08f");
+  rect(x + 10, y + 10, w - 20, 3, "#ffe3aa");
+  rect(x + 8, y + 35, w - 16, 2, "rgba(126, 79, 35, 0.26)");
+  rect(x + 4, y + 4, 7, 7, "#8f2f22");
+  rect(x + w - 11, y + 4, 7, 7, "#8f2f22");
+  rect(x + 4, y + 33, 7, 7, "#7a251d");
+  rect(x + w - 11, y + 33, 7, 7, "#7a251d");
+  drawSpeakerIcon(x + 16, y + 7, 0.72);
   const label = state.messageTimer > 0 ? state.message : "\u7cfb\u7edf\u63d0\u793a\u6d88\u606f";
-  text(fitTextToWidth(label, w - 24, 15, "bold"), x + w / 2, y + 12, 15, COLORS.red, "bold", "center");
+  text(fitTextToWidth(label, w - 76, 15, "bold"), x + 50, y + 13, 15, COLORS.red, "bold");
 }
 
 function drawActionBar() {
@@ -9467,9 +9575,10 @@ function drawActionBar() {
   strokeRect(20, y + 16, view.width - 40, ACTION_BAR_HEIGHT - 26, COLORS.wallDark, 4);
   rect(26, y + 22, view.width - 52, 3, COLORS.text);
 
-  text(`\u7b49\u7ea7 Lv.${state.cafeLevel}`, 30, y + 28, 15, COLORS.line, "bold");
+  drawLevelStar(42, y + 37, 9);
+  text(`Lv.${state.cafeLevel}`, 56, y + 28, 15, COLORS.line, "bold");
   const xp = getCafeLevelProgress();
-  const xpX = 112;
+  const xpX = 108;
   const xpY = y + 34;
   const xpW = 62;
   rect(xpX, xpY, xpW, 8, COLORS.line);
@@ -9700,34 +9809,32 @@ function drawProcurementPanel() {
     strokeRect(x, y, cardW, cardH, unlocked ? "#9a7043" : "#80664f", 2);
     drawProductIcon(product, x + 10, y + 10, !unlocked);
 
-    const nameSize = reusable ? 12 : 14;
-    const nameLabel = reusable ? product.name : fitTextToWidth(product.name, cardW - 128, 14, "bold");
-    text(nameLabel, x + 50, y + 8, nameSize, unlocked ? COLORS.line : "#745a46", "bold");
+    drawProcurementProductName(product.name, x + 50, y + 8, cardW - 58, unlocked ? COLORS.line : "#745a46");
     if (reusable) {
       const statusLabel = purchased ? "\u5df2\u8d2d" : "\u9650\u8d2d1";
-      text(statusLabel, x + cardW - 12, y + 8, 11, COLORS.green, "bold", "right");
+      text(statusLabel, x + cardW - 12, y + 31, 11, COLORS.green, "bold", "right");
     } else {
       inlineText([
         { value: "\u672c\u6b21\u6570\u91cf ", color: "#5d4532" },
         { value: quantity, color: COLORS.yellow }
-      ], x + cardW - 12, y + 8, 11, "bold", "right");
+      ], x + cardW - 12, y + 31, 11, "bold", "right");
     }
-    text(reusable ? "\u79df\u8d41\u7c7b" : `\u8d77\u6279 ${product.quantity}`, x + cardW - 12, y + 24, 10, "#5d4532", "bold", "right");
+    text(reusable ? "\u79df\u8d41\u7c7b" : `\u8d77\u6279 ${product.quantity}`, x + cardW - 12, y + 45, 10, "#5d4532", "bold", "right");
     if (reusable) {
       inlineText([
         { value: "\u79df\u91d1 ", color: "#5d4532" },
         { value: `${product.sellPrice}/\u6b21`, color: COLORS.green }
-      ], x + 50, y + 28, 11, "bold");
+      ], x + 50, y + 34, 11, "bold");
       inlineText([
         { value: "\u8d2d\u4ef7 ", color: "#5d4532" },
         { value: product.cost, color: "#b87517" }
-      ], x + 50, y + 44, 10, "bold");
+      ], x + 50, y + 49, 10, "bold");
     } else {
       inlineText([
         { value: "\u552e\u4ef7 ", color: "#5d4532" },
         { value: product.sellPrice, color: COLORS.green }
-      ], x + 50, y + 43, 10, "bold");
-      text(`\u5e93\u5b58 ${stock}`, x + 50, y + 28, 11, "#5d4532", "bold");
+      ], x + 50, y + 45, 10, "bold");
+      text(`\u5e93\u5b58 ${stock}`, x + 50, y + 31, 11, "#5d4532", "bold");
     }
     if (reusable) {
       text("\u9ad8\u7aef\u5ba2\u6237\u9700\u6c42", x + 8, y + 62, 10, "#5d4532", "bold");
@@ -10677,6 +10784,38 @@ function fitTextToWidth(value, maxW, size, weight = "normal") {
   return result.length < String(value).length ? `${result}...` : result;
 }
 
+function splitTextToLines(value, maxW, size, weight = "normal") {
+  const textValue = String(value);
+  const lines = [];
+  let line = "";
+  ctx.font = `${weight} ${size}px "Microsoft YaHei", "SimHei", "KaiTi", monospace`;
+  for (let index = 0; index < textValue.length; index += 1) {
+    const next = line + textValue[index];
+    if (ctx.measureText(next).width > maxW && line) {
+      lines.push(line);
+      line = textValue[index];
+    } else {
+      line = next;
+    }
+  }
+  if (line) lines.push(line);
+  return lines;
+}
+
+function drawProcurementProductName(value, x, y, maxW, color) {
+  let size = 13;
+  let lines = splitTextToLines(value, maxW, size, "bold");
+  while (size > 10 && lines.length > 2) {
+    size -= 1;
+    lines = splitTextToLines(value, maxW, size, "bold");
+  }
+  const lineH = size + 2;
+  lines.forEach((line, index) => {
+    text(line, x, y + index * lineH, size, color, "bold");
+  });
+  return lines.length * lineH;
+}
+
 function drawStaffIcon(staff, x, y, locked) {
   const shirt = locked ? "#8c755f" : {
     cashier: COLORS.blue,
@@ -10823,58 +10962,59 @@ function drawShopSignDisplay(x, y, w, h) {
     return;
   }
   if (skin && skin.id === "retro") {
-    pixelPanel(x, y, w, h, "#6b3f24", "#f0b94a", COLORS.line);
-    rect(x + 8, y + 5, w - 16, 3, "#c5833d");
-    text("\u5c0f\u9ed1\u7f51\u5427", x + w / 2, y + 8, 13, "#fff2d0", "bold", "center");
+    drawWoodSign(x, y, w, h, "\u5c0f\u9ed1\u7f51\u5427", 13);
     return;
   }
-  pixelPanel(x, y, w, h, COLORS.counter, COLORS.counterEdge, COLORS.line);
-  text("\u5c0f\u9ed1\u7f51\u5427", x + w / 2, y + 7, 13, COLORS.text, "bold", "center");
+  drawWoodSign(x, y, w, h, "\u5c0f\u9ed1\u7f51\u5427", 13);
 }
 
 function drawSnackDisplay(x, y) {
   const skin = getCurrentDecorSkin("snackShelf");
   if (skin && skin.id === "glass") {
-    rect(x - 3, y - 13, 30, 16, COLORS.line);
-    rect(x, y - 10, 24, 10, "#dff7ff");
-    text("\u96f6\u98df", x + 12, y - 10, 9, "#17313a", "bold", "center");
+    rect(x - 5, y - 15, 34, 18, COLORS.line);
+    rect(x - 2, y - 12, 28, 12, "#dff7ff");
+    text("\u83dc\u5355", x + 12, y - 11, 9, "#17313a", "bold", "center");
     rect(x, y, 108, 28, COLORS.line);
     rect(x + 3, y + 3, 102, 22, "#244653");
     rect(x + 6, y + 6, 96, 3, "#6be7ff");
     rect(x + 7, y + 11, 92, 10, "rgba(170, 235, 255, 0.25)");
-    rect(x + 9, y + 13, 14, 7, COLORS.red);
-    rect(x + 27, y + 13, 14, 7, COLORS.yellow);
-    rect(x + 45, y + 13, 14, 7, COLORS.green);
-    rect(x + 63, y + 13, 14, 7, COLORS.blue);
-    rect(x + 81, y + 13, 14, 7, "#d98236");
+    drawSnackBottle(x + 9, y + 9, COLORS.red);
+    drawSnackBottle(x + 25, y + 9, COLORS.yellow);
+    drawSnackBottle(x + 41, y + 9, COLORS.green);
+    drawSnackBottle(x + 57, y + 9, COLORS.blue);
+    drawSnackBottle(x + 73, y + 9, "#d98236");
+    drawSnackBottle(x + 89, y + 9, "#a15cff");
     return;
   }
   if (skin && skin.id === "wood") {
-    rect(x - 3, y - 13, 30, 16, COLORS.line);
-    rect(x, y - 10, 24, 10, "#f0c77a");
-    text("\u96f6\u98df", x + 12, y - 10, 9, COLORS.line, "bold", "center");
+    rect(x - 5, y - 15, 34, 18, COLORS.line);
+    rect(x - 2, y - 12, 28, 12, "#f0c77a");
+    text("\u83dc\u5355", x + 12, y - 11, 9, COLORS.line, "bold", "center");
     rect(x, y, 108, 28, COLORS.line);
     rect(x + 3, y + 3, 102, 22, "#9a642f");
     rect(x + 5, y + 9, 98, 3, "#6b3f24");
     rect(x + 5, y + 20, 98, 3, "#6b3f24");
-    rect(x + 9, y + 13, 14, 7, COLORS.red);
-    rect(x + 28, y + 13, 14, 7, COLORS.yellow);
-    rect(x + 47, y + 13, 14, 7, COLORS.green);
-    rect(x + 66, y + 13, 14, 7, COLORS.blue);
-    rect(x + 85, y + 13, 10, 7, "#d98236");
+    drawSnackBottle(x + 9, y + 8, COLORS.red);
+    drawSnackBottle(x + 25, y + 8, COLORS.yellow);
+    drawSnackBottle(x + 41, y + 8, COLORS.green);
+    drawSnackBottle(x + 57, y + 8, COLORS.blue);
+    drawSnackBottle(x + 73, y + 8, "#d98236");
+    drawSnackBottle(x + 89, y + 8, "#a15cff");
     return;
   }
-  rect(x - 3, y - 13, 30, 16, COLORS.line);
-  rect(x, y - 10, 24, 10, COLORS.text);
-  text("\u96f6\u98df", x + 12, y - 10, 9, COLORS.line, "bold", "center");
+  rect(x - 5, y - 15, 34, 18, COLORS.line);
+  rect(x - 2, y - 12, 28, 12, COLORS.text);
+  text("\u83dc\u5355", x + 12, y - 11, 9, COLORS.line, "bold", "center");
   rect(x, y, 108, 28, COLORS.line);
   rect(x + 3, y + 3, 102, 22, "#7b563b");
   rect(x + 6, y + 6, 96, 3, COLORS.counterEdge);
-  rect(x + 9, y + 12, 14, 8, COLORS.red);
-  rect(x + 27, y + 12, 14, 8, COLORS.yellow);
-  rect(x + 45, y + 12, 14, 8, COLORS.green);
-  rect(x + 63, y + 12, 14, 8, COLORS.blue);
-  rect(x + 81, y + 12, 14, 8, "#d98236");
+  rect(x + 6, y + 19, 96, 3, "#4a2a1d");
+  drawSnackBottle(x + 9, y + 8, COLORS.red);
+  drawSnackBottle(x + 25, y + 8, COLORS.yellow);
+  drawSnackBottle(x + 41, y + 8, COLORS.green);
+  drawSnackBottle(x + 57, y + 8, COLORS.blue);
+  drawSnackBottle(x + 73, y + 8, "#d98236");
+  drawSnackBottle(x + 89, y + 8, "#a15cff");
 }
 
 function drawHappySignDisplay(x, y, w, h) {
@@ -10890,17 +11030,15 @@ function drawHappySignDisplay(x, y, w, h) {
   }
 
   if (skin && skin.id === "sunny") {
-    pixelPanel(x, y, w, h, "#b87333", "#ffe08a", COLORS.line);
-    rect(x + 6, y + 5, w - 12, 3, "#fff2d0");
-    text("\u4e0a\u7f51", x + w / 2, y + 8, 11, COLORS.line, "bold", "center");
-    text("\u5feb\u4e50", x + w / 2, y + 21, 11, COLORS.line, "bold", "center");
+    drawWoodSign(x, y, w, h, "", 11);
+    text("\u4e0a\u7f51", x + w / 2, y + 8, 11, "#fff2d0", "bold", "center");
+    text("\u5feb\u4e50", x + w / 2, y + 21, 11, "#fff2d0", "bold", "center");
     return;
   }
 
-  rect(x, y, w, h, COLORS.line);
-  rect(x + 3, y + 3, w - 6, h - 6, COLORS.text);
-  text("\u4e0a\u7f51", x + w / 2, y + 8, 11, COLORS.dimText, "bold", "center");
-  text("\u5feb\u4e50", x + w / 2, y + 21, 11, COLORS.dimText, "bold", "center");
+  drawWoodSign(x, y, w, h, "", 11);
+  text("\u4e0a\u7f51", x + w / 2, y + 8, 11, "#fff2d0", "bold", "center");
+  text("\u5feb\u4e50", x + w / 2, y + 21, 11, "#fff2d0", "bold", "center");
 }
 
 function drawMahjongTables() {
