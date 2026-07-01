@@ -43,7 +43,10 @@ const products = [
   { id: "snack", name: "\u96f6\u98df", unlockLevel: 2, cost: 35, quantity: 10, sellPrice: 8 },
   { id: "drink", name: "\u996e\u6599", unlockLevel: 2, cost: 42, quantity: 12, sellPrice: 7 },
   { id: "meal", name: "\u5feb\u9910", unlockLevel: 3, cost: 80, quantity: 8, sellPrice: 18 },
-  { id: "milkTea", name: "\u5976\u8336", unlockLevel: 4, cost: 120, quantity: 10, sellPrice: 22 }
+  { id: "milkTea", name: "\u5976\u8336", unlockLevel: 4, cost: 120, quantity: 10, sellPrice: 22 },
+  { id: "gamingMouse", name: "\u7535\u7ade\u9f20\u6807", unlockLevel: 3, cost: 1000, quantity: 1, sellPrice: 10, reusable: true, purchaseLimit: 1, minDemandEquipmentLevel: 3 },
+  { id: "gamingKeyboard", name: "\u7535\u7ade\u952e\u76d8", unlockLevel: 3, cost: 1000, quantity: 1, sellPrice: 10, reusable: true, purchaseLimit: 1, minDemandEquipmentLevel: 3 },
+  { id: "gamingController", name: "\u7535\u7ade\u624b\u67c4", unlockLevel: 3, cost: 1000, quantity: 1, sellPrice: 10, reusable: true, purchaseLimit: 1, minDemandEquipmentLevel: 3 }
 ];
 
 const staffTypes = [
@@ -209,7 +212,10 @@ const demandProductIds = [
   "snack",
   "drink",
   "meal",
-  "milkTea"
+  "milkTea",
+  "gamingMouse",
+  "gamingKeyboard",
+  "gamingController"
 ];
 
 const guestTypes = [

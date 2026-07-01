@@ -255,7 +255,7 @@ const state = {
     products: {},
     total: 0
   },
-  message: "客人进门、前台开机、上机读条、下机结账。",
+  message: "\u5ba2\u4eba\u8fdb\u95e8\u3001\u524d\u53f0\u5f00\u673a\u3001\u4e0a\u673a\u8bfb\u6761\u3001\u4e0b\u673a\u7ed3\u8d26\u3002",
   businessOpen: true,
   messageTimer: 5
 };
@@ -682,7 +682,7 @@ function adjustAreaRate(area, delta) {
   const current = getAreaHourlyRate(area.id);
   area.hourlyRate = Math.max(3, Math.min(60, current + delta));
   markSaveDirty();
-  say(`${area.name} \u8ba1\u8d39\u8c03\u6574\u4e3a ${area.hourlyRate} \u5143/\u5c0f\u65f6\u3002`);
+  say(`${area.name} \u8ba1\u8d39\u8c03\u6574\u4e3a ${area.hourlyRate}/\u5c0f\u65f6\u3002`);
 }
 
 function canRentArea(type, pcCount) {
@@ -701,7 +701,7 @@ function rentArea(type, pcCount) {
     return;
   }
   if (state.cash < cost) {
-    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u6269\u79df ${type.name} \u9700\u8981 ${cost} \u5143\u3002`);
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u6269\u79df ${type.name} \u9700\u8981 ${cost}\u3002`);
     return;
   }
 
@@ -724,7 +724,7 @@ function placePendingExpansion(worldX, worldY) {
   if (!pending || !type) return false;
 
   if (state.cash < pending.cost) {
-    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u6269\u79df ${type.name} \u9700\u8981 ${pending.cost} \u5143\u3002`);
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u6269\u79df ${type.name} \u9700\u8981 ${pending.cost}\u3002`);
     state.pendingExpansion = null;
     return true;
   }
@@ -741,22 +741,29 @@ function placePendingExpansion(worldX, worldY) {
     return true;
   }
 
-  state.cash -= pending.cost;
-  state.nextAreaId += 1;
-  const area = Object.assign(candidate.area, {
-    id: state.nextAreaId - 1,
-    typeId: type.id,
-    name: type.name,
-    pcCount: 0,
-    pcCapacity: pending.pcCapacity
+  confirmScenePurchase(type.name, pending.cost, () => {
+    if (state.cash < pending.cost) {
+      say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u6269\u79df ${type.name} \u9700\u8981 ${pending.cost}\u3002`);
+      state.pendingExpansion = null;
+      return;
+    }
+    state.cash -= pending.cost;
+    state.nextAreaId += 1;
+    const area = Object.assign(candidate.area, {
+      id: state.nextAreaId - 1,
+      typeId: type.id,
+      name: type.name,
+      pcCount: 0,
+      pcCapacity: pending.pcCapacity
+    });
+    area.hourlyRate = getDefaultAreaRate(area.typeId);
+    state.rentedAreas.push(area);
+    state.pendingExpansion = null;
+    updateEquipmentLevel();
+    updateCafeLevel();
+    markSaveDirty();
+    say(`\u5df2\u653e\u7f6e\u7a7a\u7684 ${type.name}${pending.pcCapacity ? `\uff0c\u53ef\u653e ${pending.pcCapacity} \u53f0\u7535\u8111` : ""}\u3002`);
   });
-  area.hourlyRate = getDefaultAreaRate(area.typeId);
-  state.rentedAreas.push(area);
-  state.pendingExpansion = null;
-  updateEquipmentLevel();
-  updateCafeLevel();
-  markSaveDirty();
-  say(`\u5df2\u653e\u7f6e\u7a7a\u7684 ${type.name}${pending.pcCapacity ? `\uff0c\u53ef\u653e ${pending.pcCapacity} \u53f0\u7535\u8111` : ""}\u3002`);
   return true;
 }
 
@@ -1274,7 +1281,7 @@ function finishFloorLayoutSession() {
 
   const summary = getFloorLayoutSessionCostText();
   if (summary.cost > state.cash) {
-    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u672c\u6b21\u65b0\u589e ${summary.extraCount} \u5757\u5730\u7816\u9700\u8981 ${summary.cost} \u5143\u3002`);
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u672c\u6b21\u65b0\u589e ${summary.extraCount} \u5757\u5730\u7816\u9700\u8981 ${summary.cost}\u3002`);
     return false;
   }
 
@@ -1293,14 +1300,14 @@ function finishFloorLayoutSession() {
     clearAllEntityNavigation();
     markSaveDirty();
     say(summary.extraCount > 0
-      ? `\u5df2\u786e\u8ba4\u94fa\u8bbe ${summary.placedCount} \u5757\u5730\u7816\uff0c\u65b0\u589e ${summary.extraCount} \u5757\uff0c\u82b1\u8d39 ${summary.cost} \u5143\u3002`
+      ? `\u5df2\u786e\u8ba4\u94fa\u8bbe ${summary.placedCount} \u5757\u5730\u7816\uff0c\u65b0\u589e ${summary.extraCount} \u5757\uff0c\u82b1\u8d39 ${summary.cost}\u3002`
       : `\u5df2\u8c03\u6574\u5730\u7816\u5e03\u5c40\uff0c\u5f53\u524d\u94fa\u8bbe ${summary.placedCount} \u5757\u3002`);
   };
 
   if (summary.extraCount > 0) {
     openConfirmDialog(
       "\u786e\u8ba4\u94fa\u7816",
-      `\u672c\u6b21\u603b\u94fa\u8bbe ${summary.placedCount} \u5757\u5730\u7816\uff0c\u5df2\u8d2d ${summary.ownedCount} \u5757\uff0c\u65b0\u589e\u8d2d\u4e70 ${summary.extraCount} \u5757\uff0c\u603b\u8ba1\u82b1\u8d39 ${summary.cost} \u5143\u3002\u786e\u8ba4\u8d2d\u4e70\u5e76\u9000\u51fa\u5e03\u5c40\u5417\uff1f`,
+      `\u672c\u6b21\u603b\u94fa\u8bbe ${summary.placedCount} \u5757\u5730\u7816\uff0c\u5df2\u8d2d ${summary.ownedCount} \u5757\uff0c\u65b0\u589e\u8d2d\u4e70 ${summary.extraCount} \u5757\uff0c\u603b\u8ba1\u82b1\u8d39 ${summary.cost}\u3002\u786e\u8ba4\u8d2d\u4e70\u5e76\u9000\u51fa\u5e03\u5c40\u5417\uff1f`,
       applyExit,
       () => {
         const session = state.floorLayoutSession;
@@ -1343,13 +1350,13 @@ function addPublicFloor(worldX, worldY) {
     state.publicFloors.splice(existingIndex, 1);
     clearAllEntityNavigation();
     const summary = getFloorLayoutSessionCostText();
-    say(`\u5df2\u79fb\u9664\u8fd9\u5757\u516c\u533a\u5730\u7816\u3002\u5f53\u524d ${summary.placedCount} \u5757\uff0c\u5f85\u652f\u4ed8 ${summary.cost} \u5143\u3002`);
+    say(`\u5df2\u79fb\u9664\u8fd9\u5757\u516c\u533a\u5730\u7816\u3002\u5f53\u524d ${summary.placedCount} \u5757\uff0c\u5f85\u652f\u4ed8 ${summary.cost}\u3002`);
     return;
   }
 
   const projectedCost = getFloorLayoutExtraCost(getPublicFloorDraftCountAfterAdd());
   if (projectedCost > state.cash) {
-    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u672c\u6b21\u94fa\u8bbe\u540e\u9700\u652f\u4ed8 ${projectedCost} \u5143\u3002`);
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u672c\u6b21\u94fa\u8bbe\u540e\u9700\u652f\u4ed8 ${projectedCost}\u3002`);
     return;
   }
 
@@ -1371,8 +1378,8 @@ function addPublicFloor(worldX, worldY) {
   clearAllEntityNavigation();
   const summary = getFloorLayoutSessionCostText();
   say(candidate.hostType === "floor"
-    ? `\u516c\u533a\u8fc7\u9053\u5df2\u5ef6\u5c55\u3002\u672c\u6b21\u65b0\u589e ${summary.extraCount} \u5757\uff0c\u5f85\u652f\u4ed8 ${summary.cost} \u5143\u3002`
-    : `\u5df2\u94fa\u8bbe\u5730\u7816\u3002\u672c\u6b21\u65b0\u589e ${summary.extraCount} \u5757\uff0c\u5f85\u652f\u4ed8 ${summary.cost} \u5143\u3002`);
+    ? `\u516c\u533a\u8fc7\u9053\u5df2\u5ef6\u5c55\u3002\u672c\u6b21\u65b0\u589e ${summary.extraCount} \u5757\uff0c\u5f85\u652f\u4ed8 ${summary.cost}\u3002`
+    : `\u5df2\u94fa\u8bbe\u5730\u7816\u3002\u672c\u6b21\u65b0\u589e ${summary.extraCount} \u5757\uff0c\u5f85\u652f\u4ed8 ${summary.cost}\u3002`);
 }
 
 function addPartition(worldX, worldY) {
@@ -1388,7 +1395,7 @@ function addPartition(worldX, worldY) {
     return;
   }
   if (state.cash < type.cost) {
-    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c${type.name}\u9700\u8981 ${type.cost} \u5143\u3002`);
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c${type.name}\u9700\u8981 ${type.cost}\u3002`);
     return;
   }
 
@@ -1401,7 +1408,7 @@ function addPartition(worldX, worldY) {
   state.layoutToolActive = false;
   state.layoutMode = "off";
   markSaveDirty();
-  say(`\u5df2\u6446\u653e ${type.name}\uff0c\u82b1\u8d39 ${type.cost} \u5143\u3002`);
+  say(`\u5df2\u6446\u653e ${type.name}\uff0c\u82b1\u8d39 ${type.cost}\u3002`);
 }
 
 function getPartitionDimensions(type, orientation = "horizontal") {
@@ -1793,7 +1800,7 @@ function sellPartition(partition) {
   state.selectedPartitionId = null;
   state.partitionActionMenu = null;
   markSaveDirty();
-  say(`\u5df2\u51fa\u552e ${type.name}\uff0c\u56de\u6536 ${value} \u5143\u3002`);
+  say(`\u5df2\u51fa\u552e ${type.name}\uff0c\u56de\u6536 ${value}\u3002`);
 }
 
 function moveSelectedProp(worldX, worldY) {
@@ -1992,7 +1999,7 @@ function deleteAreaLayout(worldX, worldY) {
     state.partitions = state.partitions.filter((item) => item.id !== partition.id);
     state.cash += refund;
     markSaveDirty();
-    say(`\u5df2\u79fb\u9664 ${type ? type.name : "\u9694\u65ad"}\uff0c\u56de\u6536 ${refund} \u5143\u3002`);
+    say(`\u5df2\u79fb\u9664 ${type ? type.name : "\u9694\u65ad"}\uff0c\u56de\u6536 ${refund}\u3002`);
     return;
   }
 
@@ -2011,7 +2018,7 @@ function deleteAreaLayout(worldX, worldY) {
   const refund = getAreaRefund(area);
   openConfirmDialog(
     "\u5220\u9664\u5305\u95f4",
-    `\u786e\u5b9a\u5220\u9664 ${area.name} \u5417\uff1f\u5c06\u8fd4\u8fd8 ${refund} \u5143\u3002`,
+    `\u786e\u5b9a\u5220\u9664 ${area.name} \u5417\uff1f\u5c06\u8fd4\u8fd8 ${refund}\u3002`,
     () => deleteRentedArea(area, refund)
   );
 }
@@ -2029,7 +2036,7 @@ function deleteRentedArea(area, refund) {
   state.layoutMode = "off";
   state.selectedAreaId = null;
   markSaveDirty();
-  say(`\u5df2\u5220\u9664 ${area.name}\uff0c\u8fd4\u8fd8 ${refund} \u5143\u3002`);
+  say(`\u5df2\u5220\u9664 ${area.name}\uff0c\u8fd4\u8fd8 ${refund}\u3002`);
 }
 
 function moveAreaTo(area, nextX, nextY) {
@@ -2185,7 +2192,7 @@ function useOrBuyFloorSkin(skinId) {
   const purchased = isFloorSkinPurchased(skin.id);
   if (!purchased) {
     if (state.cash < skin.cost) {
-      say(`\u73b0\u91d1\u4e0d\u8db3\uff0c${skin.name}\u9700\u8981 ${skin.cost} \u5143\u3002`);
+      say(`\u73b0\u91d1\u4e0d\u8db3\uff0c${skin.name}\u9700\u8981 ${skin.cost}\u3002`);
       return;
     }
     state.cash -= skin.cost;
@@ -2196,7 +2203,7 @@ function useOrBuyFloorSkin(skinId) {
   markSaveDirty();
   say(purchased
     ? `\u5df2\u5207\u6362\u4e3a ${skin.name}\u3002`
-    : `\u5df2\u8d2d\u4e70\u5e76\u4f7f\u7528 ${skin.name}\uff0c\u82b1\u8d39 ${skin.cost} \u5143\u3002`);
+    : `\u5df2\u8d2d\u4e70\u5e76\u4f7f\u7528 ${skin.name}\uff0c\u82b1\u8d39 ${skin.cost}\u3002`);
 }
 
 function getDecorSkinById(kind, skinId) {
@@ -2247,7 +2254,7 @@ function useOrBuyDecorSkin(kind, skinId) {
   const purchased = isDecorSkinPurchased(kind, skin.id);
   if (!purchased) {
     if (state.cash < skin.cost) {
-      say(`\u73b0\u91d1\u4e0d\u8db3\uff0c${skin.name}\u9700\u8981 ${skin.cost} \u5143\u3002`);
+      say(`\u73b0\u91d1\u4e0d\u8db3\uff0c${skin.name}\u9700\u8981 ${skin.cost}\u3002`);
       return;
     }
     state.cash -= skin.cost;
@@ -2258,7 +2265,7 @@ function useOrBuyDecorSkin(kind, skinId) {
   markSaveDirty();
   say(purchased
     ? `\u5df2\u5207\u6362\u4e3a ${skin.name}\u3002`
-    : `\u5df2\u8d2d\u4e70\u5e76\u4f7f\u7528 ${skin.name}\uff0c\u82b1\u8d39 ${skin.cost} \u5143\u3002`);
+    : `\u5df2\u8d2d\u4e70\u5e76\u4f7f\u7528 ${skin.name}\uff0c\u82b1\u8d39 ${skin.cost}\u3002`);
 }
 
 function markSaveDirty() {
@@ -2626,7 +2633,16 @@ function getProductUnitCost(product) {
   return product.cost / product.quantity;
 }
 
+function isReusableProduct(product) {
+  return Boolean(product && product.reusable);
+}
+
+function isProductPurchased(product) {
+  return Boolean(product && (state.inventory[product.id] || 0) > 0);
+}
+
 function getPurchaseQuantity(product) {
+  if (isReusableProduct(product)) return 1;
   const quantity = state.purchaseQuantities[product.id];
   return Number.isFinite(quantity) && quantity >= product.quantity ? quantity : product.quantity;
 }
@@ -2635,11 +2651,26 @@ function getPurchaseCost(product, quantity = getPurchaseQuantity(product)) {
   return Math.ceil(getProductUnitCost(product) * quantity);
 }
 
+function resetPurchaseQuantity(product) {
+  if (!product || isReusableProduct(product)) return;
+  state.purchaseQuantities[product.id] = product.quantity;
+}
+
+function resetPurchaseQuantities() {
+  products.forEach(resetPurchaseQuantity);
+}
+
 function canBuyProduct(product, quantity = getPurchaseQuantity(product)) {
-  return state.cafeLevel >= product.unlockLevel && state.cash >= getPurchaseCost(product, quantity);
+  return state.cafeLevel >= product.unlockLevel &&
+    state.cash >= getPurchaseCost(product, quantity) &&
+    !(isReusableProduct(product) && isProductPurchased(product));
 }
 
 function adjustPurchaseQuantity(product, delta) {
+  if (isReusableProduct(product)) {
+    say(`${product.name}\u662f\u4e00\u6b21\u6027\u8d44\u4ea7\uff0c\u8d2d\u4e70\u540e\u53ef\u53cd\u590d\u51fa\u79df\u3002`);
+    return;
+  }
   const current = getPurchaseQuantity(product);
   const next = Math.max(product.quantity, Math.min(999, current + delta));
   state.purchaseQuantities[product.id] = next;
@@ -2651,6 +2682,10 @@ function buyProduct(product, quantity = getPurchaseQuantity(product)) {
     say(`\u7f51\u5427\u7b49\u7ea7\u4e0d\u8db3\uff0c${product.name}\u9700\u8981 ${product.unlockLevel} \u7ea7\u89e3\u9501\u3002`);
     return;
   }
+  if (isReusableProduct(product) && isProductPurchased(product)) {
+    say(`${product.name}\u5df2\u7ecf\u8d2d\u4e70\uff0c\u53ef\u4ee5\u7ee7\u7eed\u7ed9\u987e\u5ba2\u51fa\u79df\u3002`);
+    return;
+  }
 
   const cost = getPurchaseCost(product, quantity);
   if (state.cash < cost) {
@@ -2660,11 +2695,15 @@ function buyProduct(product, quantity = getPurchaseQuantity(product)) {
 
   state.cash -= cost;
   state.inventory[product.id] = (state.inventory[product.id] || 0) + quantity;
+  resetPurchaseQuantity(product);
   markSaveDirty();
-  say(`\u91c7\u8d2d ${product.name} x${quantity}\uff0c\u5e93\u5b58\u5df2\u5165\u8d26\u3002`);
+  say(isReusableProduct(product)
+    ? `\u8d2d\u4e70 ${product.name}\uff0c\u4ee5\u540e\u53ef\u6309 ${product.sellPrice}/\u6b21\u51fa\u79df\u3002`
+    : `\u91c7\u8d2d ${product.name} x${quantity}\uff0c\u5e93\u5b58\u5df2\u5165\u8d26\u3002`);
 }
 
 function restockProduct(product, silent = false) {
+  if (isReusableProduct(product)) return false;
   if (state.cafeLevel < product.unlockLevel || state.cash < product.cost) return false;
 
   state.cash -= product.cost;
@@ -2695,6 +2734,9 @@ function createDemand(guest) {
 
   const id = pickWeightedDemandProductId(guest, pc);
   const product = getProductById(id);
+  if (isReusableProduct(product) && guest) {
+    guest.rentalDemandDone = true;
+  }
 
   return {
     productId: id,
@@ -2812,16 +2854,20 @@ function serveGuestDemand(guest) {
 
   const stock = state.inventory[product.id] || 0;
   if (stock <= 0) {
-    say(`${product.name} \u6ca1\u5e93\u5b58\uff0c\u5148\u53bb\u91c7\u8d2d\u9875\u8fdb\u8d27\u3002`);
+    say(isReusableProduct(product)
+      ? `${product.name} \u8fd8\u6ca1\u6709\u8d2d\u4e70\uff0c\u5148\u53bb\u91c7\u8d2d\u9875\u5165\u624b\u3002`
+      : `${product.name} \u6ca1\u5e93\u5b58\uff0c\u5148\u53bb\u91c7\u8d2d\u9875\u8fdb\u8d27\u3002`);
     return true;
   }
 
   cancelAssignedDemandWorker(guest);
-  state.inventory[product.id] = stock - 1;
+  if (!isReusableProduct(product)) {
+    state.inventory[product.id] = stock - 1;
+  }
   state.cash += product.sellPrice;
   recordDailyRevenue("product", product.sellPrice, product.id);
   markSaveDirty();
-  say(`${getGuestMachineLabel(guest)}\u6536\u5230${product.name}\uff0c\u989d\u5916\u6536\u5165 ${product.sellPrice} \u5143\u3002`);
+  say(`${getGuestMachineLabel(guest)}\u6536\u5230${product.name}\uff0c\u989d\u5916\u6536\u5165 ${product.sellPrice}\u3002`);
   guest.demand = null;
   return true;
 }
@@ -2885,7 +2931,7 @@ function startCompanionSession(guest, worker) {
   worker.taskTimer = guest.companionTimer;
   positionCompanionBesideGuest(worker, guest);
   markSaveDirty();
-  say(`\u966a\u73a9\u5458\u5df2\u966a\u5750${getGuestMachineLabel(guest)}\uff0c\u4f1a\u966a\u5230\u4e0b\u673a\uff0c\u6536\u5165 ${revenue} \u5143\u3002`);
+  say(`\u966a\u73a9\u5458\u5df2\u966a\u5750${getGuestMachineLabel(guest)}\uff0c\u4f1a\u966a\u5230\u4e0b\u673a\uff0c\u6536\u5165 ${revenue}\u3002`);
   guest.demand = null;
   return true;
 }
@@ -3059,10 +3105,19 @@ function pickWeightedDemandProductId(guest, pc) {
   const candidates = demandProductIds
     .filter((id) => allowedIds.includes(id))
     .map((id) => ({ id, product: getProductById(id), weight: weights[id] || 1 }))
-    .filter((item) => item.product && state.cafeLevel >= item.product.unlockLevel && item.weight > 0);
+    .filter((item) => item.product &&
+      state.cafeLevel >= item.product.unlockLevel &&
+      (!item.product.minDemandEquipmentLevel || level >= item.product.minDemandEquipmentLevel) &&
+      (!isReusableProduct(item.product) || !guest || !guest.rentalDemandDone) &&
+      item.weight > 0);
   const pool = candidates.length
     ? candidates
-    : demandProductIds.map((id) => ({ id, product: getProductById(id), weight: 1 })).filter((item) => item.product);
+    : demandProductIds
+      .map((id) => ({ id, product: getProductById(id), weight: 1 }))
+      .filter((item) => item.product &&
+        state.cafeLevel >= item.product.unlockLevel &&
+        (!item.product.minDemandEquipmentLevel || level >= item.product.minDemandEquipmentLevel) &&
+        (!isReusableProduct(item.product) || !guest || !guest.rentalDemandDone));
   const total = pool.reduce((sum, item) => sum + item.weight, 0);
   let roll = Math.random() * total;
   for (let index = 0; index < pool.length; index += 1) {
@@ -3090,14 +3145,16 @@ function getDemandProductPoolForGuest(guest, pc) {
   if (typeId === "budgetHall") return ["noodle", "water", "sausage"];
   if (typeId === "regularHall") {
     return level >= 3
-      ? ["noodle", "water", "sausage", "betel", "cigarette", "snack", "drink"]
+      ? ["noodle", "water", "sausage", "betel", "cigarette", "snack", "drink", "gamingMouse", "gamingKeyboard", "gamingController"]
       : ["noodle", "water", "sausage", "betel", "snack", "drink"];
   }
   if (typeId === "highSpec" || level >= 4) {
-    return ["snack", "drink", "meal", "milkTea", "cigarette", "betel", "sausage"];
+    return ["snack", "drink", "meal", "milkTea", "cigarette", "betel", "sausage", "gamingMouse", "gamingKeyboard", "gamingController"];
   }
   if (typeId === "privateRoom") {
-    return ["sausage", "betel", "cigarette", "snack", "drink", "meal", "milkTea"];
+    return level >= 3
+      ? ["sausage", "betel", "cigarette", "snack", "drink", "meal", "milkTea", "gamingMouse", "gamingKeyboard", "gamingController"]
+      : ["sausage", "betel", "cigarette", "snack", "drink", "meal", "milkTea"];
   }
   return demandProductIds.slice();
 }
@@ -3144,7 +3201,7 @@ function repairPc(pc, free = false) {
   const cost = getRepairCost(pc);
   const freeRepair = free || hasFreeRepairStaff();
   if (!freeRepair && state.cash < cost) {
-    say(`\u7ef4\u4fee ${pc.id + 1} \u53f7\u673a\u9700\u8981 ${cost} \u5143\uff0c\u73b0\u91d1\u4e0d\u8db3\u3002`);
+    say(`\u7ef4\u4fee ${pc.id + 1} \u53f7\u673a\u9700\u8981 ${cost}\uff0c\u73b0\u91d1\u4e0d\u8db3\u3002`);
     return true;
   }
 
@@ -3152,7 +3209,7 @@ function repairPc(pc, free = false) {
   pc.broken = false;
   pc.repairWorkerId = null;
   markSaveDirty();
-  say(freeRepair ? `${pc.id + 1} \u53f7\u673a\u5df2\u514d\u8d39\u7ef4\u4fee\u3002` : `${pc.id + 1} \u53f7\u673a\u5df2\u7ef4\u4fee\uff0c\u82b1\u8d39 ${cost} \u5143\u3002`);
+  say(freeRepair ? `${pc.id + 1} \u53f7\u673a\u5df2\u514d\u8d39\u7ef4\u4fee\u3002` : `${pc.id + 1} \u53f7\u673a\u5df2\u7ef4\u4fee\uff0c\u82b1\u8d39 ${cost}\u3002`);
   return true;
 }
 
@@ -3209,8 +3266,8 @@ function processMonthlyPayroll() {
   state.cash -= remainingPayroll;
   markSaveDirty();
   say(laidOff.length > 0
-    ? `\u73b0\u91d1\u4e0d\u8db3\uff0c${laidOff.join("\u3001")} \u79bb\u804c\uff1b\u5df2\u53d1\u5269\u4f59\u5de5\u8d44 ${remainingPayroll} \u5143\u3002`
-    : `\u5df2\u9884\u53d1\u672c\u6708\u5de5\u8d44 ${remainingPayroll} \u5143\u3002`);
+    ? `\u73b0\u91d1\u4e0d\u8db3\uff0c${laidOff.join("\u3001")} \u79bb\u804c\uff1b\u5df2\u53d1\u5269\u4f59\u5de5\u8d44 ${remainingPayroll}\u3002`
+    : `\u5df2\u9884\u53d1\u672c\u6708\u5de5\u8d44 ${remainingPayroll}\u3002`);
 }
 
 function updatePayroll() {
@@ -3252,7 +3309,7 @@ function openEquipmentPcSelection(tier) {
   const affordable = candidates.some((pc) => state.cash >= getPcUpgradeCost(pc, tier.level));
   if (!affordable) {
     const minCost = Math.min(...candidates.map((pc) => getPcUpgradeCost(pc, tier.level)));
-    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u5347\u7ea7\u5230 ${tier.name} \u81f3\u5c11\u9700\u8981 ${minCost} \u5143\u3002`);
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u5347\u7ea7\u5230 ${tier.name} \u81f3\u5c11\u9700\u8981 ${minCost}\u3002`);
     return;
   }
 
@@ -3273,7 +3330,7 @@ function upgradePcEquipment(pc, tier) {
 
   const cost = getPcUpgradeCost(pc, tier.level);
   if (state.cash < cost) {
-    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u5347\u7ea7 ${pc.id + 1} \u53f7\u673a\u9700\u8981 ${cost} \u5143\u3002`);
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u5347\u7ea7 ${pc.id + 1} \u53f7\u673a\u9700\u8981 ${cost}\u3002`);
     return;
   }
 
@@ -3295,7 +3352,7 @@ function startPcPurchase(tier) {
     return;
   }
   if (state.cash < cost) {
-    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u65b0\u8d2d ${getEquipmentTier(level).name} \u9700\u8981 ${cost} \u5143\u3002`);
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u65b0\u8d2d ${getEquipmentTier(level).name} \u9700\u8981 ${cost}\u3002`);
     return;
   }
   state.pendingPcPurchase = { equipmentLevel: level, cost };
@@ -3306,7 +3363,7 @@ function startPcPurchase(tier) {
 
 function startMahjongPurchase() {
   if (state.cash < MAHJONG_TABLE_COST) {
-    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u8d2d\u4e70\u9ebb\u5c06\u684c\u9700\u8981 ${MAHJONG_TABLE_COST} \u5143\u3002`);
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u8d2d\u4e70\u9ebb\u5c06\u684c\u9700\u8981 ${MAHJONG_TABLE_COST}\u3002`);
     return;
   }
   if (!state.rentedAreas.some((area) => area.typeId === "chessRoom")) {
@@ -3558,7 +3615,7 @@ function placePendingPcPurchase(worldX, worldY) {
     return true;
   }
   if (state.cash < pending.cost) {
-    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u65b0\u8d2d\u7535\u8111\u9700\u8981 ${pending.cost} \u5143\u3002`);
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u65b0\u8d2d\u7535\u8111\u9700\u8981 ${pending.cost}\u3002`);
     state.pendingPcPurchase = null;
     return true;
   }
@@ -3636,7 +3693,7 @@ function placePendingMahjongPurchase(worldX, worldY) {
   if (!state.pendingMahjongPurchase) return false;
 
   if (state.cash < MAHJONG_TABLE_COST) {
-    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u8d2d\u4e70\u9ebb\u5c06\u684c\u9700\u8981 ${MAHJONG_TABLE_COST} \u5143\u3002`);
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u8d2d\u4e70\u9ebb\u5c06\u684c\u9700\u8981 ${MAHJONG_TABLE_COST}\u3002`);
     state.pendingMahjongPurchase = false;
     return true;
   }
@@ -3939,7 +3996,7 @@ function hireStaff(staff) {
 
   const totalCost = getStaffHireTotal(staff);
   if (state.cash < totalCost) {
-    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u62db\u8058 ${staff.name} \u9700\u8981 ${totalCost} \u5143\uff08\u542b\u9996\u6708\u5de5\u8d44\uff09\u3002`);
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u62db\u8058 ${staff.name} \u9700\u8981 ${totalCost} \uff08\u542b\u9996\u6708\u5de5\u8d44\uff09\u3002`);
     return;
   }
 
@@ -4002,6 +4059,9 @@ function isPointInRect(x, y, button) {
 
 function closePanels() {
   const keepFloorLayoutSession = Boolean(state.floorLayoutSession);
+  if (state.procurementOpen) {
+    resetPurchaseQuantities();
+  }
   state.procurementOpen = false;
   state.warehouseOpen = false;
   state.hiringOpen = false;
@@ -4075,6 +4135,14 @@ function isAnyPanelOpen() {
 
 function openConfirmDialog(title, body, onConfirm, onCancel = null) {
   state.confirmDialog = { title, body, onConfirm, onCancel };
+}
+
+function confirmScenePurchase(name, cost, onConfirm) {
+  openConfirmDialog(
+    "\u786e\u8ba4\u8d2d\u4e70",
+    `\u662f\u5426\u8d2d\u4e70 ${name}\uff1f\u4ef7\u683c ${cost}\u3002\u786e\u8ba4\u8d2d\u4e70\u5417\uff1f`,
+    onConfirm
+  );
 }
 
 function getPcPurchaseValue(level) {
@@ -4189,7 +4257,7 @@ function handlePcActionMenuButton(button) {
       const value = getPcSellValue(pc);
       openConfirmDialog(
         "\u51fa\u552e\u8bbe\u5907",
-        `\u786e\u5b9a\u4ee5 ${value} \u5143\u51fa\u552e ${pc.id + 1} \u53f7\u673a\u5417\uff1f`,
+        `\u786e\u5b9a\u4ee5 ${value} \u51fa\u552e ${pc.id + 1} \u53f7\u673a\u5417\uff1f`,
         () => sellPc(pc)
       );
     }
@@ -4224,7 +4292,7 @@ function handlePartitionActionMenuButton(button) {
     const value = Math.floor(getPartitionCost(type) / 2);
     openConfirmDialog(
       "\u51fa\u552e\u9694\u65ad",
-      `\u786e\u5b9a\u4ee5 ${value} \u5143\u51fa\u552e ${type.name} \u5417\uff1f`,
+      `\u786e\u5b9a\u4ee5 ${value} \u51fa\u552e ${type.name} \u5417\uff1f`,
       () => sellPartition(partition)
     );
     state.partitionActionMenu = null;
@@ -4276,12 +4344,12 @@ function confirmPcUpgrade(pc, tier) {
   const cost = getPcUpgradeCost(pc, tier.level);
   state.pcUpgradeMenu = null;
   if (state.cash < cost) {
-    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u5347\u7ea7\u9700\u8981 ${cost} \u5143\u3002`);
+    say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u5347\u7ea7\u9700\u8981 ${cost}\u3002`);
     return;
   }
   openConfirmDialog(
     "\u5347\u7ea7\u8bbe\u5907",
-    `\u786e\u5b9a\u82b1\u8d39 ${cost} \u5143\u5c06 ${pc.id + 1} \u53f7\u673a\u5347\u7ea7\u5230 ${tier.name} \u5417\uff1f\u5df2\u6309\u65e7\u8bbe\u5907\u534a\u4ef7\u62b5\u6263\u3002`,
+    `\u786e\u5b9a\u82b1\u8d39 ${cost} \u5c06 ${pc.id + 1} \u53f7\u673a\u5347\u7ea7\u5230 ${tier.name} \u5417\uff1f\u5df2\u6309\u65e7\u8bbe\u5907\u534a\u4ef7\u62b5\u6263\u3002`,
     () => upgradePcEquipment(pc, tier)
   );
 }
@@ -4340,36 +4408,77 @@ function sellPc(pc) {
   updateEquipmentLevel();
   updateCafeLevel();
   markSaveDirty();
-  say(`\u5df2\u51fa\u552e ${removedId + 1} \u53f7\u673a\uff0c\u56de\u6536 ${value} \u5143\u3002`);
+  say(`\u5df2\u51fa\u552e ${removedId + 1} \u53f7\u673a\uff0c\u56de\u6536 ${value}\u3002`);
 }
 
 function handleBuildOffer(offer) {
   if (!offer) return;
-  state.expansionOpen = false;
   state.selectedAreaId = null;
   state.selectedPcId = null;
   state.pendingPartitionTypeId = null;
   if (offer.kind === "floorSkin") {
+    const skin = getFloorSkinById(offer.skinId);
+    if (!skin) return;
+    if (!isFloorSkinPurchased(skin.id) && skin.cost > 0) {
+      if (state.cash < skin.cost) {
+        say(`\u73b0\u91d1\u4e0d\u8db3\uff0c${skin.name}\u9700\u8981 ${skin.cost}\u3002`);
+        return;
+      }
+      confirmScenePurchase(skin.name, skin.cost, () => {
+        state.expansionOpen = false;
+        useOrBuyFloorSkin(offer.skinId);
+      });
+      return;
+    }
+    state.expansionOpen = false;
     useOrBuyFloorSkin(offer.skinId);
     return;
   }
   if (offer.kind === "decorSkin") {
+    const skin = getDecorSkinById(offer.decorKind, offer.skinId);
+    if (!skin) return;
+    if (!isDecorSkinPurchased(offer.decorKind, skin.id) && skin.cost > 0) {
+      if (state.cash < skin.cost) {
+        say(`\u73b0\u91d1\u4e0d\u8db3\uff0c${skin.name}\u9700\u8981 ${skin.cost}\u3002`);
+        return;
+      }
+      confirmScenePurchase(skin.name, skin.cost, () => {
+        state.expansionOpen = false;
+        useOrBuyDecorSkin(offer.decorKind, offer.skinId);
+      });
+      return;
+    }
+    state.expansionOpen = false;
     useOrBuyDecorSkin(offer.decorKind, offer.skinId);
     return;
   }
   if (offer.kind === "floor") {
-    enterFloorLayoutMode();
-    say(`\u5df2\u8fdb\u5165\u94fa\u5730\u7816\u6a21\u5f0f\uff0c\u6bcf\u5757 ${PUBLIC_FLOOR_COST} \u5143\uff0c\u70b9\u51fb\u5730\u56fe\u94fa\u8bbe\u3002`);
+    if (state.cash < PUBLIC_FLOOR_COST) {
+      say(`\u73b0\u91d1\u4e0d\u8db3\uff0c\u94fa\u8bbe\u5730\u7816\u9700\u8981 ${PUBLIC_FLOOR_COST}\u3002`);
+      return;
+    }
+    confirmScenePurchase(offer.name, PUBLIC_FLOOR_COST, () => {
+      state.expansionOpen = false;
+      enterFloorLayoutMode();
+      say(`\u5df2\u8fdb\u5165\u94fa\u5730\u7816\u6a21\u5f0f\uff0c\u6bcf\u5757 ${PUBLIC_FLOOR_COST}\uff0c\u70b9\u51fb\u5730\u56fe\u94fa\u8bbe\u3002`);
+    });
     return;
   }
   if (offer.kind === "partition") {
     const type = getPartitionType(offer.typeId);
     if (!type) return;
-    state.pendingPartitionTypeId = type.id;
-    state.pendingPartitionOrientation = "horizontal";
-    state.layoutToolActive = true;
-    state.layoutMode = "partition";
-    say(`\u5df2\u9009\u62e9 ${type.name}\uff0c\u5bf9\u51c6\u540e\u70b9\u51fb\u6446\u653e\u3002`);
+    if (state.cash < type.cost) {
+      say(`\u73b0\u91d1\u4e0d\u8db3\uff0c${type.name}\u9700\u8981 ${type.cost}\u3002`);
+      return;
+    }
+    confirmScenePurchase(type.name, type.cost, () => {
+      state.expansionOpen = false;
+      state.pendingPartitionTypeId = type.id;
+      state.pendingPartitionOrientation = "horizontal";
+      state.layoutToolActive = true;
+      state.layoutMode = "partition";
+      say(`\u5df2\u9009\u62e9 ${type.name}\uff0c\u5bf9\u51c6\u540e\u70b9\u51fb\u6446\u653e\u3002`);
+    });
   }
 }
 
@@ -4520,25 +4629,25 @@ function handleTouch(x, y) {
     return;
   }
 
-  // Entrance door click — only in normal mode, not during layout/floor placement
+  // Entrance door click - only in normal mode, not during layout/floor placement
   if (!state.layoutToolActive && !state.layoutOpen) {
     const wp = screenToWorld(x, y);
     const doorRect = { x: layout.entranceCorridor.x, y: layout.entranceCorridor.y, w: layout.entranceCorridor.w, h: layout.entranceCorridor.h };
     if (isPointInRect(wp.x, wp.y, doorRect)) {
-    state.confirmDialog = {
-      title: "营业管理",
-      body: state.businessOpen
-        ? "是否停止营业？"
-        : "是否开始营业？",
-      onConfirm: () => {
-        state.businessOpen = !state.businessOpen;
-        if (state.businessOpen) { state.nextGuestAt = state.time + 1.5; }
-        markSaveDirty();
-        say(state.businessOpen ? "网吧已开门营业。" : "网吧已暂停营业。");
-      },
-      onCancel: () => {}
-    };
-    return;
+      state.confirmDialog = {
+        title: "\u8425\u4e1a\u7ba1\u7406",
+        body: state.businessOpen
+          ? "\u662f\u5426\u505c\u6b62\u8425\u4e1a\uff1f"
+          : "\u662f\u5426\u5f00\u59cb\u8425\u4e1a\uff1f",
+        onConfirm: () => {
+          state.businessOpen = !state.businessOpen;
+          if (state.businessOpen) { state.nextGuestAt = state.time + 1.5; }
+          markSaveDirty();
+          say(state.businessOpen ? "\u7f51\u5427\u5df2\u5f00\u95e8\u8425\u4e1a\u3002" : "\u7f51\u5427\u5df2\u6682\u505c\u8425\u4e1a\u3002");
+        },
+        onCancel: () => {}
+      };
+      return;
     }
   }
 
@@ -4656,6 +4765,7 @@ function handleTouch(x, y) {
 
   if (state.procurementOpen) {
     if (isPointInRect(x, y, ui.closeProcurementButton)) {
+      resetPurchaseQuantities();
       state.procurementOpen = false;
       return;
     }
@@ -4675,9 +4785,12 @@ function handleTouch(x, y) {
         buyProduct(product, quantity);
         return;
       }
+      const message = isReusableProduct(product)
+        ? `\u786e\u5b9a\u82b1\u8d39 ${cost} \u8d2d\u4e70 ${product.name}\u5417\uff1f\u8d2d\u4e70\u540e\u53ef\u4ee5\u4e0d\u9650\u6b21\u51fa\u79df\u3002`
+        : `\u786e\u5b9a\u82b1\u8d39 ${cost} \u8d2d\u4e70 ${product.name} x${quantity} \u5417\uff1f`;
       openConfirmDialog(
         "\u786e\u8ba4\u91c7\u8d2d",
-        `\u786e\u5b9a\u82b1\u8d39 ${cost} \u5143\u8d2d\u4e70 ${product.name} x${quantity} \u5417\uff1f`,
+        message,
         () => buyProduct(product, quantity)
       );
     }
@@ -4724,7 +4837,7 @@ function handleTouch(x, y) {
       }
       openConfirmDialog(
         "\u786e\u8ba4\u62db\u8058",
-        `\u786e\u5b9a\u82b1\u8d39 ${getStaffHireTotal(staff)} \u5143\u62db\u8058\u4e00\u4e2a ${staff.name} \u5417\uff1f\u8d39\u7528\u5df2\u5305\u542b\u9996\u6708\u5de5\u8d44\u3002`,
+        `\u786e\u5b9a\u82b1\u8d39 ${getStaffHireTotal(staff)} \u62db\u8058\u4e00\u4e2a ${staff.name} \u5417\uff1f\u8d39\u7528\u5df2\u5305\u542b\u9996\u6708\u5de5\u8d44\u3002`,
         () => hireStaff(staff)
       );
     }
@@ -4848,7 +4961,7 @@ function handleTouch(x, y) {
   }
 
   // Place at the tapped world position so the user can tap exactly where they want
-  // the PC — avoids confusion caused by staff walking through the viewport center area.
+  // Encoding-safe comment.
   if (state.pendingPcPurchase) {
     placePendingPcPurchaseAtPreview();
     return;
@@ -5242,7 +5355,7 @@ function computeNavigationPath(entity, target) {
       costs[nextKey] = nextCost;
       cameFrom[nextKey] = current.key;
       const newNode = { key: nextKey, col, row, g: nextCost, f: nextCost + Math.hypot(col - goalCol, row - goalRow) };
-      // Binary-insert to keep open sorted by f — avoids O(n log n) full sort each iteration.
+      // Encoding-safe comment.
       let lo = 0; let hi = open.length;
       while (lo < hi) { const mid = (lo + hi) >>> 1; if (open[mid].f <= newNode.f) lo = mid + 1; else hi = mid; }
       open.splice(lo, 0, newNode);
@@ -5801,7 +5914,7 @@ function moveToward(entity, target, speed, dt) {
     movedY = directY;
     moved = true;
   } else {
-    // Slide along X or Y axis — pick the one that gets closer to the target.
+    // Encoding-safe comment.
     // Never use perpendicular-rotation candidates: they cause visible oscillation.
     const canSlideX = Math.abs(nx) > 0.01 && canMoveToPoint(entity, entity.x + nx * step, entity.y);
     const canSlideY = Math.abs(ny) > 0.01 && canMoveToPoint(entity, entity.x, entity.y + ny * step);
@@ -6474,7 +6587,7 @@ function assignGuestToPc(guest, pc, manual = false) {
   guest.detourPoint = null;
   guest.stuckTimer = 0;
   const checkInText = manual ? "\u5df2\u624b\u52a8\u5f00\u5361" : "\u5df2\u5f00\u5361";
-  const rechargeText = recharge > 0 ? `\uff0c\u5145\u503c ${recharge} \u5143` : "";
+  const rechargeText = recharge > 0 ? `\uff0c\u5145\u503c ${recharge} ` : "";
   say(`${checkInText}${rechargeText}\uff0c\u5206\u914d\u5230 ${pc.id + 1} \u53f7\u673a\u3002`);
   return true;
 }
@@ -6613,7 +6726,7 @@ function updateFrontDesk(dt) {
     const waitingGuest = getFirstWaitingCheckInGuest();
     if (waitingGuest && findFreePc(waitingGuest) && !waitingGuest.manualCheckInPrompted) {
       waitingGuest.manualCheckInPrompted = true;
-      say("没有收银员或店长，点击前台顾客手动开卡。");
+      say("\u6ca1\u6709\u6536\u94f6\u5458\u6216\u5e97\u957f\uff0c\u70b9\u51fb\u524d\u53f0\u987e\u5ba2\u624b\u52a8\u5f00\u5361\u3002");
     }
     return;
   }
@@ -6668,7 +6781,7 @@ function finishPlaying(guest, pc) {
   state.cleanliness = Math.max(0, state.cleanliness - 3);
   markSaveDirty();
   if (!maybeBreakPc(pc)) {
-    say(`${pc.id + 1}\u53f7\u673a\u5668\u7684\u987e\u5ba2\u4e0b\u673a\u7ed3\u8d26\uff0c\u6536\u5165 ${income} \u5143\u3002\u673a\u4f4d\u9700\u8981\u6e05\u7406\u3002`);
+    say(`${pc.id + 1}\u53f7\u673a\u5668\u7684\u987e\u5ba2\u4e0b\u673a\u7ed3\u8d26\uff0c\u6536\u5165 ${income}\u3002\u673a\u4f4d\u9700\u8981\u6e05\u7406\u3002`);
   }
 }
 
@@ -6775,7 +6888,7 @@ function getPcChairRightServicePoint(pc) {
 
 function isWorkerCloseEnoughToDeliver(worker, guest, target) {
   if (!worker || !guest || !target) return false;
-  // Removed "distance(worker, guest) <= 24" — that check triggered delivery when the
+  // Encoding-safe comment.
   // worker passed beside the PC without reaching the access point, causing mid-air handoffs.
   return distance(worker, target) <= 6;
 }
@@ -7016,7 +7129,7 @@ function updateWorkers(dt) {
         moveToward(worker, toiletServicePoint, 58, dt)
       ));
       // True fallback: only after 7 seconds of pathTimer AND still very close to the toilet
-      // (toilet actual bounds, no inflation) — prevents completing from outside the door.
+      // Encoding-safe comment.
       const toiletActualBounds = layout.toilet;
       const blockedNearToilet = distanceToRect(worker, toiletActualBounds) <= 36 && worker.pathTimer > 7.0;
       if (toiletArrived || hasReachedToiletService(worker) || blockedNearToilet) {
@@ -7200,11 +7313,13 @@ function serveGuestDemandByWorker(guest) {
     return false;
   }
 
-  state.inventory[product.id] -= 1;
+  if (!isReusableProduct(product)) {
+    state.inventory[product.id] -= 1;
+  }
   state.cash += product.sellPrice;
   recordDailyRevenue("product", product.sellPrice, product.id);
   markSaveDirty();
-  say(`\u5458\u5de5\u5df2\u7ed9${getGuestMachineLabel(guest)}\u9001\u51fa${product.name}\uff0c\u989d\u5916\u6536\u5165 ${product.sellPrice} \u5143\u3002`);
+  say(`\u5458\u5de5\u5df2\u7ed9${getGuestMachineLabel(guest)}\u9001\u51fa${product.name}\uff0c\u989d\u5916\u6536\u5165 ${product.sellPrice}\u3002`);
   guest.demand = null;
   return true;
 }
@@ -7446,6 +7561,7 @@ function updateManagerRestock(dt) {
   state.managerRestockTimer = 5;
 
   const product = products.find((item) => (
+    !isReusableProduct(item) &&
     state.cafeLevel >= item.unlockLevel &&
     (state.inventory[item.id] || 0) <= 1 &&
     state.cash >= item.cost
@@ -7639,7 +7755,7 @@ function update(dt) {
   state.time += dt;
   ensureMonthlyLedger();
   state.messageTimer = Math.max(0, state.messageTimer - dt);
-  // updateEquipmentLevel / updateCafeLevel removed from the hot loop —
+  // Encoding-safe comment.
   // they are now called only when purchases, upgrades, or hiring actually happen.
   updateSpawn();
   updateQueueTargets();
@@ -7893,6 +8009,23 @@ function text(value, x, y, size, color, weight = "normal", align = "left") {
   ctx.textAlign = align;
   ctx.textBaseline = "top";
   ctx.fillText(value, x, y);
+}
+
+function inlineText(parts, x, y, size, weight = "normal", align = "left") {
+  ctx.font = `${weight} ${size}px "SimHei", "Microsoft YaHei", monospace`;
+  const widths = parts.map((part) => ctx.measureText(String(part.value)).width);
+  const totalW = widths.reduce((sum, width) => sum + width, 0);
+  let cursorX = x;
+  if (align === "center") cursorX -= totalW / 2;
+  if (align === "right") cursorX -= totalW;
+
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  parts.forEach((part, index) => {
+    ctx.fillStyle = part.color;
+    ctx.fillText(String(part.value), cursorX, y);
+    cursorX += widths[index];
+  });
 }
 
 function beginWorldDraw() {
@@ -8225,21 +8358,21 @@ function drawEntranceCorridor() {
   rect(corridor.x + 12, corridor.y + corridor.h - 32, corridor.w - 28, 12, "#2f2621");
   rect(corridor.x + 18, corridor.y + corridor.h - 28, corridor.w - 40, 4, "#48382d");
 
-  // Door at entrance — open/close based on businessOpen
+  // Encoding-safe comment.
   const entrance = layout.entrance;
   const doorW = 22;
   const doorH = 52;
   const doorX = entrance.x - 6;
   const doorY = entrance.y - doorH / 2;
   if (state.businessOpen) {
-    // Open door — door leaf swung to the left
+    // Encoding-safe comment.
     rect(doorX - doorW + 6, doorY, 6, doorH, "#7a5c3e");
     rect(doorX - doorW + 10, doorY + 4, 10, doorH - 8, "#9a7b4a");
     rect(doorX - doorW + 14, doorY + 12, 2, doorH - 24, "#d4a85c");
     // Open gap
     rect(doorX, doorY, doorW, doorH, "#0f1518");
   } else {
-    // Closed door — solid door blocking entrance
+    // Encoding-safe comment.
     rect(doorX, doorY, doorW, doorH, "#5a3d28");
     rect(doorX + 4, doorY + 4, doorW - 8, doorH - 8, "#7a5c3e");
     rect(doorX + 8, doorY + 8, doorW - 16, doorH - 16, "#9a7b4a");
@@ -8635,7 +8768,7 @@ function drawIndoorDetails() {
   const room = layout.room;
   rect(room.x + 22, room.y + 14, 42, 18, "#4b3027");
   strokeRect(room.x + 22, room.y + 14, 42, 18, "#d7a85b", 2);
-  text("小黑网吧", room.x + 43, room.y + 17, 12, COLORS.text, "bold", "center");
+  text("\u5c0f\u9ed1\u7f51\u5427", room.x + 43, room.y + 17, 12, COLORS.text, "bold", "center");
 
   rect(room.x + room.w - 52, room.y + room.h - 54, 22, 30, "#7b5a35");
   rect(room.x + room.w - 48, room.y + room.h - 64, 14, 14, COLORS.plant);
@@ -8915,7 +9048,7 @@ function drawPcInfoBubble() {
   }
 
   const tier = getEquipmentTier(pc.equipmentLevel);
-  const label = `${pc.id + 1}\u53f7 ${getPcAreaLabel(pc)}  ${tier.name}  ${getPcHourlyRate(pc)}\u5143/\u5c0f\u65f6`;
+  const label = `${pc.id + 1}\u53f7 ${getPcAreaLabel(pc)}  ${tier.name}  ${getPcHourlyRate(pc)}/\u5c0f\u65f6`;
   const bubbleW = Math.min(view.width - 24, Math.max(180, label.length * 10 + 18));
   const x = clamp(pc.x + pc.w / 2 - state.camera.x - bubbleW / 2, 12, view.width - bubbleW - 12);
   const y = clamp(pc.y - state.camera.y - 54, HUD_HEIGHT + 8, view.height - ACTION_BAR_HEIGHT - 42);
@@ -8956,7 +9089,7 @@ function drawPcUpgradeMenu() {
       tier
     };
     ui.pcUpgradeButtons.push(button);
-    drawWidePanelButton(button, `${tier.name}  ${cost}\u5143`, state.cash >= cost ? "#8b552b" : "#9a6b55");
+    drawWidePanelButton(button, `${tier.name}  ${cost}`, state.cash >= cost ? "#8b552b" : "#9a6b55");
   });
 }
 
@@ -8985,7 +9118,7 @@ function drawLayoutToolControls() {
     rect(boxX, boxY, boxW, 34, "rgba(255, 242, 208, 0.94)");
     strokeRect(boxX, boxY, boxW, 34, COLORS.wallDark, 2);
     text(`\u5f53\u524d ${summary.placedCount} \u5757 / \u5df2\u8d2d ${summary.ownedCount} \u5757`, boxX + boxW / 2, boxY + 5, 11, COLORS.line, "bold", "center");
-    text(`\u672c\u6b21\u65b0\u589e ${summary.extraCount} \u5757  \u5f85\u652f\u4ed8 ${summary.cost} \u5143`, boxX + boxW / 2, boxY + 19, 11, summary.cost > state.cash ? COLORS.red : COLORS.text, "bold", "center");
+    text(`\u672c\u6b21\u65b0\u589e ${summary.extraCount} \u5757  \u5f85\u652f\u4ed8 ${summary.cost} `, boxX + boxW / 2, boxY + 19, 11, summary.cost > state.cash ? COLORS.red : COLORS.text, "bold", "center");
   }
 
   if (state.layoutMode === "partition" && getPartitionType(state.pendingPartitionTypeId) && getPartitionType(state.pendingPartitionTypeId).blockMove !== false) {
@@ -9226,7 +9359,7 @@ function drawGuestCheckInBubble(guest) {
   const y = Math.round(guest.y) - 43;
   const recharge = Number.isFinite(guest.rechargeAmount) ? guest.rechargeAmount : 0;
   const label = guest.state === "checkingIn" && recharge > 0
-    ? `\u5145\u503c${recharge}\u5143`
+    ? `\u5145\u503c${recharge}`
     : "\u5f00\u5361";
   const bubbleW = Math.max(46, label.length * 13 + 14);
   rect(x - bubbleW / 2 - 1, y - 1, bubbleW + 2, 24, COLORS.line);
@@ -9560,20 +9693,50 @@ function drawProcurementPanel() {
     const stock = state.inventory[product.id] || 0;
     const quantity = getPurchaseQuantity(product);
     const unitCost = Math.ceil(getProductUnitCost(product) * 10) / 10;
+    const reusable = isReusableProduct(product);
+    const purchased = reusable && isProductPurchased(product);
     const cardColor = unlocked ? "#f7dba5" : "#c5a575";
     rect(x, y, cardW, cardH, cardColor);
     strokeRect(x, y, cardW, cardH, unlocked ? "#9a7043" : "#80664f", 2);
     drawProductIcon(product, x + 10, y + 10, !unlocked);
 
-    text(fitTextToWidth(product.name, cardW - 100, 14, "bold"), x + 50, y + 8, 14, unlocked ? COLORS.line : "#745a46", "bold");
-    text(`\u5e93\u5b58 ${stock}`, x + 50, y + 26, 11, "#5d4532", "bold");
-    text(`\u552e\u4ef7 ${product.sellPrice}`, x + 50, y + 42, 10, "#5d4532");
-    text(`\u6210\u672c ${unitCost}\u5143/\u4e2a`, x + 8, y + 54, 10, "#5d4532");
-    text(`\u8d77\u6279 ${product.quantity}  \u672c\u6b21 ${quantity}`, x + 8, y + 67, 10, "#5d4532", "bold");
+    const nameSize = reusable ? 12 : 14;
+    const nameLabel = reusable ? product.name : fitTextToWidth(product.name, cardW - 128, 14, "bold");
+    text(nameLabel, x + 50, y + 8, nameSize, unlocked ? COLORS.line : "#745a46", "bold");
+    if (reusable) {
+      const statusLabel = purchased ? "\u5df2\u8d2d" : "\u9650\u8d2d1";
+      text(statusLabel, x + cardW - 12, y + 8, 11, COLORS.green, "bold", "right");
+    } else {
+      inlineText([
+        { value: "\u672c\u6b21\u6570\u91cf ", color: "#5d4532" },
+        { value: quantity, color: COLORS.yellow }
+      ], x + cardW - 12, y + 8, 11, "bold", "right");
+    }
+    text(reusable ? "\u79df\u8d41\u7c7b" : `\u8d77\u6279 ${product.quantity}`, x + cardW - 12, y + 24, 10, "#5d4532", "bold", "right");
+    if (reusable) {
+      inlineText([
+        { value: "\u79df\u91d1 ", color: "#5d4532" },
+        { value: `${product.sellPrice}/\u6b21`, color: COLORS.green }
+      ], x + 50, y + 28, 11, "bold");
+      inlineText([
+        { value: "\u8d2d\u4ef7 ", color: "#5d4532" },
+        { value: product.cost, color: "#b87517" }
+      ], x + 50, y + 44, 10, "bold");
+    } else {
+      inlineText([
+        { value: "\u552e\u4ef7 ", color: "#5d4532" },
+        { value: product.sellPrice, color: COLORS.green }
+      ], x + 50, y + 43, 10, "bold");
+      text(`\u5e93\u5b58 ${stock}`, x + 50, y + 28, 11, "#5d4532", "bold");
+    }
+    if (reusable) {
+      text("\u9ad8\u7aef\u5ba2\u6237\u9700\u6c42", x + 8, y + 62, 10, "#5d4532", "bold");
+    }
 
     const plus10Button = { x: x + 8, y: y + cardH - 24, w: 34, h: 18, product, delta: 10 };
-    const plus20Button = { x: x + 46, y: y + cardH - 24, w: 34, h: 18, product, delta: 20 };
+    const minus10Button = { x: x + 46, y: y + cardH - 24, w: 34, h: 18, product, delta: -10 };
     const button = { x: x + cardW - 52, y: y + cardH - 25, w: 42, h: 20, product };
+    const costLabelX = button.x + button.w / 2;
 
     if (!unlocked) {
       ui.buyButtons.push(button);
@@ -9581,16 +9744,24 @@ function drawProcurementPanel() {
       text(`Lv.${product.unlockLevel}`, button.x + button.w / 2, button.y + 5, 11, "#f8e0b0", "bold", "center");
       rect(x, y, cardW, cardH, "rgba(75, 59, 45, 0.18)");
     } else {
-      ui.purchaseBatchButtons.push(plus10Button, plus20Button);
+      if (!reusable) {
+        ui.purchaseBatchButtons.push(plus10Button, minus10Button);
+      }
       ui.buyButtons.push(button);
-      rect(plus10Button.x, plus10Button.y, plus10Button.w, plus10Button.h, "#7f5635");
-      strokeRect(plus10Button.x, plus10Button.y, plus10Button.w, plus10Button.h, COLORS.line, 1);
-      text("+10", plus10Button.x + plus10Button.w / 2, plus10Button.y + 3, 10, COLORS.text, "bold", "center");
-      rect(plus20Button.x, plus20Button.y, plus20Button.w, plus20Button.h, "#7f5635");
-      strokeRect(plus20Button.x, plus20Button.y, plus20Button.w, plus20Button.h, COLORS.line, 1);
-      text("+20", plus20Button.x + plus20Button.w / 2, plus20Button.y + 3, 10, COLORS.text, "bold", "center");
+      if (!reusable) {
+        inlineText([
+          { value: "\u6210\u672c\u4ef7 ", color: "#5d4532" },
+          { value: `${unitCost}/\u4e2a`, color: "#b87517" }
+        ], costLabelX, y + cardH - 40, 9, "bold", "center");
+        rect(plus10Button.x, plus10Button.y, plus10Button.w, plus10Button.h, "#4e8f4f");
+        strokeRect(plus10Button.x, plus10Button.y, plus10Button.w, plus10Button.h, COLORS.line, 1);
+        text("+10", plus10Button.x + plus10Button.w / 2, plus10Button.y + 3, 10, COLORS.text, "bold", "center");
+        rect(minus10Button.x, minus10Button.y, minus10Button.w, minus10Button.h, "#9a553a");
+        strokeRect(minus10Button.x, minus10Button.y, minus10Button.w, minus10Button.h, COLORS.line, 1);
+        text("-10", minus10Button.x + minus10Button.w / 2, minus10Button.y + 3, 10, COLORS.text, "bold", "center");
+      }
       rect(button.x, button.y, button.w, button.h, canBuyProduct(product, quantity) ? "#4e8f4f" : "#9a6b55");
-      text("\u4e70", button.x + button.w / 2, button.y + 3, 13, COLORS.text, "bold", "center");
+      text(purchased ? "\u6709" : "\u4e70", button.x + button.w / 2, button.y + 3, 13, COLORS.text, "bold", "center");
     }
   });
 
@@ -9612,7 +9783,10 @@ function drawProductIcon(product, x, y, locked) {
     snack: "#e5b94d",
     drink: "#d85c73",
     meal: "#c7834b",
-    milkTea: "#c98a62"
+    milkTea: "#c98a62",
+    gamingMouse: "#5fbf9a",
+    gamingKeyboard: "#5a86d6",
+    gamingController: "#8a70d6"
   }[product.id] || COLORS.yellow;
 
   rect(x, y, 32, 32, "#7b563b");
@@ -9656,6 +9830,22 @@ function drawProductIcon(product, x, y, locked) {
     rect(x + 13, y + 12, 6, 3, "#fff0c5");
     rect(x + 13, y + 20, 3, 3, "#5d4532");
     rect(x + 17, y + 21, 3, 3, "#5d4532");
+  } else if (product.id === "gamingMouse") {
+    rect(x + 10, y + 6, 12, 18, main);
+    rect(x + 15, y + 7, 2, 8, "#dff7ff");
+    rect(x + 12, y + 24, 8, 3, "#dff7ff");
+  } else if (product.id === "gamingKeyboard") {
+    rect(x + 5, y + 11, 22, 12, main);
+    rect(x + 8, y + 14, 3, 2, "#dff7ff");
+    rect(x + 13, y + 14, 3, 2, "#dff7ff");
+    rect(x + 18, y + 14, 3, 2, "#dff7ff");
+    rect(x + 9, y + 19, 14, 2, "#dff7ff");
+  } else if (product.id === "gamingController") {
+    rect(x + 7, y + 12, 18, 10, main);
+    rect(x + 5, y + 15, 5, 5, main);
+    rect(x + 22, y + 15, 5, 5, main);
+    rect(x + 11, y + 15, 5, 2, "#dff7ff");
+    rect(x + 20, y + 14, 3, 3, "#f7d35f");
   }
 
   if (locked) {
@@ -9819,14 +10009,14 @@ function drawLedgerPanel() {
     const y = rowY + index * rowH;
     rect(panel.x + 16, y - 4, panel.w - 32, Math.max(14, rowH - 5), index % 2 === 0 ? "#f6e4b8" : "#ead19a");
     text(row.label, panel.x + 26, y, 12, COLORS.line, "bold");
-    text(`${row.value}\u5143`, panel.x + panel.w - 28, y, 12, row.value > 0 ? COLORS.red : "#7b5634", "bold", "right");
+    text(`${row.value}`, panel.x + panel.w - 28, y, 12, row.value > 0 ? COLORS.red : "#7b5634", "bold", "right");
   });
 
   const totalY = panel.y + panel.h - 78;
   rect(panel.x + 16, totalY, panel.w - 32, 34, COLORS.counter);
   strokeRect(panel.x + 16, totalY, panel.w - 32, 34, COLORS.line, 3);
   text("\u672c\u6708\u5408\u8ba1", panel.x + 30, totalY + 8, 14, COLORS.text, "bold");
-  text(`${state.monthlyLedger.total}\u5143`, panel.x + panel.w - 30, totalY + 8, 14, COLORS.yellow, "bold", "right");
+  text(`${state.monthlyLedger.total}`, panel.x + panel.w - 30, totalY + 8, 14, COLORS.yellow, "bold", "right");
   text("\u8fc7\u4e86 24 \u70b9\u4f1a\u81ea\u52a8\u6e05\u96f6\uff0c\u4e0d\u7559\u5386\u53f2\u8bb0\u5f55\u3002", panel.x + panel.w / 2, totalY + 42, 10, "#7b5634", "bold", "center");
 
   ui.closeLedgerButton = { x: panel.x + panel.w - 66, y: panel.y + panel.h - 36, w: 48, h: 26 };
@@ -9853,7 +10043,7 @@ function drawExpansionPanel() {
   text(`\u5730\u7816 ${state.publicFloors.length}`, panel.x + panel.w - 88, panel.y + 14, 12, COLORS.text, "bold");
 
   rect(panel.x + 10, panel.y + 48, panel.w - 20, 38, "#e3b86f");
-  text(`\u5730\u7816\u6bcf\u5757 ${PUBLIC_FLOOR_COST}\u5143\uff0c\u7528\u5730\u7816\u6269\u5927\u516c\u5171\u8d70\u9053`, panel.x + 18, panel.y + 56, 11, "#5d4532", "bold");
+  text(`\u5730\u7816\u6bcf\u5757 ${PUBLIC_FLOOR_COST}\uff0c\u7528\u5730\u7816\u6269\u5927\u516c\u5171\u8d70\u9053`, panel.x + 18, panel.y + 56, 11, "#5d4532", "bold");
   text("\u4e0a\u673a\u6536\u8d39\u7531\u7535\u8111\u914d\u7f6e\u51b3\u5b9a\uff0c\u4e0d\u518d\u6309\u5305\u95f4\u533a\u5206", panel.x + 18, panel.y + 72, 10, "#5d4532");
 
   const offers = getBuildOffers();
@@ -9889,7 +10079,9 @@ function drawExpansionPanel() {
 
     const button = { x: panel.x + panel.w - 52, y: y + 13, w: 34, h: 26, offer };
     ui.rentAreaButtons.push(button);
-    rect(button.x, button.y, button.w, button.h, affordable ? "#4e8f4f" : "#9a6b55");
+    const buttonColor = currentSkin ? COLORS.yellow : affordable ? "#4e8f4f" : "#9a6b55";
+    const buttonTextColor = currentSkin ? COLORS.line : COLORS.text;
+    rect(button.x, button.y, button.w, button.h, buttonColor);
     strokeRect(button.x, button.y, button.w, button.h, COLORS.line, 2);
     const buttonLabel = currentSkin
       ? "\u5df2\u7528"
@@ -9900,7 +10092,7 @@ function drawExpansionPanel() {
           : offer.kind === "floor"
             ? "\u94fa"
             : "\u6446";
-    text(buttonLabel, button.x + button.w / 2, button.y + 6, buttonLabel.length > 1 ? 10 : 12, COLORS.text, "bold", "center");
+    text(buttonLabel, button.x + button.w / 2, button.y + 6, buttonLabel.length > 1 ? 10 : 12, buttonTextColor, "bold", "center");
   });
 
   ui.closeExpansionButton = { x: panel.x + panel.w - 50, y: panel.y + panel.h - 34, w: 38, h: 24 };
@@ -10100,7 +10292,7 @@ function drawLayoutPanel() {
       w: halfW,
       mode: "floor",
       label: "\u94fa\u516c\u533a\u5730\u7816",
-      message: `\u5e03\u5c40\uff1a\u70b9\u5730\u56fe\u94fa\u5730\u7816\uff0c\u6bcf\u5757 ${PUBLIC_FLOOR_COST} \u5143\u3002`
+      message: `\u5e03\u5c40\uff1a\u70b9\u5730\u56fe\u94fa\u5730\u7816\uff0c\u6bcf\u5757 ${PUBLIC_FLOOR_COST}\u3002`
     },
     {
       x: fullX + halfW + 8,
@@ -10211,7 +10403,7 @@ function drawEquipmentPanel() {
     strokeRect(panel.x + 10, y, panel.w - 20, cardH, "#9a7043", 2);
     drawEquipmentIcon(panel.x + 30, y + 17, tier.level, canUpgradeTier ? allUpgraded : false);
     text(tier.name, panel.x + 68, y + 8, 15, COLORS.line, "bold");
-    text(`\u65b0\u8d2d ${purchaseCost} / \u6536\u8d39 ${tier.hourlyRate}\u5143h`, panel.x + 68, y + 28, 11, "#5d4532", "bold");
+    text(`\u65b0\u8d2d ${purchaseCost} / \u6536\u8d39 ${tier.hourlyRate}/\u5c0f\u65f6`, panel.x + 68, y + 28, 11, "#5d4532", "bold");
     const upgradeDesc = hasCandidate
       ? `\u5347\u7ea7\u4f4e\u81f3 ${minUpgradeCost} / \u53ef\u9009\u673a\u5668`
       : allUpgraded ? "\u5168\u90e8\u5df2\u8fbe\u6210" : "\u6ca1\u6709\u53ef\u5347\u7ea7\u673a\u5668";
@@ -10420,7 +10612,7 @@ function drawPricingPanel() {
     strokeRect(panel.x + 12, rowY, panel.w - 24, 40, "#9a7043", 2);
     drawEquipmentIcon(panel.x + 34, rowY + 12, tier.level, false);
     text(tier.name, panel.x + 62, rowY + 7, 13, COLORS.line, "bold");
-    text(`${tier.hourlyRate}\u5143/\u5c0f\u65f6  \u65b0\u8d2d ${getNewPcCost(tier.level)}\u5143`, panel.x + 62, rowY + 25, 10, "#5d4532", "bold");
+    text(`${tier.hourlyRate}/\u5c0f\u65f6  \u65b0\u8d2d ${getNewPcCost(tier.level)}`, panel.x + 62, rowY + 25, 10, "#5d4532", "bold");
   });
 
   ui.closePricingButton = { x: panel.x + panel.w - 70, y: panel.y + panel.h - 42, w: 52, h: 28 };
@@ -10585,7 +10777,7 @@ function drawWorkerSpeech(worker, x, y) {
   rect(x - 3, bubbleY + 16, 6, 6, "#fff7dd");
 }
 function drawLegend() {
-  // 暂不显示入口标注。
+  // Encoding-safe comment.
 }
 
 function drawIndoorDetailsModern() {
@@ -10805,7 +10997,7 @@ function loop() {
 
 function drawFatalError(error) {
   rect(0, 0, view.width, view.height, "#1b1b1b");
-  text("启动错误", 24, 32, 22, "#ff7777", "bold");
+  text("\u542f\u52a8\u9519\u8bef", 24, 32, 22, "#ff7777", "bold");
   text(String(error && error.message ? error.message : error), 24, 72, 14, "#ffffff");
 }
 
