@@ -51,28 +51,28 @@ const staffTypes = [
     id: "cashier",
     name: "\u6536\u94f6\u5458",
     hireCost: 120,
-    salary: 80,
+    salary: 3000,
     desc: "\u8d1f\u8d23\u5f00\u5361\u548c\u9001\u9910\uff0c\u4eba\u591a\u65f6\u524d\u53f0\u66f4\u5feb\u3002"
   },
   {
     id: "floor",
     name: "\u5916\u573a",
     hireCost: 100,
-    salary: 70,
+    salary: 3000,
     desc: "\u53ea\u6536\u62fe\u5ba2\u4eba\u4e0b\u673a\u540e\u7684\u673a\u4f4d\u3002"
   },
   {
     id: "cleaner",
     name: "\u4fdd\u6d01",
     hireCost: 90,
-    salary: 65,
+    salary: 3000,
     desc: "\u62d6\u5730\u3001\u626b\u5395\u6240\uff0c\u4e0d\u6e05\u7406\u7535\u8111\u3002"
   },
   {
     id: "repairman",
     name: "\u7ef4\u4fee\u5458",
     hireCost: 180,
-    salary: 120,
+    salary: 3000,
     desc: "\u81ea\u52a8\u7ef4\u4fee\u635f\u574f\u7535\u8111\uff0c\u4e0d\u518d\u4ea7\u751f\u5355\u6b21\u7ef4\u4fee\u8d39\u3002"
   },
   {

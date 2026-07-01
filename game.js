@@ -19,11 +19,11 @@ const AUDIO_SOURCES = {
   click: "audio/click.wav"
 };
 const CODE_DRAWN_VISUALS_ONLY = true;
-const GAME_VERSION = "Beta06292255GPT";
+const GAME_VERSION = "Beta06302008GPT";
 const SEAT_LAYOUT_VERSION = {
   stage: "Bate-GPT",
-  modifiedAt: "2026-06-29 22:55",
-  code: "06292255",
+  modifiedAt: "2026-06-30 20:08",
+  code: "06302008",
   note: "GPT\u4fee\u6539"
 };
 const PLAY_PROGRESS_COLOR = "#e83f3f";
@@ -62,12 +62,19 @@ const TILE = 12;
 const PUBLIC_FLOOR_SIZE = 60;
 const PUBLIC_FLOOR_HALF = PUBLIC_FLOOR_SIZE / 2;
 const PUBLIC_FLOOR_ATTACH_DISTANCE = 88;
-const PUBLIC_FLOOR_COST = 120;
+const PUBLIC_FLOOR_COST = 100;
 const SAVE_INTERVAL = 20;
 const GAME_DAY_SECONDS = 360;
 const GAME_MONTH_DAYS = 30;
-const DAMAGE_THRESHOLD_SESSIONS = 30;
-const DAMAGE_CHANCE_AFTER_THRESHOLD = 0.28;
+const DAMAGE_THRESHOLD_SESSIONS = 10;
+const STAFF_HIRE_LIMITS = {
+  cashier: 1,
+  floor: 2,
+  cleaner: 1,
+  repairman: 1,
+  manager: 1,
+  companion: Infinity
+};
 const NEW_PC_BASE_COST = 1200;
 const MAHJONG_TABLE_COST = 6800;
 const MAHJONG_TABLE_SIZE = { w: 58, h: 46 };
@@ -993,10 +1000,39 @@ function invalidateMovablePropDefsCache() {
   _movablePropDefsCache = null;
 }
 
+function getStarterPlantDefaultRect(room, happySign) {
+  const plant = {
+    x: room.x + room.w - 74,
+    y: room.y + 14,
+    w: 40,
+    h: 54
+  };
+  const safeGap = 16;
+  if (happySign) {
+    plant.x = Math.min(
+      room.x + room.w - plant.w - 12,
+      Math.max(plant.x, happySign.x + happySign.w + safeGap)
+    );
+    if (rectanglesOverlap(plant, inflateRect(happySign, 8), 0)) {
+      plant.y = happySign.y + happySign.h + safeGap;
+    }
+  }
+  plant.x = clamp(plant.x, room.x + 12, room.x + room.w - plant.w - 12);
+  plant.y = clamp(plant.y, room.y + 12, room.y + 86);
+  return plant;
+}
+
 function getMovablePropDefinitions() {
   if (_movablePropDefsCache) return _movablePropDefsCache;
   const room = layout.room;
   const counter = layout.counter;
+  const happySign = {
+    x: room.x + 228,
+    y: room.y + 18,
+    w: 52,
+    h: 38
+  };
+  const starterPlant = getStarterPlantDefaultRect(room, happySign);
   _movablePropDefsCache = [
     {
       id: "counter",
@@ -1033,10 +1069,10 @@ function getMovablePropDefinitions() {
     {
       id: "happySign",
       name: "\u5feb\u4e50\u4e0a\u7f51\u724c",
-      x: room.x + 228,
-      y: room.y + 18,
-      w: 52,
-      h: 38,
+      x: happySign.x,
+      y: happySign.y,
+      w: happySign.w,
+      h: happySign.h,
       movable: false,
       sellable: false,
       placement: "free"
@@ -1044,10 +1080,10 @@ function getMovablePropDefinitions() {
     {
       id: "starterPlant",
       name: "\u521d\u59cb\u76c6\u683d",
-      x: room.x + room.w - 136,
-      y: room.y + 14,
-      w: 40,
-      h: 54,
+      x: starterPlant.x,
+      y: starterPlant.y,
+      w: starterPlant.w,
+      h: starterPlant.h,
       movable: false,
       sellable: false,
       placement: "free"
@@ -3098,11 +3134,8 @@ function breakPc(pc) {
 
 function maybeBreakPc(pc) {
   if (!pc || pc.broken || pc.sessionsServed < DAMAGE_THRESHOLD_SESSIONS) return false;
-  if (Math.random() < DAMAGE_CHANCE_AFTER_THRESHOLD) {
-    breakPc(pc);
-    return true;
-  }
-  return false;
+  breakPc(pc);
+  return true;
 }
 
 function repairPc(pc, free = false) {
@@ -3858,6 +3891,12 @@ function updateCafeLevel() {
 }
 
 function getStaffRequirement(staff) {
+  const limit = getStaffHireLimit(staff);
+  const count = state.employees[staff.id] || 0;
+  if (Number.isFinite(limit) && count >= limit) {
+    return `${staff.name}\u6700\u591a\u62db\u8058 ${limit} \u540d`;
+  }
+
   if (staff.id === "manager") {
     return state.employees.cashier >= 1 &&
       state.employees.floor >= 1 &&
@@ -3873,6 +3912,18 @@ function getStaffRequirement(staff) {
   }
 
   return "";
+}
+
+function getStaffHireLimit(staff) {
+  if (!staff) return 0;
+  return Object.prototype.hasOwnProperty.call(STAFF_HIRE_LIMITS, staff.id)
+    ? STAFF_HIRE_LIMITS[staff.id]
+    : Infinity;
+}
+
+function getStaffLimitLabel(staff) {
+  const limit = getStaffHireLimit(staff);
+  return Number.isFinite(limit) ? `\u4e0a\u9650 ${limit}` : "\u4e0d\u9650";
 }
 
 function canHireStaff(staff) {
@@ -6237,7 +6288,14 @@ function getTrafficPower() {
   const cleanlinessFactor = 0.35 + state.cleanliness / 100 * 0.75;
   const equipmentFactor = 0.65 + equipmentAverage * 0.18;
   const scaleFactor = 0.62 + Math.min(layout.pcs.length, 12) * 0.05;
-  return cleanlinessFactor * equipmentFactor * scaleFactor * getTimeTrafficFactor() * getActivityTrafficFactor() * 1.05;
+  return cleanlinessFactor * equipmentFactor * scaleFactor * getTimeTrafficFactor() * getActivityTrafficFactor() * getOpeningTrafficFactor() * 1.05;
+}
+
+function getOpeningTrafficFactor() {
+  if (state.served < 4) return 1.55;
+  if (state.served < 10) return 1.32;
+  if (state.cafeLevel <= 2) return 1.12;
+  return 1;
 }
 
 function getActivityTrafficFactor() {
@@ -6254,7 +6312,10 @@ function getNextGuestInterval() {
   const traffic = getTrafficPower();
   const hasFreeSeat = getFreeOperationalPcCount() > 0;
   const fullSeatPenalty = hasFreeSeat ? 1 : random(2.7, 4.2);
-  return random(4.8, 8.6) * fullSeatPenalty / Math.max(0.6, traffic);
+  const opening = state.served < 8;
+  const baseMin = opening ? 3.6 : 4.8;
+  const baseMax = opening ? 6.4 : 8.6;
+  return random(baseMin, baseMax) * fullSeatPenalty / Math.max(opening ? 0.75 : 0.6, traffic);
 }
 
 function getMaxWaitingGuests() {
@@ -7582,12 +7643,12 @@ function update(dt) {
   // they are now called only when purchases, upgrades, or hiring actually happen.
   updateSpawn();
   updateQueueTargets();
+  updatePayroll();
   updateFrontDesk(dt);
   updateGuests(dt);
   updateWorkers(dt);
   updateDoorTimers(dt);
   updateCleanliness(dt);
-  updatePayroll();
   updateLayoutHints(dt);
   updateAutoSave(dt);
 }
@@ -7852,6 +7913,21 @@ function isWorldPointVisible(x, y, padding = 80) {
     sy <= view.height - ACTION_BAR_HEIGHT + padding;
 }
 
+function getVisibleWorldRect(padding = 128) {
+  return {
+    x: state.camera.x - padding,
+    y: state.camera.y - padding,
+    w: view.width + padding * 2,
+    h: view.height + padding * 2
+  };
+}
+
+function isWorldRectVisible(rectValue, padding = 128) {
+  if (!rectValue) return false;
+  const visible = getVisibleWorldRect(padding);
+  return rectanglesOverlap(rectValue, visible, 0);
+}
+
 function drawPixelFloor() {
   const room = layout.room;
   drawPixelMeadowBackground();
@@ -7876,11 +7952,11 @@ function drawPixelFloor() {
 function drawPixelMeadowBackground() {
   const hour = getCurrentHour();
   const night = hour >= 19 || hour < 6;
-  const bounds = getExpandedWorldBounds();
-  const minX = Math.floor(bounds.minX / 24) * 24;
-  const minY = Math.floor(bounds.minY / 24) * 24;
-  const maxX = Math.ceil(bounds.maxX / 24) * 24;
-  const maxY = Math.ceil(bounds.maxY / 24) * 24;
+  const visible = getVisibleWorldRect(160);
+  const minX = Math.floor(visible.x / 24) * 24;
+  const minY = Math.floor(visible.y / 24) * 24;
+  const maxX = Math.ceil((visible.x + visible.w) / 24) * 24;
+  const maxY = Math.ceil((visible.y + visible.h) / 24) * 24;
   verticalGradientRect(minX, minY, maxX - minX, maxY - minY, night ? "#1c3529" : "#2e4f2e", night ? "#254528" : "#416a32");
   const step = 24;
   for (let y = minY; y < maxY; y += step) {
@@ -8010,20 +8086,24 @@ function drawHerringboneBlock(x, y, size, fill, leaningRight) {
 }
 
 function drawPublicFloors() {
-  state.publicFloors.forEach((floor) => {
+  const visibleFloors = state.publicFloors.filter((floor) => isWorldRectVisible(floor, 96));
+  const visibleAttachables = getStructuralAreas().concat(
+    state.publicFloors.filter((floor) => isWorldRectVisible(floor, PUBLIC_FLOOR_SIZE + 112))
+  );
+  visibleFloors.forEach((floor) => {
     drawTiledArea(floor);
   });
 
-  state.publicFloors.forEach((floor) => {
-    drawPublicFloorOuterWalls(floor);
+  visibleFloors.forEach((floor) => {
+    drawPublicFloorOuterWalls(floor, visibleAttachables);
   });
 }
 
-function drawPublicFloorOuterWalls(floor) {
-  const topSegments = drawWallSegments(floor, "top");
-  const bottomSegments = drawWallSegments(floor, "bottom");
-  const leftSegments = drawWallSegments(floor, "left");
-  const rightSegments = drawWallSegments(floor, "right");
+function drawPublicFloorOuterWalls(floor, attachableAreas = null) {
+  const topSegments = drawWallSegments(floor, "top", attachableAreas);
+  const bottomSegments = drawWallSegments(floor, "bottom", attachableAreas);
+  const leftSegments = drawWallSegments(floor, "left", attachableAreas);
+  const rightSegments = drawWallSegments(floor, "right", attachableAreas);
 
   topSegments.forEach((segment) => drawHorizontalWall(segment.start, floor.y - 6, segment.end - segment.start));
   bottomSegments.forEach((segment) => drawHorizontalWall(segment.start, floor.y + floor.h, segment.end - segment.start));
@@ -8172,6 +8252,7 @@ function drawEntranceCorridor() {
 function drawRentedAreaRooms() {
   state.rentedAreas.forEach((area) => {
     if (area.id === 1) return;
+    if (!isWorldRectVisible(area, 120)) return;
     drawTiledArea(area);
     drawRoomOuterWalls(area);
     drawRoomNamePlate(area);
@@ -8241,13 +8322,13 @@ function drawVerticalWall(x, y, h) {
   rect(x, y, 6, h, COLORS.wallDark);
 }
 
-function drawWallSegments(area, side) {
+function drawWallSegments(area, side, attachableAreas = null) {
   const horizontal = side === "top" || side === "bottom";
   const start = horizontal ? area.x : area.y;
   const end = horizontal ? area.x + area.w : area.y + area.h;
   const covered = [];
 
-  getAttachableAreas().forEach((other) => {
+  (attachableAreas || getAttachableAreas()).forEach((other) => {
     if (other.id === area.id) return;
     if (!touchesSide(area, other, side)) return;
     let overlapStart = horizontal ? Math.max(area.x, other.x) : Math.max(area.y, other.y);
@@ -8360,6 +8441,7 @@ function drawRoomDoorLeaf(door, a, b, open) {
 function drawPublicFloorDoorways() {
   getStructuralAreas().forEach((area) => {
     state.publicFloors.forEach((floor) => {
+      if (!isWorldRectVisible(floor, 120) && !isWorldRectVisible(area, 120)) return;
       if (!sharesWall(area, floor)) return;
       if (!isFullOpenConnection(area, floor)) drawDoorwayBetweenAreas(area, floor);
     });
@@ -8622,7 +8704,7 @@ function drawPc(pc) {
     if (pc.broken) {
       rect(pc.x + pc.w - 12, pc.y + 25, 10, 12, COLORS.red);
       text("!", pc.x + pc.w - 7, pc.y + 24, 13, COLORS.text, "bold", "center");
-      drawCleanBubble(pc.x + pc.w / 2, pc.y - 44, "\u7ef4\u4fee");
+      drawRepairBubble(pc.x + pc.w / 2, pc.y - 44);
     } else if (pc.dirty) {
       rect(pc.x + pc.w - 11, pc.y + 27, 8, 8, COLORS.red);
       drawCleanBubble(pc.x + pc.w / 2, pc.y - 44, "\u6e05\u6d01");
@@ -8670,7 +8752,7 @@ function drawPc(pc) {
   if (pc.broken) {
     roundedRect(pc.x + pc.w - 13, pc.y + 25, 10, 12, 3, COLORS.red);
     text("!", pc.x + pc.w - 8, pc.y + 24, 13, COLORS.text, "bold", "center");
-    drawCleanBubble(pc.x + pc.w / 2, pc.y - 40, "\u7ef4\u4fee");
+    drawRepairBubble(pc.x + pc.w / 2, pc.y - 40);
   } else if (pc.dirty) {
     roundedRect(pc.x + pc.w - 11, pc.y + 27, 8, 8, 3, COLORS.red);
     drawCleanBubble(pc.x + pc.w / 2, pc.y - 40, "\u6e05\u6d01");
@@ -8770,7 +8852,7 @@ function drawOrientedPc(pc) {
     text(pc.areaName, pc.x + pc.w / 2, pc.y - 30, 9, COLORS.yellow, "bold", "center");
   }
   if (pc.broken) {
-    drawCleanBubble(pc.x + pc.w / 2, pc.y - 40, "\u7ef4\u4fee");
+    drawRepairBubble(pc.x + pc.w / 2, pc.y - 40);
   } else if (pc.dirty) {
     drawCleanBubble(pc.x + pc.w / 2, pc.y - 40, "\u6e05\u6d01");
   }
@@ -8797,6 +8879,30 @@ function drawCleanBubble(x, y, label) {
   rect(x - bubbleW / 2, y, bubbleW, 24, "#ffe08a");
   text(label, x, y + 4, 12, COLORS.line, "bold", "center");
   rect(x - 3, y + 22, 6, 6, "#ffe08a");
+}
+
+function drawRepairBubble(x, y) {
+  if (!isWorldPointVisible(x, y, 70)) return;
+  const bubbleW = 62;
+  const bubbleX = x - bubbleW / 2;
+  rect(bubbleX - 1, y - 1, bubbleW + 2, 28, COLORS.line);
+  rect(bubbleX, y, bubbleW, 26, "#fff2d0");
+
+  const iconX = bubbleX + 15;
+  const iconY = y + 14;
+  ctx.fillStyle = COLORS.yellow;
+  ctx.beginPath();
+  ctx.moveTo(Math.round(iconX), Math.round(iconY - 10));
+  ctx.lineTo(Math.round(iconX - 11), Math.round(iconY + 9));
+  ctx.lineTo(Math.round(iconX + 11), Math.round(iconY + 9));
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = COLORS.line;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  text("!", iconX, iconY - 5, 14, COLORS.line, "bold", "center");
+  text("\u9700\u7ef4\u4fee", bubbleX + 42, y + 5, 12, COLORS.line, "bold", "center");
+  rect(x - 3, y + 24, 6, 6, "#fff2d0");
 }
 
 function drawPcInfoBubble() {
@@ -9135,7 +9241,7 @@ function drawHud() {
 
   const panel = {
     x: 18,
-    y: SAFE_TOP + 14,
+    y: SAFE_TOP + 24,
     w: Math.min(view.width - 114, 286),
     h: 78
   };
@@ -9143,14 +9249,14 @@ function drawHud() {
 
   const titleW = Math.min(118, Math.max(98, panel.w * 0.44));
   const cleanLabelX = panel.x + titleW + 18;
-  const cleanBarX = cleanLabelX + 56;
+  const cleanBarX = cleanLabelX + 46;
   const cleanBarW = Math.max(20, panel.x + panel.w - cleanBarX - 12);
   rect(panel.x + 10, panel.y + 10, titleW, 22, "#2f1d14");
   strokeRect(panel.x + 10, panel.y + 10, titleW, 22, COLORS.text, 2);
   text("\u5c0f\u9ed1\u7f51\u5427", panel.x + 10 + titleW / 2, panel.y + 13, 15, COLORS.text, "bold", "center");
 
-  text("\u6e05\u6d01\u503c", cleanLabelX, panel.y + 13, 13, COLORS.red, "bold");
-  drawCleanlinessBar(cleanBarX, panel.y + 18, cleanBarW, 9);
+  text("\u6e05\u6d01", cleanLabelX, panel.y + 13, 13, COLORS.red, "bold");
+  drawCleanlinessThermometer(cleanBarX, panel.y + 14, cleanBarW, 17);
 
   drawCashHud(panel.x + 14, panel.y + 45);
   const calendarW = Math.min(130, Math.max(82, panel.w * 0.43));
@@ -9158,10 +9264,12 @@ function drawHud() {
 }
 
 function drawCashHud(x, y) {
-  rect(x - 4, y - 4, 28, 28, "#6b3f24");
-  rect(x, y, 20, 20, COLORS.yellow);
-  text("$", x + 10, y + 1, 17, COLORS.line, "bold", "center");
-  text(`${state.cash}`, x + 42, y + 4, 15, COLORS.green, "bold");
+  circle(x + 10, y + 10, 14, COLORS.line);
+  circle(x + 10, y + 10, 11, COLORS.yellow);
+  circle(x + 7, y + 7, 3, "#ffe08a");
+  text("$", x + 10, y + 1, 16, COLORS.line, "bold", "center");
+  text("\u8d44\u4ea7", x + 32, y - 3, 10, COLORS.text, "bold");
+  text(fitTextToWidth(`${state.cash}`, 92, 15, "bold"), x + 32, y + 9, 15, COLORS.green, "bold");
 }
 
 function drawCalendarHud(x, y, w) {
@@ -9185,12 +9293,23 @@ function drawCalendarHud(x, y, w) {
   text(fitTextToWidth(dayLabel, w - 30, 13, "bold"), x + 26, y + 5, 13, COLORS.red, "bold");
 }
 
-function drawCleanlinessBar(x, y, w, h) {
+function drawCleanlinessThermometer(x, y, w, h) {
   const ratio = Math.max(0, Math.min(1, state.cleanliness / 100));
   const fillColor = ratio > 0.55 ? COLORS.green : ratio > 0.3 ? COLORS.yellow : COLORS.red;
-  rect(x, y, w, h, COLORS.text);
-  strokeRect(x, y, w, h, COLORS.line, 1);
-  rect(x + 2, y + 2, Math.max(0, (w - 4) * ratio), Math.max(1, h - 4), fillColor);
+  const bulbR = Math.max(6, Math.floor(h / 2));
+  const tubeX = x + bulbR + 2;
+  const tubeY = y + 4;
+  const tubeW = Math.max(18, w - bulbR - 2);
+  const tubeH = Math.max(6, h - 8);
+  const fillW = Math.max(0, Math.round((tubeW - 6) * ratio));
+
+  circle(x + bulbR, y + bulbR, bulbR + 2, COLORS.line);
+  circle(x + bulbR, y + bulbR, bulbR - 1, COLORS.text);
+  rect(tubeX - 2, tubeY - 2, tubeW + 4, tubeH + 4, COLORS.line);
+  rect(tubeX, tubeY, tubeW, tubeH, COLORS.text);
+  circle(x + bulbR, y + bulbR, Math.max(3, bulbR - 4), fillColor);
+  rect(tubeX + 3, tubeY + 2, fillW, Math.max(2, tubeH - 4), fillColor);
+  rect(tubeX + 3, tubeY + 2, Math.max(4, tubeW - 8), 2, "rgba(255,255,255,0.2)");
 }
 
 function drawSystemMessageBar() {
@@ -9648,7 +9767,7 @@ function drawHiringPanel() {
     rect(panel.x + 10, y, panel.w - 20, cardH, requirement ? "#c5a575" : "#f7dba5");
     strokeRect(panel.x + 10, y, panel.w - 20, cardH, "#9a7043", 2);
     drawStaffIcon(staff, panel.x + 22, y + 17, Boolean(requirement));
-    text(`${staff.name} x${count}`, panel.x + 62, y + 7, 14, COLORS.line, "bold");
+    text(`${staff.name} x${count}  ${getStaffLimitLabel(staff)}`, panel.x + 62, y + 7, 14, COLORS.line, "bold");
     text(`\u5165\u804c ${getStaffHireTotal(staff)}  \u6708\u85aa ${staff.salary}`, panel.x + 62, y + 26, 10, "#5d4532", "bold");
     const fireButton = { x: panel.x + panel.w - 92, y: y + 10, w: 34, h: 24, staff, action: "fire" };
     const button = { x: panel.x + panel.w - 54, y: y + 10, w: 38, h: 24, staff, action: "hire" };
